@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for Project Terminal. Only the minimum required permissions are granted; no shell execution is exposed to the frontend.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-set-title",
+    "dialog:allow-open",
+    "dialog:allow-save"
+  ]
+}

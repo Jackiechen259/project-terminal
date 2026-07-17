@@ -1,0 +1,36 @@
+# Build artifacts
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+vite.config.d.ts.map
+app-icon.png
+src-tauri/gen/
+target/
+dist/
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# Cargo
+**/*.rs.bk
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Node
+node_modules/
+.pnpm-store/
+npm-debug.log*
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
