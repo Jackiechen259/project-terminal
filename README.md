@@ -1,8 +1,6 @@
 # Project Terminal
 
-A Windows desktop terminal application organized by **Projects**. Each project owns an isolated terminal tab group; every tab has its own PTY, shell, environment, and session state. Switching projects or tabs never closes sessions, tears down xterm, or stops background commands.
-
-> Status: Phase 1 (project skeleton) complete. Later phases add project persistence, terminal sessions, profiles, environments, SSH remote terminals, and packaging.
+> Status: Phase 1 + Phase 2 complete. The app shell renders; project models and JSON repositories with atomic writes, project/profile/SSH connection CRUD commands, project sidebar with add dialog, and Zustand stores (project, profile, terminal, ssh) are wired. Phase 3 will add the PTY terminal backend. Later phases add profiles, environments, SSH remote terminals, and packaging.
 
 ## Features (planned)
 
@@ -180,4 +178,4 @@ Writes are atomic: serialize → temp file → flush → rename. Corrupt files a
 
 ## Roadmap
 
-See `project-terminal-agent-plan.md` §37 for the phase breakdown. Current phase: **Phase 1 — project skeleton.**
+See `project-terminal-agent-plan.md` §37 for the phase breakdown. Current phases: **Phase 1 (skeleton) + Phase 2 (project + config persistence, CRUD, stores) complete; Phase 3 (single local PTY terminal) next.**
