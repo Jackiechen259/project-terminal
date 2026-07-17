@@ -4,7 +4,7 @@
  * domain-specific payloads defined here.
  */
 
-import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { Channel, invoke as tauriInvoke } from "@tauri-apps/api/core";
 
 import type { Project, SshConnection, TerminalProfile } from "@/types";
 
@@ -89,6 +89,19 @@ export interface SshConnectionInput {
   extraArgs?: string[];
 }
 
+export interface CreateTerminalRequest {
+  projectId: string;
+  profileId: string;
+  rows: number;
+  cols: number;
+}
+
+export interface TerminalOutputChunk {
+  sessionId: string;
+  /** base64-encoded bytes from the PTY. */
+  data: string;
+}
+
 interface ListResponse<T> {
   items: T[];
 }
@@ -104,12 +117,19 @@ async function invokeOrThrow<T>(
     if (typeof e === "object" && e !== null && "code" in e && "message" in e) {
       throw e as FrontendError;
     }
-    // Strings from Rust side (rare) or Tauri transport errors.
     throw {
       code: "unknown",
       message: typeof e === "string" ? e : "Unexpected error",
     } satisfies FrontendError;
   }
+}
+
+/** Decode a base64 string into bytes the frontend can hand to xterm.write. */
+function decodeBase64(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }
 
 export const projectService = {
@@ -155,4 +175,36 @@ export const sshService = {
   detect: () => invokeOrThrow<string | null>(SSH_CMD.detect),
   fingerprint: (id: string) =>
     invokeOrThrow<string>(SSH_CMD.fingerprint, { id }),
+};
+
+export const terminalService = {
+  create: async (
+    request: CreateTerminalRequest,
+    onOutput: (chunk: TerminalOutputChunk) => void,
+  ): Promise<string> => {
+    const channel = new Channel<TerminalOutputChunk>();
+    channel.onmessage = onOutput;
+    return invokeOrThrow<string>("create_terminal", {
+      onOutput: channel,
+      request,
+    });
+  },
+  write: (sessionId: string, data: string) =>
+    invokeOrThrow<void>("write_terminal", { sessionId, data }),
+  resize: (sessionId: string, rows: number, cols: number) =>
+    invokeOrThrow<void>("resize_terminal", { sessionId, rows, cols }),
+  close: (sessionId: string) =>
+    invokeOrThrow<void>("close_terminal", { sessionId }),
+  restart: async (
+    sessionId: string,
+    onOutput: (chunk: TerminalOutputChunk) => void,
+  ): Promise<string> => {
+    const channel = new Channel<TerminalOutputChunk>();
+    channel.onmessage = onOutput;
+    return invokeOrThrow<string>("restart_terminal", {
+      onOutput: channel,
+      sessionId,
+    });
+  },
+  decodeBase64,
 };

@@ -15,7 +15,9 @@ mod project;
 mod ssh;
 mod state;
 mod storage;
+mod terminal;
 
+use commands::terminal::TerminalState;
 use state::AppState;
 
 const APP_ERROR_TITLE: &str = "Project Terminal - startup failed";
@@ -26,7 +28,6 @@ const APP_ERROR_TITLE: &str = "Project Terminal - startup failed";
 fn show_fatal_error(message: &str) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
 
-    // Best-effort: also echo to stderr in case a parent console exists.
     eprintln!("{APP_ERROR_TITLE}: {message}");
 
     let title: Vec<u16> = APP_ERROR_TITLE
@@ -36,7 +37,7 @@ fn show_fatal_error(message: &str) {
     let body: Vec<u16> = message.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
         MessageBoxW(
-            /* hwnd */ std::ptr::null_mut(),
+            std::ptr::null_mut(),
             body.as_ptr(),
             title.as_ptr(),
             MB_OK | MB_ICONERROR,
@@ -58,8 +59,6 @@ pub fn run() {
         )
         .init();
 
-    // Resolve the config directory and repositories up front. If init fails
-    // we surface a visible error to the user instead of panicking.
     let state = match AppState::init() {
         Ok(s) => s,
         Err(e) => {
@@ -70,34 +69,55 @@ pub fn run() {
         }
     };
 
-    let result = tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
-        .manage(state)
-        .invoke_handler(tauri::generate_handler![
-            // Project CRUD (plan §12.1)
-            commands::project::list_projects,
-            commands::project::validate_project,
-            commands::project::create_project,
-            commands::project::update_project,
-            commands::project::delete_project,
-            // Profile CRUD (plan §12.2)
-            commands::profile::list_terminal_profiles,
-            commands::profile::validate_terminal_profile,
-            commands::profile::create_terminal_profile,
-            commands::profile::update_terminal_profile,
-            commands::profile::delete_terminal_profile,
-            commands::profile::test_terminal_profile,
-            // SSH Connection CRUD (plan §12.5)
-            commands::ssh::list_ssh_connections,
-            commands::ssh::validate_ssh_connection,
-            commands::ssh::create_ssh_connection,
-            commands::ssh::update_ssh_connection,
-            commands::ssh::delete_ssh_connection,
-            commands::ssh::test_ssh_connection,
-            commands::ssh::detect_ssh_client,
-            commands::ssh::read_ssh_host_fingerprint,
-        ])
-        .run(tauri::generate_context!());
+    let terminal_state = TerminalState::new();
+
+    // Build the app. The RunEvent handler closes all PTY child processes on
+    // ExitRequested so no PowerShell / SSH / etc. children leak.
+    let result = {
+        let manager = terminal_state.manager.clone_handle();
+        tauri::Builder::default()
+            .plugin(tauri_plugin_dialog::init())
+            .manage(state)
+            .manage(terminal_state)
+            .invoke_handler(tauri::generate_handler![
+                // Project CRUD (plan §12.1)
+                commands::project::list_projects,
+                commands::project::validate_project,
+                commands::project::create_project,
+                commands::project::update_project,
+                commands::project::delete_project,
+                // Profile CRUD (plan §12.2)
+                commands::profile::list_terminal_profiles,
+                commands::profile::validate_terminal_profile,
+                commands::profile::create_terminal_profile,
+                commands::profile::update_terminal_profile,
+                commands::profile::delete_terminal_profile,
+                commands::profile::test_terminal_profile,
+                // SSH Connection CRUD (plan §12.5)
+                commands::ssh::list_ssh_connections,
+                commands::ssh::validate_ssh_connection,
+                commands::ssh::create_ssh_connection,
+                commands::ssh::update_ssh_connection,
+                commands::ssh::delete_ssh_connection,
+                commands::ssh::test_ssh_connection,
+                commands::ssh::detect_ssh_client,
+                commands::ssh::read_ssh_host_fingerprint,
+                // Terminal (plan §12.3)
+                commands::terminal::create_terminal,
+                commands::terminal::write_terminal,
+                commands::terminal::resize_terminal,
+                commands::terminal::close_terminal,
+                commands::terminal::restart_terminal,
+            ])
+            .on_window_event(move |_window, event| {
+                if let tauri::WindowEvent::CloseRequested { .. } = event {
+                    // App is closing - kill all child processes so no
+                    // PowerShell/SSH/etc. leak in Task Manager (§36.20).
+                    manager.close_all();
+                }
+            })
+            .run(tauri::generate_context!())
+    };
 
     if let Err(e) = result {
         let message = format!("Tauri runtime exited with an error: {e}");

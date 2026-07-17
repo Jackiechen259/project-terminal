@@ -1,15 +1,13 @@
-//! Tauri command modules. Phase 2 wires project, profile, and ssh
-//! repository CRUD commands; Phase 3+ adds terminal commands.
+//! Tauri command modules.
 
 pub mod profile;
 pub mod project;
 pub mod ssh;
+pub mod terminal;
 
 use serde::Serialize;
 
 /// Generic serializable payload wrapper used by commands that return a list.
-/// Tauri can serialize `Vec<T>` directly, but this is convenient for adding
-/// metadata later (counts, cursors, etc.).
 #[allow(dead_code)]
 #[derive(Debug, Serialize)]
 pub struct ListResponse<T: Serialize> {

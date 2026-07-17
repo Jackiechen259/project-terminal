@@ -1,6 +1,6 @@
 # Project Terminal
 
-> Status: Phase 1 + Phase 2 complete. The app shell renders; project models and JSON repositories with atomic writes, project/profile/SSH connection CRUD commands, project sidebar with add dialog, and Zustand stores (project, profile, terminal, ssh) are wired. Phase 3 will add the PTY terminal backend. Later phases add profiles, environments, SSH remote terminals, and packaging.
+> Status: Phases 1-3 complete. The app shell renders; project/profile/SSH-connection models persist atomically; the PTY terminal backend spawns real local shells (PowerShell/CMD/Git Bash/WSL) via portable-pty, forwards output over a Tauri Channel to xterm.js, and supports write, resize, close, and restart. Per-project terminal views stay mounted across project switches (no PTY teardown). Phase 3.5+ will add profile env vars, startup commands, Conda/venv activation, and SSH remote terminals.
 
 ## Features (planned)
 
@@ -178,4 +178,4 @@ Writes are atomic: serialize → temp file → flush → rename. Corrupt files a
 
 ## Roadmap
 
-See `project-terminal-agent-plan.md` §37 for the phase breakdown. Current phases: **Phase 1 (skeleton) + Phase 2 (project + config persistence, CRUD, stores) complete; Phase 3 (single local PTY terminal) next.**
+See `project-terminal-agent-plan.md` §37 for the phase breakdown. Current phases: **Phases 1-3 complete (skeleton, project + config persistence, single local PTY terminal with PTY integration tests for input/output, Ctrl+C, and resize). Phase 3.5+ (profiles env vars, startup commands, Conda/venv, SSH remote) next.**

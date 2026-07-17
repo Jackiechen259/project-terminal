@@ -1,36 +1,129 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Plus, Terminal as TerminalIcon } from "lucide-react";
 
+import { profileService } from "@/services";
 import { useProjectStore } from "@/stores/projectStore";
 import { useTerminalStore } from "@/stores/terminalStore";
+import { cn } from "@/lib/utils";
+import type { TerminalTab } from "@/types";
+
+import { TerminalView } from "./TerminalView";
 
 /**
- * Terminal workspace: tab strip + terminal area. Phase 3 wires real PTY
- * sessions; Phase 4 wires the project-scoped tab group store. For now we
- * show the active project's tabs (none yet) and an empty state.
+ * Terminal workspace: tab strip + terminal area.
+ *
+ * Plan §10/§25.5: render EVERY project's TerminalViews at once. Non-active
+ * projects have their containers hidden via CSS `display:none`. Switching
+ * projects only changes which container is visible - the PTY readers and
+ * xterm instances for other projects keep running. This is the core
+ * invariant: project switching must NOT close sessions or dispose xterm.
+ *
+ * Each TerminalView owns its backend PTY (create_terminal) and routes output
+ * bytes from its own Tauri Channel into its xterm instance.
  */
 export function TerminalWorkspace() {
   const activeProjectId = useTerminalStore((s) => s.activeProjectId);
   const projects = useProjectStore((s) => s.projects);
-  const visibleTabs = useTerminalStore((s) => s.visibleTabs());
+  const tabsById = useTerminalStore((s) => s.tabsById);
+  const tabGroups = useTerminalStore((s) => s.tabGroupsByProjectId);
+  const setActiveTab = useTerminalStore((s) => s.setActiveTab);
+  const registerTab = useTerminalStore((s) => s.registerTab);
+  const updateTab = useTerminalStore((s) => s.updateTab);
+  const removeTab = useTerminalStore((s) => s.removeTab);
+  const [error, setError] = useState<string | null>(null);
+
   const activeProject = projects.find((p) => p.id === activeProjectId);
+  const group = activeProjectId ? tabGroups[activeProjectId] : undefined;
+  const tabIds = group?.tabIds ?? [];
+  const activeTabId = group?.activeTabId ?? null;
+
+  async function handleNewTerminal(projectId: string) {
+    setError(null);
+    try {
+      const profiles = await profileService.list(projectId);
+      if (profiles.length === 0) {
+        setError("This project has no terminal profiles yet.");
+        return;
+      }
+      const profile = profiles.find((p) => p.isDefault) ?? profiles[0];
+      // Reserve the tab id. sessionId will be filled in by TerminalView's
+      // onSessionId callback once the backend PTY is created.
+      const tab: TerminalTab = {
+        id: crypto.randomUUID(),
+        sessionId: "",
+        projectId,
+        profileId: profile.id,
+        title: profile.name,
+        cwd: "",
+        status: "starting",
+        createdAt: Date.now(),
+        lastActivatedAt: Date.now(),
+      };
+      registerTab(tab);
+    } catch (e) {
+      const err = e as { message?: string };
+      setError(err.message ?? "Failed to start terminal");
+    }
+  }
+
+  function handleSessionId(tabId: string, sessionId: string) {
+    updateTab(tabId, { sessionId, status: "running" });
+  }
+
+  async function handleCloseTab(tabId: string) {
+    // TerminalView's unmount cleanup closes the backend session, so we only
+    // need to remove the tab here. The view will dispose its xterm.
+    removeTab(tabId);
+  }
+
+  const hasAnyTab = Object.keys(tabsById).length > 0;
 
   return (
     <section className="flex min-w-0 flex-1 flex-col">
       <div className="flex h-10 items-center gap-1 border-b border-border bg-surface px-2">
-        {activeProject && visibleTabs.length > 0 ? (
-          visibleTabs.map((tab) => (
-            <span
-              key={tab.id}
-              className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-            >
-              {tab.title}
-            </span>
-          ))
-        ) : (
+        {tabIds.length === 0 ? (
           <span className="px-2 text-xs text-muted-foreground">
             {activeProject ? "No terminals open" : "Select a project"}
           </span>
+        ) : (
+          tabIds.map((id) => {
+            const tab = tabsById[id];
+            if (!tab) return null;
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() =>
+                  activeProjectId && setActiveTab(activeProjectId, id)
+                }
+                className={cn(
+                  "group flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                  id === activeTabId && "bg-accent text-accent-foreground",
+                )}
+              >
+                <span className="max-w-[160px] truncate">{tab.title}</span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleCloseTab(id);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.stopPropagation();
+                      void handleCloseTab(id);
+                    }
+                  }}
+                  className="opacity-50 hover:opacity-100"
+                  aria-label="Close tab"
+                >
+                  ×
+                </span>
+              </button>
+            );
+          })
         )}
         <div className="flex-1" />
         <Button
@@ -39,23 +132,58 @@ export function TerminalWorkspace() {
           aria-label="New terminal"
           className="h-7 w-7 text-muted-foreground"
           disabled={!activeProject}
+          onClick={() =>
+            activeProject && void handleNewTerminal(activeProject.id)
+          }
         >
           <Plus className="h-4 w-4" />
         </Button>
       </div>
 
       <div className="relative flex-1 bg-background">
-        {activeProject ? (
-          visibleTabs.length === 0 ? (
-            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-              <TerminalIcon className="mr-2 h-4 w-4" />
-              No terminals open for {activeProject.name}.
-            </div>
-          ) : (
-            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-              Terminal view arrives in Phase 3.
-            </div>
-          )
+        {activeProject && hasAnyTab ? (
+          <>
+            {error ? (
+              <div className="absolute left-2 top-2 z-10 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                {error}
+              </div>
+            ) : null}
+            {/*
+              Render EVERY project's tabs, not just the active project's.
+              Switching projects only flips which container is visible.
+            */}
+            {Object.values(tabsById).map((tab) => {
+              const tabGroup = tabGroups[tab.projectId];
+              const visible =
+                tab.projectId === activeProjectId &&
+                tabGroup?.activeTabId === tab.id;
+              return (
+                <div
+                  key={tab.id}
+                  className={cn(
+                    "absolute inset-0",
+                    visible ? "block" : "hidden",
+                  )}
+                >
+                  <TerminalView
+                    pending={{
+                      projectId: tab.projectId,
+                      profileId: tab.profileId,
+                    }}
+                    active={visible}
+                    onSessionId={(sessionId) =>
+                      handleSessionId(tab.id, sessionId)
+                    }
+                  />
+                </div>
+              );
+            })}
+          </>
+        ) : activeProject ? (
+          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+            <TerminalIcon className="mr-2 h-4 w-4" />
+            {error ?? `No terminals open for ${activeProject.name}.`}
+          </div>
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
             Select or create a project to start a terminal.
