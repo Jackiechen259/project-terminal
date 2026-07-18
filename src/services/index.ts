@@ -20,6 +20,7 @@ const PROJECT_CMD = {
   create: "create_project",
   update: "update_project",
   delete: "delete_project",
+  explorer: "open_project_in_explorer",
 } as const;
 
 const PROFILE_CMD = {
@@ -147,6 +148,8 @@ export const projectService = {
   update: (input: ProjectInput) =>
     invokeOrThrow<Project>(PROJECT_CMD.update, { input }),
   delete: (id: string) => invokeOrThrow<void>(PROJECT_CMD.delete, { id }),
+  openInExplorer: (id: string) =>
+    invokeOrThrow<void>(PROJECT_CMD.explorer, { id }),
 };
 
 export const profileService = {

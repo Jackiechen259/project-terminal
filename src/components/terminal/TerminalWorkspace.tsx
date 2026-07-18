@@ -9,7 +9,7 @@ import { profileService } from "@/services";
 import { useProjectStore } from "@/stores/projectStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { cn } from "@/lib/utils";
-import type { TerminalTab } from "@/types";
+import type { TerminalProfile, TerminalTab } from "@/types";
 
 import { TerminalView } from "./TerminalView";
 
@@ -35,6 +35,8 @@ export function TerminalWorkspace() {
   const updateTab = useTerminalStore((s) => s.updateTab);
   const removeTab = useTerminalStore((s) => s.removeTab);
   const [error, setError] = useState<string | null>(null);
+  const [profiles, setProfiles] = useState<TerminalProfile[]>([]);
+  const [selectedProfileId, setSelectedProfileId] = useState("");
   const [menuPosition, setMenuPosition] = useState<{
     x: number;
     y: number;
@@ -46,7 +48,7 @@ export function TerminalWorkspace() {
   const activeTabId = group?.activeTabId ?? null;
 
   const handleNewTerminal = useCallback(
-    async (projectId: string) => {
+    async (projectId: string, preferredProfileId?: string) => {
       setError(null);
       try {
         const profiles = await profileService.list(projectId);
@@ -54,7 +56,10 @@ export function TerminalWorkspace() {
           setError("This project has no terminal profiles yet.");
           return;
         }
-        const profile = profiles.find((p) => p.isDefault) ?? profiles[0];
+        const profile =
+          profiles.find((p) => p.id === preferredProfileId) ??
+          profiles.find((p) => p.isDefault) ??
+          profiles[0];
         // Reserve the tab id. sessionId will be filled in by TerminalView's
         // onSessionId callback once the backend PTY is created.
         const tab: TerminalTab = {
@@ -76,6 +81,38 @@ export function TerminalWorkspace() {
     },
     [registerTab],
   );
+
+  useEffect(() => {
+    if (!activeProjectId) {
+      setProfiles([]);
+      setSelectedProfileId("");
+      return;
+    }
+    let cancelled = false;
+    void profileService
+      .list(activeProjectId)
+      .then((nextProfiles) => {
+        if (cancelled) return;
+        setProfiles(nextProfiles);
+        setSelectedProfileId((current) =>
+          nextProfiles.some((profile) => profile.id === current)
+            ? current
+            : (nextProfiles.find((profile) => profile.isDefault)?.id ??
+              nextProfiles[0]?.id ??
+              ""),
+        );
+      })
+      .catch((cause) => {
+        if (!cancelled)
+          setError(
+            (cause as { message?: string }).message ??
+              "Failed to load terminal profiles",
+          );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProjectId]);
 
   function handleSessionId(tabId: string, sessionId: string) {
     updateTab(tabId, { sessionId, status: "running", exitCode: undefined });
@@ -243,13 +280,15 @@ export function TerminalWorkspace() {
               >
                 <div className="flex flex-col items-start">
                   <span className="max-w-[160px] truncate">{tab.title}</span>
-                  {tab.status === "exited" ? (
+                  {tab.status === "exited" || tab.status === "error" ? (
                     <span className="text-[10px] text-danger">
-                      Exited ({tab.exitCode ?? "?"})
+                      {tab.status === "error"
+                        ? "Connection error"
+                        : `Exited (${tab.exitCode ?? "?"})`}
                     </span>
                   ) : null}
                 </div>
-                {tab.status === "exited" ? (
+                {tab.status === "exited" || tab.status === "error" ? (
                   <span
                     role="button"
                     tabIndex={0}
@@ -258,7 +297,12 @@ export function TerminalWorkspace() {
                       void handleRestart(id);
                     }}
                     className="opacity-50 hover:opacity-100"
-                    aria-label="Restart tab"
+                    aria-label={
+                      projects.find((project) => project.id === tab.projectId)
+                        ?.type === "ssh"
+                        ? "Reconnect SSH terminal"
+                        : "Restart tab"
+                    }
                   >
                     <RotateCcw className="h-3.5 w-3.5" />
                   </span>
@@ -286,6 +330,20 @@ export function TerminalWorkspace() {
           })
         )}
         <div className="flex-1" />
+        {activeProject && profiles.length > 1 ? (
+          <select
+            aria-label="Terminal profile"
+            className="h-7 max-w-44 rounded border border-border bg-background px-2 text-xs"
+            value={selectedProfileId}
+            onChange={(event) => setSelectedProfileId(event.target.value)}
+          >
+            {profiles.map((profile) => (
+              <option key={profile.id} value={profile.id}>
+                {profile.name}
+              </option>
+            ))}
+          </select>
+        ) : null}
         <Button
           variant="ghost"
           size="icon"
@@ -293,7 +351,8 @@ export function TerminalWorkspace() {
           className="h-7 w-7 text-muted-foreground"
           disabled={!activeProject}
           onClick={() =>
-            activeProject && void handleNewTerminal(activeProject.id)
+            activeProject &&
+            void handleNewTerminal(activeProject.id, selectedProfileId)
           }
         >
           <Plus className="h-4 w-4" />

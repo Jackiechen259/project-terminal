@@ -149,6 +149,37 @@ pub fn delete_project_inner(state: &AppState, id: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// Open a saved local project in Windows Explorer. The frontend submits only
+/// a project id; the persisted path is revalidated here, so this is not a
+/// general-purpose process execution endpoint.
+pub fn open_project_in_explorer_inner(state: &AppState, id: &str) -> AppResult<()> {
+    let project = state.projects.get(id)?;
+    if project.project_type != ProjectType::Local {
+        return Err(AppError::Configuration(
+            "Only local projects can be opened in File Explorer".into(),
+        ));
+    }
+    let local = project.local.ok_or_else(|| {
+        AppError::Configuration("Local project is missing its path configuration".into())
+    })?;
+    validate_local_path(&local.path)?;
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer.exe")
+            .arg(&local.path)
+            .spawn()
+            .map_err(|error| AppError::Io(error))?;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = local;
+        Err(AppError::Configuration(
+            "Opening File Explorer is only supported on Windows".into(),
+        ))
+    }
+}
+
 #[tauri::command]
 pub fn list_projects(state: tauri::State<'_, AppState>) -> AppResult<ListResponse<Project>> {
     list_projects_inner(&state)
@@ -178,6 +209,11 @@ pub fn update_project(
 #[tauri::command]
 pub fn delete_project(state: tauri::State<'_, AppState>, id: String) -> AppResult<()> {
     delete_project_inner(&state, &id)
+}
+
+#[tauri::command]
+pub fn open_project_in_explorer(state: tauri::State<'_, AppState>, id: String) -> AppResult<()> {
+    open_project_in_explorer_inner(&state, &id)
 }
 
 #[cfg(test)]
@@ -320,5 +356,23 @@ mod tests {
             profiles[0].shell_type,
             crate::profile::ShellType::RemoteDefault
         );
+    }
+
+    #[test]
+    fn explorer_rejects_ssh_projects() {
+        let state = test_state();
+        let input = ProjectInput {
+            id: None,
+            name: "SSH".into(),
+            project_type: ProjectType::Ssh,
+            local: None,
+            ssh: Some(SshProjectConfig {
+                connection_id: "c1".into(),
+                remote_path: "/srv".into(),
+            }),
+            default_profile_id: None,
+        };
+        let project = create_project_inner(&state, input).unwrap();
+        assert!(open_project_in_explorer_inner(&state, &project.id).is_err());
     }
 }

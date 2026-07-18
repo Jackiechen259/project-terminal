@@ -1,6 +1,6 @@
 # Project Terminal
 
-> Status: Phases 1–6.5 complete. The app shell renders; project/profile/SSH-connection models persist atomically; the PTY terminal backend spawns real local shells (PowerShell, CMD, Git Bash, and WSL) and interactive system-OpenSSH sessions via portable-pty. SSH password, keyboard-interactive, and key-passphrase prompts remain inside the terminal, while first host keys require an explicit OpenSSH confirmation. Per-project terminal views stay mounted across project switches (no PTY teardown). Local and remote profiles support per-session environment variables, startup commands, Conda, venv, Poetry, uv, and custom activation. Remote initialization occurs after the target directory is entered; an initialization error is shown but leaves the remote shell usable. The app never runs `poetry shell`, `uv sync`, or `conda init`.
+> Status: Phases 1–7 complete. The app shell renders; project/profile/SSH-connection models persist atomically; the PTY terminal backend spawns real local shells (PowerShell, CMD, Git Bash, and WSL) and interactive system-OpenSSH sessions via portable-pty. SSH password, keyboard-interactive, and key-passphrase prompts remain inside the terminal, while first host keys require an explicit OpenSSH confirmation. Per-project terminal views stay mounted across project switches (no PTY teardown). Local and remote profiles support per-session environment variables, startup commands, Conda, venv, Poetry, uv, and custom activation. Remote initialization occurs after the target directory is entered; an initialization error is shown but leaves the remote shell usable. The app never runs `poetry shell`, `uv sync`, or `conda init`.
 
 ## About
 
@@ -66,17 +66,17 @@ Outputs a Windows MSI and NSIS installer under `src-tauri/target/release/bundle/
 
 ## Scripts
 
-| Script              | Description                                  |
-| ------------------- | -------------------------------------------- |
-| `pnpm dev`          | Vite dev server only                         |
-| `pnpm build`        | TypeScript check + Vite production build    |
-| `pnpm tauri:dev`    | Tauri dev shell (Vite + Rust)               |
-| `pnpm tauri:build`  | Tauri production build + installers         |
-| `pnpm test`         | Run Vitest unit tests                        |
-| `pnpm test:watch`   | Watch Vitest                                 |
-| `pnpm lint`         | ESLint flat config                           |
-| `pnpm format`       | Prettier write                               |
-| `pnpm format:check` | Prettier check                               |
+| Script              | Description                              |
+| ------------------- | ---------------------------------------- |
+| `pnpm dev`          | Vite dev server only                     |
+| `pnpm build`        | TypeScript check + Vite production build |
+| `pnpm tauri:dev`    | Tauri dev shell (Vite + Rust)            |
+| `pnpm tauri:build`  | Tauri production build + installers      |
+| `pnpm test`         | Run Vitest unit tests                    |
+| `pnpm test:watch`   | Watch Vitest                             |
+| `pnpm lint`         | ESLint flat config                       |
+| `pnpm format`       | Prettier write                           |
+| `pnpm format:check` | Prettier check                           |
 
 For Rust:
 
@@ -185,4 +185,4 @@ This project is licensed under the Apache License 2.0. See [LICENSE](./LICENSE) 
 
 ## Roadmap
 
-See `project-terminal-agent-plan.md` §37 for the phase breakdown. Current phases: **Phases 1–6.5 complete: skeleton; persistent project/profile configuration; local PTY terminals and environments; project-scoped tab groups; SSH connection configuration; interactive SSH terminals; and remote environment initialization. Sidebar and interaction refinement is next (Phase 7).**
+See `project-terminal-agent-plan.md` §37 for the phase breakdown. Current phases: **Phases 1–7 complete: skeleton; persistent project/profile configuration; local PTY terminals and environments; project-scoped tab groups; SSH connection configuration; interactive SSH terminals; remote environment initialization; and sidebar/interaction refinement. Stability and test hardening are next (Phase 8).**

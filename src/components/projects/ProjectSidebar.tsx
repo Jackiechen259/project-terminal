@@ -4,10 +4,14 @@ import { Folder, Plus, Server, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useProjectStore } from "@/stores/projectStore";
 import { useTerminalStore } from "@/stores/terminalStore";
+import { sshService } from "@/services";
+import { projectService } from "@/services";
 import { cn } from "@/lib/utils";
+import type { Project } from "@/types";
 
 import { ProjectDialog } from "./ProjectDialog";
 import { ProjectContextMenu } from "./ProjectContextMenu";
+import { ProjectEditDialog } from "./ProjectEditDialog";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { SshConnectionDialog } from "@/components/ssh/SshConnectionDialog";
 
@@ -21,8 +25,11 @@ export function ProjectSidebar() {
   const loading = useProjectStore((s) => s.loading);
   const error = useProjectStore((s) => s.error);
   const activeProjectId = useTerminalStore((s) => s.activeProjectId);
+  const tabGroups = useTerminalStore((s) => s.tabGroupsByProjectId);
+  const tabsById = useTerminalStore((s) => s.tabsById);
   const loadProjects = useProjectStore((s) => s.loadProjects);
   const setActiveProject = useTerminalStore((s) => s.setActiveProject);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     void loadProjects();
@@ -63,6 +70,23 @@ export function ProjectSidebar() {
               key={project.id}
               project={project}
               active={project.id === activeProjectId}
+              tabs={
+                tabGroups[project.id]?.tabIds
+                  .map((id) => tabsById[id])
+                  .filter(Boolean) ?? []
+              }
+              onTestSsh={async () => {
+                if (project.type !== "ssh" || !project.ssh?.connectionId)
+                  return;
+                setNotice("Testing SSH connection…");
+                try {
+                  setNotice(await sshService.test(project.ssh.connectionId));
+                } catch (cause) {
+                  setNotice(
+                    `SSH test failed: ${(cause as { message?: string }).message ?? "Unknown error"}`,
+                  );
+                }
+              }}
               onSelect={() => setActiveProject(project.id)}
             />
           ))
@@ -73,10 +97,26 @@ export function ProjectSidebar() {
             {error.message}
           </div>
         ) : null}
+        {notice ? (
+          <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            {notice}
+          </div>
+        ) : null}
       </div>
 
       <footer className="flex flex-row gap-1 border-t border-border p-2">
-        <SshConnectionDialog trigger={<Button variant="ghost" size="sm" className="flex-1 justify-start text-xs"><Server className="mr-2 h-3.5 w-3.5" />SSH</Button>} />
+        <SshConnectionDialog
+          trigger={
+            <Button
+              variant="ghost"
+              size="sm"
+              className="flex-1 justify-start text-xs"
+            >
+              <Server className="mr-2 h-3.5 w-3.5" />
+              SSH
+            </Button>
+          }
+        />
         <SettingsDialog />
       </footer>
     </aside>
@@ -86,15 +126,35 @@ export function ProjectSidebar() {
 function ProjectRow({
   project,
   active,
+  tabs,
+  onTestSsh,
   onSelect,
 }: {
-  project: { id: string; name: string; type: "local" | "ssh" };
+  project: Project;
   active: boolean;
+  tabs: Array<{
+    status:
+      | "starting"
+      | "connecting"
+      | "initializing"
+      | "running"
+      | "exited"
+      | "error";
+  }>;
+  onTestSsh: () => void;
   onSelect: () => void;
 }) {
   const Icon = project.type === "local" ? Folder : Server;
+  const running = tabs.filter((tab) =>
+    ["starting", "connecting", "initializing", "running"].includes(tab.status),
+  ).length;
+  const hasError = tabs.some((tab) => tab.status === "error");
   const deleteProject = useProjectStore((s) => s.deleteProject);
-  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const [editing, setEditing] = useState(false);
 
   function removeProject() {
     if (window.confirm(`Remove project "${project.name}"?`)) {
@@ -127,6 +187,17 @@ function ProjectRow({
       >
         <Icon className="h-4 w-4 shrink-0" />
         <span className="flex-1 truncate">{project.name}</span>
+        {running ? (
+          <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-400">
+            {running}
+          </span>
+        ) : null}
+        {hasError ? (
+          <span
+            className="h-2 w-2 rounded-full bg-destructive"
+            aria-label="Terminal error"
+          />
+        ) : null}
         <Button
           variant="ghost"
           size="icon"
@@ -146,9 +217,17 @@ function ProjectRow({
           position={menuPosition}
           onOpen={onSelect}
           onRemove={removeProject}
+          onTestSsh={onTestSsh}
+          onEdit={() => setEditing(true)}
+          onOpenExplorer={() => void projectService.openInExplorer(project.id)}
           onClose={() => setMenuPosition(null)}
         />
       ) : null}
+      <ProjectEditDialog
+        project={project}
+        openState={editing}
+        onOpenChange={setEditing}
+      />
     </>
   );
 }
