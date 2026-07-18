@@ -66,6 +66,22 @@ impl TerminalManager {
         session.write(data)
     }
 
+    pub fn wait_for_ready(
+        &self,
+        session_id: &str,
+        marker: &str,
+        command: &str,
+        timeout: std::time::Duration,
+    ) -> AppResult<()> {
+        self.get(session_id)?
+            .wait_for_ready(marker, command, timeout)
+    }
+
+    pub fn mark_running(&self, session_id: &str) -> AppResult<()> {
+        self.get(session_id)?.mark_running();
+        Ok(())
+    }
+
     pub fn resize(&self, session_id: &str, rows: u16, cols: u16) -> AppResult<()> {
         let session = self.get(session_id)?;
         session.resize(rows, cols)

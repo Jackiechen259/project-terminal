@@ -7,8 +7,9 @@
 //! Phase 6. The session intentionally has no knowledge of profiles or
 //! projects - the manager constructs it from resolved config.
 
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::thread;
+use std::time::Duration;
 
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
@@ -74,9 +75,87 @@ struct SessionInner {
     closing: bool,
 }
 
+fn ready_output_contains_marker(output: &[u8], marker: &[u8]) -> bool {
+    let mut normalized = Vec::with_capacity(output.len());
+    let mut index = 0;
+    while index < output.len() {
+        if output[index] == 0x1b && output.get(index + 1) == Some(&b'[') {
+            index += 2;
+            while index < output.len() {
+                let byte = output[index];
+                index += 1;
+                if (0x40..=0x7e).contains(&byte) {
+                    break;
+                }
+            }
+        } else {
+            normalized.push(output[index]);
+            index += 1;
+        }
+    }
+
+    let mut framed = Vec::with_capacity(marker.len() + 2);
+    framed.push(b'\n');
+    framed.push(b'[');
+    framed.extend_from_slice(marker);
+    find_subslice(&normalized, &framed).is_some()
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+struct ReadyWatcher {
+    marker: Option<Vec<u8>>,
+    sender: Option<mpsc::Sender<()>>,
+    pending: Vec<u8>,
+}
+
+impl ReadyWatcher {
+    fn process(&mut self, bytes: &[u8]) -> Vec<u8> {
+        let Some(marker) = self.marker.as_deref() else {
+            return bytes.to_vec();
+        };
+
+        self.pending.extend_from_slice(bytes);
+        if ready_output_contains_marker(&self.pending, marker) {
+            let position = find_subslice(&self.pending, marker)
+                .expect("framed marker must include the raw marker");
+            let start = if position > 0 && self.pending[position - 1] == b'[' {
+                position - 1
+            } else {
+                position
+            };
+            let mut end = position + marker.len();
+            if self.pending.get(end) == Some(&b']') {
+                end += 1;
+            }
+            let mut output = self.pending[..start].to_vec();
+            output.extend_from_slice(&self.pending[end..]);
+            if let Some(sender) = self.sender.take() {
+                let _ = sender.send(());
+            }
+            self.marker = None;
+            self.pending.clear();
+            return output;
+        }
+
+        // Delay a bounded suffix so a marker split between PTY reads never
+        // reaches xterm. Everything before that suffix is ordinary output.
+        let keep = marker.len() + 1;
+        if self.pending.len() > keep {
+            return self.pending.drain(..self.pending.len() - keep).collect();
+        }
+        Vec::new()
+    }
+}
+
 pub struct TerminalSession {
     pub session_id: String,
     inner: Arc<Mutex<SessionInner>>,
+    ready_watcher: Arc<Mutex<ReadyWatcher>>,
 }
 
 impl std::fmt::Debug for TerminalSession {
@@ -137,13 +216,18 @@ impl TerminalSession {
         // Drop the slave - we never spawn another process on this PTY.
         drop(pair.slave);
 
+        let ready_watcher = Arc::new(Mutex::new(ReadyWatcher {
+            marker: None,
+            sender: None,
+            pending: Vec::new(),
+        }));
         let session_id = spawn.session_id.clone();
 
-        // Reader thread: read bytes and forward to the sink as base64. Exits
-        // when read returns 0 (EOF) or an error, or when the sink reports
-        // it is closed.
+        // Reader thread: scans for the one-shot ready marker, removes that
+        // protocol line, and forwards every other byte sequence to xterm.
         let ch_for_reader = sink;
         let sid_for_reader = session_id.clone();
+        let watcher_for_reader = ready_watcher.clone();
         thread::spawn(move || {
             let mut reader = reader;
             let mut buf = [0u8; 4096];
@@ -151,10 +235,13 @@ impl TerminalSession {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        if !ch_for_reader.send_output(TerminalOutput {
-                            session_id: sid_for_reader.clone(),
-                            data: encode_bytes(&buf[..n]),
-                        }) {
+                        let output = watcher_for_reader.lock().process(&buf[..n]);
+                        if !output.is_empty()
+                            && !ch_for_reader.send_output(TerminalOutput {
+                                session_id: sid_for_reader.clone(),
+                                data: encode_bytes(&output),
+                            })
+                        {
                             // Sink closed (frontend window closed). Stop
                             // reading - the manager will tear the session
                             // down separately.
@@ -174,7 +261,7 @@ impl TerminalSession {
             writer,
             killer: Some(killer),
             exit_code: None,
-            status: SessionStatus::Running,
+            status: SessionStatus::Starting,
             closing: false,
         }));
 
@@ -195,7 +282,11 @@ impl TerminalSession {
             }
         });
 
-        Ok(Self { session_id, inner })
+        Ok(Self {
+            session_id,
+            inner,
+            ready_watcher,
+        })
     }
 
     /// Write user input bytes to the PTY. The bytes are forwarded as-is -
@@ -205,6 +296,44 @@ impl TerminalSession {
         guard.writer.write_all(data).map_err(AppError::Io)?;
         guard.writer.flush().map_err(AppError::Io)?;
         Ok(())
+    }
+
+    /// Wait for a shell-generated marker line before injecting initialization
+    /// commands. The marker output is consumed by the reader and never sent
+    /// to xterm.
+    pub fn wait_for_ready(&self, marker: &str, command: &str, timeout: Duration) -> AppResult<()> {
+        let (sender, receiver) = mpsc::channel();
+        {
+            let mut watcher = self.ready_watcher.lock();
+            watcher.marker = Some(marker.as_bytes().to_vec());
+            watcher.sender = Some(sender);
+            watcher.pending.clear();
+        }
+
+        if let Err(error) = self.write(command.as_bytes()) {
+            let mut watcher = self.ready_watcher.lock();
+            watcher.marker = None;
+            watcher.sender = None;
+            watcher.pending.clear();
+            return Err(error);
+        }
+
+        receiver.recv_timeout(timeout).map_err(|_| {
+            let mut watcher = self.ready_watcher.lock();
+            watcher.marker = None;
+            watcher.sender = None;
+            watcher.pending.clear();
+            AppError::EnvironmentInitializationFailed(
+                "Timed out waiting for the interactive shell".into(),
+            )
+        })
+    }
+
+    pub fn mark_running(&self) {
+        let mut guard = self.inner.lock();
+        if guard.status == SessionStatus::Starting {
+            guard.status = SessionStatus::Running;
+        }
     }
 
     /// Resize the PTY. Clamps rows/cols to a sensible minimum.
@@ -314,6 +443,7 @@ mod tests {
             Box::new(MpscSink(tx)),
         )
         .expect("spawn session");
+        session.mark_running();
         (session, rx)
     }
 
@@ -354,8 +484,6 @@ mod tests {
         session.write(b"\x03").expect("write ctrl+c");
         let output = drain_output(&rx, Instant::now() + Duration::from_secs(2));
 
-        // Ctrl+C should surface a "^C" marker in the output stream (cmd.exe
-        // echoes it). If we got nothing, the interrupt did not reach the PTY.
         assert!(
             !output.is_empty(),
             "expected output after Ctrl+C, got nothing"
@@ -396,5 +524,123 @@ mod tests {
         assert_eq!(encode_bytes(b"AB"), "QUI=");
         assert_eq!(encode_bytes(b"ABC"), "QUJD");
         assert_eq!(encode_bytes(&[0x00, 0xFF, 0x80, 0x7F]), "AP+Afw==");
+    }
+
+    #[test]
+    fn ready_marker_requires_a_standalone_output_line() {
+        let marker = b"__PROJECT_TERMINAL_READY_test__";
+        let mut output = b"PS C:\\> Write-Output '[__PROJECT_TERMINAL_READY_test__]'\r\n".to_vec();
+        assert!(!ready_output_contains_marker(&output, marker));
+
+        output.extend_from_slice(b"\r\n[__PROJECT_TERMINAL_");
+        assert!(!ready_output_contains_marker(&output, marker));
+
+        output.extend_from_slice(b"READY_test__]\r\n");
+        assert!(ready_output_contains_marker(&output, marker));
+    }
+
+    #[test]
+    fn ready_watcher_preserves_framing_across_split_marker_output() {
+        let marker = b"abcdef";
+        let (sender, receiver) = mpsc::channel();
+        let mut watcher = ReadyWatcher {
+            marker: Some(marker.to_vec()),
+            sender: Some(sender),
+            pending: Vec::new(),
+        };
+
+        assert_eq!(watcher.process(b"xxxxxxxx\n[abcde"), b"xxxxxxxx");
+        assert_eq!(watcher.process(b"f]\r\n"), b"\n\r\n");
+        receiver
+            .recv_timeout(Duration::from_millis(10))
+            .expect("split marker not detected");
+    }
+
+    #[test]
+    fn cmd_ready_handshake_filters_marker_and_marks_session_running() {
+        let (tx, rx) = mpsc::channel::<TerminalOutput>();
+        let session = TerminalSession::spawn(
+            SessionSpawn {
+                session_id: "ready-session".to_string(),
+                program: "cmd.exe".to_string(),
+                args: vec!["/Q".to_string()],
+                cwd: None,
+                env: vec![],
+                rows: 24,
+                cols: 80,
+            },
+            Box::new(MpscSink(tx)),
+        )
+        .expect("spawn session");
+        let marker = "__PROJECT_TERMINAL_READY_test__";
+        let encoded_marker = marker
+            .chars()
+            .map(|character| format!("^{character}"))
+            .collect::<String>();
+
+        session
+            .wait_for_ready(
+                marker,
+                &format!("echo [{encoded_marker}]\r\n"),
+                Duration::from_secs(3),
+            )
+            .expect("shell becomes ready");
+        session.mark_running();
+        assert_eq!(session.status(), SessionStatus::Running);
+
+        let output = drain_output(&rx, Instant::now() + Duration::from_millis(250));
+        assert!(
+            !output
+                .windows(marker.len())
+                .any(|window| window == marker.as_bytes()),
+            "ready marker leaked into terminal output: {:?}",
+            String::from_utf8_lossy(&output)
+        );
+        session.close();
+    }
+    #[test]
+    fn powershell_ready_handshake_filters_marker_and_marks_session_running() {
+        let (tx, rx) = mpsc::channel::<TerminalOutput>();
+        let session = TerminalSession::spawn(
+            SessionSpawn {
+                session_id: "powershell-ready-session".to_string(),
+                program: "powershell.exe".to_string(),
+                args: vec!["-NoLogo".to_string()],
+                cwd: None,
+                env: vec![],
+                rows: 24,
+                cols: 80,
+            },
+            Box::new(MpscSink(tx)),
+        )
+        .expect("spawn PowerShell session");
+        let marker = "__PROJECT_TERMINAL_READY_powershell__";
+        let codepoints = marker
+            .bytes()
+            .map(|byte| byte.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        session
+            .wait_for_ready(
+                marker,
+                &format!(
+                    "& {{ $ptReady = [string]([char[]]({codepoints}) -join ''); Write-Output \"[$ptReady]\" }}\r\n"
+                ),
+                Duration::from_secs(5),
+            )
+            .expect("PowerShell becomes ready");
+        session.mark_running();
+        assert_eq!(session.status(), SessionStatus::Running);
+
+        let output = drain_output(&rx, Instant::now() + Duration::from_millis(250));
+        assert!(
+            !output
+                .windows(marker.len())
+                .any(|window| window == marker.as_bytes()),
+            "ready marker leaked into terminal output: {:?}",
+            String::from_utf8_lossy(&output)
+        );
+        session.close();
     }
 }

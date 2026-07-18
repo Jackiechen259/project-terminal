@@ -16,9 +16,7 @@ use tauri::State;
 
 use crate::error::{AppError, AppResult};
 use crate::state::{new_id, AppState};
-use crate::terminal::{
-    resolve_local_shell, SessionSpawn, TerminalManager, TerminalOutput,
-};
+use crate::terminal::{resolve_local_shell, SessionSpawn, TerminalManager, TerminalOutput};
 
 use super::ListResponse;
 
@@ -127,14 +125,8 @@ fn build_session_spawn(
             env.push((k.clone(), v.clone()));
         }
     }
-    env.push((
-        "PROJECT_TERMINAL_PROJECT_ID".into(),
-        project.id.clone(),
-    ));
-    env.push((
-        "PROJECT_TERMINAL_PROFILE_ID".into(),
-        profile.id.clone(),
-    ));
+    env.push(("PROJECT_TERMINAL_PROJECT_ID".into(), project.id.clone()));
+    env.push(("PROJECT_TERMINAL_PROFILE_ID".into(), profile.id.clone()));
 
     Ok(SessionSpawn {
         session_id: session_id.to_string(),
@@ -147,6 +139,59 @@ fn build_session_spawn(
     })
 }
 
+fn wait_for_interactive_shell(
+    app: &AppState,
+    terminal: &TerminalState,
+    profile_id: &str,
+    session_id: &str,
+) -> AppResult<()> {
+    let profile = app.profiles.get(profile_id)?;
+    let marker = format!("__PROJECT_TERMINAL_READY_{session_id}__");
+    let command = match profile.shell_type {
+        crate::profile::ShellType::Powershell => {
+            let codepoints = marker
+                .bytes()
+                .map(|byte| byte.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "& {{ $ptReady = [string]([char[]]({codepoints}) -join ''); Write-Output \"[$ptReady]\" }}\r\n"
+            )
+        }
+        crate::profile::ShellType::Cmd => {
+            let encoded_marker = marker
+                .chars()
+                .map(|character| format!("^{character}"))
+                .collect::<String>();
+            format!("echo [{encoded_marker}]\r\n")
+        }
+        crate::profile::ShellType::GitBash | crate::profile::ShellType::Wsl => {
+            let encoded_marker = marker
+                .bytes()
+                .map(|byte| format!("\\x{byte:02x}"))
+                .collect::<String>();
+            format!("printf '[{encoded_marker}]\\n'\r\n")
+        }
+        // A custom executable has no declared command language. `echo` is
+        // the conventional lowest-common-denominator probe; unlike known
+        // shells, its command echo may remain visible.
+        crate::profile::ShellType::Custom => format!("echo [{marker}]\r\n"),
+        _ => {
+            return Err(AppError::Configuration(format!(
+                "Interactive-shell readiness is not supported for {:?}",
+                profile.shell_type
+            )))
+        }
+    };
+
+    terminal.manager.wait_for_ready(
+        session_id,
+        &marker,
+        &command,
+        std::time::Duration::from_secs(10),
+    )
+}
+
 fn execute_startup_commands(
     app: &AppState,
     terminal: &TerminalState,
@@ -154,7 +199,7 @@ fn execute_startup_commands(
     session_id: &str,
 ) -> AppResult<()> {
     let profile = app.profiles.get(profile_id)?;
-    
+
     // Phase 3.6/3.7: Environment activation is evaluated and pushed first.
     // Plan §20.8 / §22: if activation generation fails, we MUST retain the
     // shell so the user can manually inspect or fix it.
@@ -218,10 +263,13 @@ pub fn create_terminal(
     let spawn = build_session_spawn(&app, &request, &session_id)?;
     let id = terminal.manager.create(spawn, Box::new(on_output))?;
 
-    if let Err(e) = execute_startup_commands(&app, &terminal, &request.profile_id, &id) {
-        return Err(e);
+    if let Err(error) = wait_for_interactive_shell(&app, &terminal, &request.profile_id, &id)
+        .and_then(|()| execute_startup_commands(&app, &terminal, &request.profile_id, &id))
+    {
+        let _ = terminal.manager.close(&id);
+        return Err(error);
     }
-
+    terminal.manager.mark_running(&id)?;
     terminal.remember(&id, &request.project_id, &request.profile_id);
     Ok(id)
 }
@@ -248,10 +296,7 @@ pub fn resize_terminal(
 }
 
 #[tauri::command]
-pub fn close_terminal(
-    terminal: State<'_, TerminalState>,
-    session_id: String,
-) -> AppResult<()> {
+pub fn close_terminal(terminal: State<'_, TerminalState>, session_id: String) -> AppResult<()> {
     terminal.manager.close(&session_id)?;
     terminal.forget(&session_id);
     Ok(())
@@ -284,10 +329,13 @@ pub fn restart_terminal(
     let spawn = build_session_spawn(&app, &request, &new_id)?;
     let id = terminal.manager.create(spawn, Box::new(on_output))?;
 
-    if let Err(e) = execute_startup_commands(&app, &terminal, &profile_id, &id) {
-        return Err(e);
+    if let Err(error) = wait_for_interactive_shell(&app, &terminal, &profile_id, &id)
+        .and_then(|()| execute_startup_commands(&app, &terminal, &profile_id, &id))
+    {
+        let _ = terminal.manager.close(&id);
+        return Err(error);
     }
-
+    terminal.manager.mark_running(&id)?;
     terminal.remember(&id, &project_id, &profile_id);
     Ok(id)
 }
@@ -298,7 +346,9 @@ pub fn detect_conda_installations() -> Vec<String> {
 }
 
 #[tauri::command]
-pub fn list_conda_environments(conda_executable: String) -> AppResult<Vec<crate::terminal::conda::DetectedCondaEnvironment>> {
+pub fn list_conda_environments(
+    conda_executable: String,
+) -> AppResult<Vec<crate::terminal::conda::DetectedCondaEnvironment>> {
     crate::terminal::conda::list_conda_environments(&conda_executable)
 }
 
@@ -310,7 +360,9 @@ type _ListResponseMarker<T> = ListResponse<T>;
 mod tests {
     use super::*;
     use crate::config_dirs::ConfigDirs;
-    use crate::profile::{default_powershell_profile, EnvironmentType, ProfileRepository, ShellType};
+    use crate::profile::{
+        default_powershell_profile, EnvironmentType, ProfileRepository, ShellType,
+    };
     use crate::project::{LocalProjectConfig, Project, ProjectRepository, ProjectType};
     use crate::ssh::SshConnectionRepository;
     use chrono::Utc;
@@ -510,7 +562,10 @@ mod tests {
             }
         }
         let (tx, rx) = mpsc::channel();
-        let id = terminal.manager.create(spawn, Box::new(MpscSink(tx))).unwrap();
+        let id = terminal
+            .manager
+            .create(spawn, Box::new(MpscSink(tx)))
+            .unwrap();
 
         // The helper should write the error into the shell and NOT return an
         // error, keeping the session alive.
@@ -522,20 +577,28 @@ mod tests {
         while std::time::Instant::now() < deadline {
             match rx.recv_timeout(std::time::Duration::from_millis(50)) {
                 Ok(chunk) => {
-                    let bytes =
-                        base64::engine::general_purpose::STANDARD.decode(chunk.data).unwrap();
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(chunk.data)
+                        .unwrap();
                     out.extend_from_slice(&bytes);
-                    if out.windows(27).any(|w| w == b"Environment activation failed") {
-                        break; 
+                    if out
+                        .windows(27)
+                        .any(|w| w == b"Environment activation failed")
+                    {
+                        break;
                     }
                 }
                 Err(_) => {}
             }
         }
         terminal.manager.close_all();
-        
+
         let output_str = String::from_utf8_lossy(&out);
-        assert!(output_str.contains("Environment activation failed"), "Got: {:?}", output_str);
+        assert!(
+            output_str.contains("Environment activation failed"),
+            "Got: {:?}",
+            output_str
+        );
         let _ = dir;
     }
 
@@ -589,8 +652,9 @@ mod tests {
         while std::time::Instant::now() < deadline {
             match rx.recv_timeout(std::time::Duration::from_millis(50)) {
                 Ok(chunk) => {
-                    let bytes =
-                        base64::engine::general_purpose::STANDARD.decode(chunk.data).unwrap();
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(chunk.data)
+                        .unwrap();
                     out.extend_from_slice(&bytes);
                     if out.windows(14).any(|w| w == b"PT_STARTUP_OK\r") {
                         break;
