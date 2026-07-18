@@ -49,14 +49,19 @@ export function TerminalView({
   pending: PendingSession;
   active: boolean;
   onSessionId?: (sessionId: string) => void;
-  onExit?: (code: number | null) => void;
+  onExit?: (code: number | null, status?: "exited" | "error") => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const statusTimerRef = useRef<number | null>(null);
   const sessionIdRef = useRef<string | null>(null);
-  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
+  const reportedExitRef = useRef(false);
+  const [menuPosition, setMenuPosition] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
 
   const copySelection = useCallback(async () => {
     const selection = termRef.current?.getSelection() ?? "";
@@ -152,10 +157,27 @@ export function TerminalView({
         }
         sessionIdRef.current = sessionId;
         onSessionId?.(sessionId);
+        const statusTimer = window.setInterval(() => {
+          if (reportedExitRef.current) return;
+          void terminalService
+            .status(sessionId)
+            .then((status) => {
+              if (status.status === "exited" || status.status === "error") {
+                reportedExitRef.current = true;
+                onExit?.(status.exitCode ?? null, status.status);
+                window.clearInterval(statusTimer);
+              }
+            })
+            .catch(() => {
+              // A tab can close while a poll is in flight; cleanup owns it.
+            });
+        }, 700);
         // The first ResizeObserver fit normally runs before the asynchronous
         // PTY session id exists. Resize once it is available so applications
         // in the shell receive the same grid dimensions as xterm.
         requestAnimationFrame(fitAndResize);
+        // Cleanup is tied to the outer effect; see `statusTimer` below.
+        statusTimerRef.current = statusTimer;
       })
       .catch((e) => {
         const err = e as { message?: string };
@@ -172,12 +194,14 @@ export function TerminalView({
       disposable.dispose();
       ro.disconnect();
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
+      if (statusTimerRef.current) window.clearInterval(statusTimerRef.current);
       const sid = sessionIdRef.current;
       if (sid) void terminalService.close(sid);
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
       sessionIdRef.current = null;
+      reportedExitRef.current = false;
     };
     // We intentionally only re-create the session when the profile id changes;
     // changing `active` does NOT re-create it.

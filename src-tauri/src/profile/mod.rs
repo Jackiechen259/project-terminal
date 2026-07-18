@@ -6,4 +6,6 @@ pub mod repository;
 pub use model::{
     CondaActivationMode, CondaEnvironmentConfig, EnvironmentType, ShellType, TerminalProfile,
 };
-pub use repository::{default_powershell_profile, ProfileCollection, ProfileRepository};
+pub use repository::{
+    default_powershell_profile, default_remote_profile, ProfileCollection, ProfileRepository,
+};

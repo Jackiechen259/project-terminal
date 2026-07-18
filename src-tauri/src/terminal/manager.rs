@@ -91,6 +91,10 @@ impl TerminalManager {
         Ok(self.get(session_id)?.status())
     }
 
+    pub fn exit_code(&self, session_id: &str) -> AppResult<Option<i32>> {
+        Ok(self.get(session_id)?.exit_code())
+    }
+
     /// Close a session and remove it from the map. Idempotent - closing an
     /// unknown session id is a no-op rather than an error, so the frontend
     /// can always call it on tab teardown.

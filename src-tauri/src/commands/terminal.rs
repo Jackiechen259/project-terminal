@@ -32,6 +32,13 @@ pub struct CreateTerminalRequest {
     pub cols: u16,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalSessionStatus {
+    pub status: crate::terminal::SessionStatus,
+    pub exit_code: Option<i32>,
+}
+
 /// Per-session state we keep alongside the manager so restart can rebuild
 /// the spawn config from the original profile without re-querying.
 struct SessionMeta {
@@ -90,12 +97,6 @@ fn build_session_spawn(
     session_id: &str,
 ) -> AppResult<SessionSpawn> {
     let project = app.projects.get(&request.project_id)?;
-    if project.project_type != crate::project::ProjectType::Local {
-        return Err(AppError::Configuration(format!(
-            "Terminal creation for non-local projects is not implemented until Phase 6 (got {:?})",
-            project.project_type
-        )));
-    }
     let profile = app.profiles.get(&request.profile_id)?;
     if profile.project_id != project.id {
         return Err(AppError::Configuration(format!(
@@ -104,25 +105,45 @@ fn build_session_spawn(
         )));
     }
 
-    let (program, args) = resolve_local_shell(&profile)?;
-
-    // cwd: local project path. SSH remote cwd arrives in Phase 6.
-    let cwd = match &project.local {
-        Some(local) => {
-            let path = Path::new(&local.path);
-            if !path.is_dir() {
-                return Err(AppError::ProjectPathNotFound(local.path.clone()));
-            }
-            Some(local.path.clone())
+    let (program, args, cwd) = match project.project_type {
+        crate::project::ProjectType::Local => {
+            let (program, args) = resolve_local_shell(&profile)?;
+            let cwd = match &project.local {
+                Some(local) => {
+                    let path = Path::new(&local.path);
+                    if !path.is_dir() {
+                        return Err(AppError::ProjectPathNotFound(local.path.clone()));
+                    }
+                    Some(local.path.clone())
+                }
+                None => None,
+            };
+            (program, args, cwd)
         }
-        None => None,
+        crate::project::ProjectType::Ssh => {
+            let ssh_project = project.ssh.as_ref().ok_or_else(|| {
+                AppError::Configuration("SSH project is missing SSH configuration".into())
+            })?;
+            let connection = app.ssh.get(&ssh_project.connection_id)?;
+            let client = crate::ssh::detect_ssh_client().ok_or(AppError::SshClientNotFound)?;
+            let remote_command = remote_start_command(&profile, &ssh_project.remote_path)?;
+            let command =
+                crate::ssh::build_ssh_argv_with_remote_command(&connection, remote_command);
+            (
+                client.executable.to_string_lossy().into_owned(),
+                command.args,
+                None,
+            )
+        }
     };
 
     // Env vars from the profile, plus internal markers.
     let mut env: Vec<(String, String)> = Vec::new();
-    if let Some(vars) = &profile.environment_variables {
-        for (k, v) in vars {
-            env.push((k.clone(), v.clone()));
+    if project.project_type == crate::project::ProjectType::Local {
+        if let Some(vars) = &profile.environment_variables {
+            for (k, v) in vars {
+                env.push((k.clone(), v.clone()));
+            }
         }
     }
     env.push(("PROJECT_TERMINAL_PROJECT_ID".into(), project.id.clone()));
@@ -141,6 +162,61 @@ fn build_session_spawn(
         rows: request.rows.max(1),
         cols: request.cols.max(1),
     })
+}
+
+/// Prepare the remote working directory inside the OpenSSH remote command.
+/// The command is constructed only from saved profile/project fields and each
+/// path is POSIX-escaped before it is interpreted by the remote shell.
+fn remote_start_command(
+    profile: &crate::profile::TerminalProfile,
+    remote_path: &str,
+) -> AppResult<Option<String>> {
+    use crate::profile::ShellType;
+
+    let path = crate::terminal::escaping::escape_remote_posix_argument(remote_path);
+    let initialization = crate::terminal::build_remote_initialization_commands(profile)?;
+    let (shell, final_shell) = match profile.shell_type {
+        ShellType::RemoteDefault => ("sh", "\"${SHELL:-sh}\" -l".to_string()),
+        ShellType::RemoteBash => ("bash", "bash -l".to_string()),
+        ShellType::RemoteZsh => ("zsh", "zsh -l".to_string()),
+        ShellType::RemoteFish => ("fish", "fish -l".to_string()),
+        ShellType::Custom => {
+            let command = profile
+                .remote_shell_command
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    AppError::Configuration(
+                        "Custom remote shell requires remoteShellCommand".into(),
+                    )
+                })?;
+            ("sh", command.to_string())
+        }
+        local => {
+            return Err(AppError::Configuration(format!(
+                "SSH project requires a remote shell profile, got {local:?}"
+            )))
+        }
+    };
+    let separator = if shell == "fish" { "; and " } else { "; " };
+    let mut script = format!("cd -- {path}");
+    for command in initialization {
+        script.push_str(separator);
+        script.push_str(&command);
+    }
+    script.push_str(separator);
+    script.push_str("exec ");
+    script.push_str(&final_shell);
+
+    Ok(Some(format!(
+        "{shell} -{} {}",
+        if shell == "fish" { "ic" } else { "lc" },
+        crate::terminal::escaping::escape_remote_posix_argument(&script)
+    )))
+}
+
+fn is_ssh_project(app: &AppState, project_id: &str) -> AppResult<bool> {
+    Ok(app.projects.get(project_id)?.project_type == crate::project::ProjectType::Ssh)
 }
 
 fn wait_for_interactive_shell(
@@ -286,13 +362,20 @@ pub fn create_terminal(
     let spawn = build_session_spawn(&app, &request, &session_id)?;
     let id = terminal.manager.create(spawn, Box::new(on_output))?;
 
-    if let Err(error) = wait_for_interactive_shell(&app, &terminal, &request.profile_id, &id)
-        .and_then(|()| execute_startup_commands(&app, &terminal, &request.profile_id, &id))
-    {
-        let _ = terminal.manager.close(&id);
-        return Err(error);
+    if is_ssh_project(&app, &request.project_id)? {
+        // Authentication and first host-key confirmation are intentionally
+        // handled inside the PTY by OpenSSH. Never inject input while those
+        // prompts may be active.
+        terminal.manager.mark_running(&id)?;
+    } else {
+        if let Err(error) = wait_for_interactive_shell(&app, &terminal, &request.profile_id, &id)
+            .and_then(|()| execute_startup_commands(&app, &terminal, &request.profile_id, &id))
+        {
+            let _ = terminal.manager.close(&id);
+            return Err(error);
+        }
+        terminal.manager.mark_running(&id)?;
     }
-    terminal.manager.mark_running(&id)?;
     terminal.remember(&id, &request.project_id, &request.profile_id);
     Ok(id)
 }
@@ -316,6 +399,17 @@ pub fn resize_terminal(
     cols: u16,
 ) -> AppResult<()> {
     terminal.manager.resize(&session_id, rows, cols)
+}
+
+#[tauri::command]
+pub fn terminal_session_status(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+) -> AppResult<TerminalSessionStatus> {
+    Ok(TerminalSessionStatus {
+        status: terminal.manager.status(&session_id)?,
+        exit_code: terminal.manager.exit_code(&session_id)?,
+    })
 }
 
 #[tauri::command]
@@ -352,13 +446,17 @@ pub fn restart_terminal(
     let spawn = build_session_spawn(&app, &request, &new_id)?;
     let id = terminal.manager.create(spawn, Box::new(on_output))?;
 
-    if let Err(error) = wait_for_interactive_shell(&app, &terminal, &profile_id, &id)
-        .and_then(|()| execute_startup_commands(&app, &terminal, &profile_id, &id))
-    {
-        let _ = terminal.manager.close(&id);
-        return Err(error);
+    if is_ssh_project(&app, &project_id)? {
+        terminal.manager.mark_running(&id)?;
+    } else {
+        if let Err(error) = wait_for_interactive_shell(&app, &terminal, &profile_id, &id)
+            .and_then(|()| execute_startup_commands(&app, &terminal, &profile_id, &id))
+        {
+            let _ = terminal.manager.close(&id);
+            return Err(error);
+        }
+        terminal.manager.mark_running(&id)?;
     }
-    terminal.manager.mark_running(&id)?;
     terminal.remember(&id, &project_id, &profile_id);
     Ok(id)
 }
@@ -522,34 +620,37 @@ mod tests {
     }
 
     #[test]
-    fn build_session_spawn_rejects_ssh_projects() {
-        let app = test_state();
-        let project = Project {
-            id: "p1".into(),
-            name: "Remote".into(),
-            project_type: ProjectType::Ssh,
-            local: None,
-            ssh: Some(crate::project::SshProjectConfig {
-                connection_id: "conn-1".into(),
-                remote_path: "/srv".into(),
-            }),
-            default_profile_id: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
-        app.projects.upsert(project).unwrap();
+    fn remote_start_command_enters_posix_remote_path_safely() {
+        let mut profile = default_powershell_profile("profile-1".into(), "p1".into());
+        profile.shell_type = ShellType::RemoteBash;
+        let command = remote_start_command(&profile, "/srv/my project's").unwrap();
+        let command = command.unwrap();
+        assert!(command.starts_with("bash -lc "));
+        assert!(command.contains("cd --"));
+        assert!(command.contains("exec bash -l"));
+        // The apostrophe is safely represented as the POSIX quote boundary,
+        // not passed through as an unquoted shell character.
+        assert!(command.contains("'\"'\"'"));
+    }
 
-        let request = CreateTerminalRequest {
-            project_id: "p1".into(),
-            profile_id: "profile-1".into(),
-            rows: 24,
-            cols: 80,
-        };
-        let err = build_session_spawn(&app, &request, "session-1").unwrap_err();
-        assert!(matches!(
-            err,
-            AppError::Configuration(msg) if msg.contains("non-local")
-        ));
+    #[test]
+    fn ssh_rejects_a_local_shell_profile() {
+        let profile = default_powershell_profile("profile-1".into(), "p1".into());
+        assert!(remote_start_command(&profile, "/srv").is_err());
+    }
+
+    #[test]
+    fn remote_start_command_runs_environment_before_startup_and_shell() {
+        let mut profile = default_powershell_profile("profile-1".into(), "p1".into());
+        profile.shell_type = ShellType::RemoteBash;
+        profile.environment_type = EnvironmentType::Venv;
+        profile.environment_path = Some(".venv".into());
+        profile.startup_commands = vec!["python --version".into()];
+        let command = remote_start_command(&profile, "/srv").unwrap().unwrap();
+        let activate = command.find(".venv/bin/activate").unwrap();
+        let startup = command.find("python --version").unwrap();
+        let shell = command.find("exec bash -l").unwrap();
+        assert!(activate < startup && startup < shell);
     }
 
     // Test that the public resolver surfaces an explicit error for custom

@@ -10,7 +10,7 @@ pub mod initializer;
 pub mod manager;
 pub mod session;
 
-pub use initializer::build_activation_script;
+pub use initializer::{build_activation_script, build_remote_initialization_commands};
 pub use manager::TerminalManager;
 pub use session::{SessionSpawn, SessionStatus, TerminalOutput, TerminalSession};
 

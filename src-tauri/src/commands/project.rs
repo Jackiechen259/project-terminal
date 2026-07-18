@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::commands::ListResponse;
 use crate::error::{AppError, AppResult};
-use crate::profile::default_powershell_profile;
+use crate::profile::{default_powershell_profile, default_remote_profile};
 use crate::project::{LocalProjectConfig, Project, ProjectType, SshProjectConfig};
 use crate::state::{new_id, AppState};
 
@@ -110,15 +110,13 @@ pub fn create_project_inner(state: &AppState, input: ProjectInput) -> AppResult<
     project.validate()?;
     state.projects.upsert(project.clone())?;
 
-    // Seed a default PowerShell profile for new local projects so the user
-    // has a working terminal profile out of the box. SSH projects get their
-    // default profile in Phase 5/6.
-    if project.project_type == ProjectType::Local {
-        let profile_id = new_id("profile");
-        state
-            .profiles
-            .upsert(default_powershell_profile(profile_id, project.id.clone()))?;
-    }
+    // Every project gets an immediately usable, target-appropriate profile.
+    let profile_id = new_id("profile");
+    let profile = match project.project_type {
+        ProjectType::Local => default_powershell_profile(profile_id, project.id.clone()),
+        ProjectType::Ssh => default_remote_profile(profile_id, project.id.clone()),
+    };
+    state.profiles.upsert(profile)?;
     Ok(project)
 }
 
@@ -301,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn create_ssh_project_persists_without_seeding_profile() {
+    fn create_ssh_project_seeds_a_remote_profile() {
         let state = test_state();
         let input = ProjectInput {
             id: None,
@@ -316,10 +314,11 @@ mod tests {
         };
         let project = create_project_inner(&state, input).unwrap();
         assert_eq!(project.project_type, ProjectType::Ssh);
-        assert!(state
-            .profiles
-            .list_for_project(&project.id)
-            .unwrap()
-            .is_empty());
+        let profiles = state.profiles.list_for_project(&project.id).unwrap();
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(
+            profiles[0].shell_type,
+            crate::profile::ShellType::RemoteDefault
+        );
     }
 }

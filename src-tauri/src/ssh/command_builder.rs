@@ -12,11 +12,23 @@ pub struct SshCommand {
 
 /// Build the arguments used by a future interactive SSH terminal.
 pub fn build_ssh_argv(connection: &SshConnection) -> SshCommand {
+    build_ssh_argv_with_remote_command(connection, None)
+}
+
+/// Build an interactive SSH invocation, optionally with a server-side command
+/// that prepares the remote shell before it becomes interactive.
+pub fn build_ssh_argv_with_remote_command(
+    connection: &SshConnection,
+    remote_command: Option<String>,
+) -> SshCommand {
     let mut args = common_args(connection);
     // Allocate a TTY for terminals, editors and password/key-passphrase
     // prompts. The executable itself is selected separately by client.rs.
     args.insert(0, "-tt".to_string());
     args.push(connection.host.clone());
+    if let Some(remote_command) = remote_command {
+        args.push(remote_command);
+    }
     SshCommand { args }
 }
 
@@ -50,16 +62,9 @@ fn common_args(connection: &SshConnection) -> Vec<String> {
         "-o".to_string(),
         format!("ServerAliveCountMax={}", connection.server_alive_count_max),
         "-o".to_string(),
-        // `ask` still rejects changed keys and requires a terminal prompt for
-        // unknown keys. We never emit `no` or /dev/null known-hosts settings.
-        format!(
-            "StrictHostKeyChecking={}",
-            if connection.strict_host_key_checking {
-                "yes"
-            } else {
-                "ask"
-            }
-        ),
+        // `ask` rejects changed keys and visibly asks the user before a
+        // first key is saved. We never emit `no` or /dev/null settings.
+        "StrictHostKeyChecking=ask".to_string(),
     ];
 
     if !connection.username.trim().is_empty()
@@ -159,7 +164,7 @@ mod tests {
         assert!(command
             .args
             .iter()
-            .any(|arg| arg == "StrictHostKeyChecking=yes"));
+            .any(|arg| arg == "StrictHostKeyChecking=ask"));
         assert_eq!(command.args.last(), Some(&"srv.example".to_string()));
     }
 
@@ -173,7 +178,7 @@ mod tests {
         assert!(command
             .args
             .iter()
-            .any(|arg| arg == "StrictHostKeyChecking=yes"));
+            .any(|arg| arg == "StrictHostKeyChecking=ask"));
         assert_eq!(
             command.args[command.args.len() - 2..],
             ["srv.example", "exit"]

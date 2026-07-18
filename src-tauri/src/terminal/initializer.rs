@@ -42,6 +42,129 @@ pub fn build_activation_script(profile: &TerminalProfile) -> AppResult<String> {
     }
 }
 
+/// Build initialization commands for a POSIX remote shell. These commands
+/// run after SSH authentication and `cd`, as part of the server-side shell
+/// command. Failures are made visible but do not prevent the final interactive
+/// shell from opening.
+pub fn build_remote_initialization_commands(profile: &TerminalProfile) -> AppResult<Vec<String>> {
+    if !matches!(
+        profile.shell_type,
+        ShellType::RemoteDefault
+            | ShellType::RemoteBash
+            | ShellType::RemoteZsh
+            | ShellType::RemoteFish
+            | ShellType::Custom
+    ) {
+        return Err(AppError::Configuration(
+            "Remote initialization requires a remote shell profile".into(),
+        ));
+    }
+
+    let mut commands = Vec::new();
+    if let Some(vars) = &profile.environment_variables {
+        for (name, value) in vars {
+            if !is_posix_environment_name(name) {
+                return Err(AppError::Configuration(format!(
+                    "Invalid remote environment variable name: {name}"
+                )));
+            }
+            commands.push(format!("export {name}={}", escape_bash_argument(value)));
+        }
+    }
+
+    let activation = match profile.environment_type {
+        EnvironmentType::None => None,
+        EnvironmentType::Conda => Some(build_remote_conda_activation(profile)?),
+        EnvironmentType::Venv => Some(build_remote_venv_activation(profile)),
+        EnvironmentType::Poetry => Some(build_remote_poetry_activation(profile)),
+        EnvironmentType::Uv => Some(build_remote_venv_activation(profile)),
+        EnvironmentType::Custom => profile
+            .activation_command
+            .clone()
+            .filter(|command| !command.trim().is_empty()),
+    };
+    if let Some(activation) = activation {
+        commands.push(format!(
+            "if ! ( {activation} ); then printf '%s\\n' 'Project Terminal: environment initialization failed; remote shell remains available' >&2; fi"
+        ));
+    }
+    commands.extend(
+        profile
+            .startup_commands
+            .iter()
+            .filter(|command| !command.trim().is_empty())
+            .cloned(),
+    );
+    Ok(commands)
+}
+
+fn is_posix_environment_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some(first) if first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|character| character == '_' || character.is_ascii_alphanumeric())
+}
+
+fn build_remote_conda_activation(profile: &TerminalProfile) -> AppResult<String> {
+    let conda = profile.conda.as_ref().ok_or_else(|| {
+        AppError::Configuration("Conda environment type requires conda config".into())
+    })?;
+    if !conda.auto_activate {
+        return Ok(":".into());
+    }
+    if conda.activation_mode != CondaActivationMode::ShellHook {
+        return Err(AppError::Configuration(
+            "Remote Conda requires the shell-hook activation method; use Custom activation for another command".into(),
+        ));
+    }
+    let root = conda
+        .conda_root
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            AppError::Configuration(
+                "Remote Conda shell-hook activation requires a remote condaRoot".into(),
+            )
+        })?;
+    let target = conda
+        .environment_name
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            conda
+                .environment_path
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .ok_or_else(|| {
+            AppError::Configuration(
+                "Remote Conda activation requires an environment name or path".into(),
+            )
+        })?;
+    let hook = format!("{}/etc/profile.d/conda.sh", root.trim_end_matches('/'));
+    Ok(format!(
+        ". {} && conda activate {}",
+        escape_bash_argument(&hook),
+        escape_bash_argument(target)
+    ))
+}
+
+fn build_remote_venv_activation(profile: &TerminalProfile) -> String {
+    let path = profile
+        .environment_path
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(".venv");
+    let script = format!("{}/bin/activate", path.trim_end_matches('/'));
+    format!(". {}", escape_bash_argument(&script))
+}
+
+fn build_remote_poetry_activation(profile: &TerminalProfile) -> String {
+    if profile.environment_path.is_some() {
+        return build_remote_venv_activation(profile);
+    }
+    "pt_poetry_env=\"$(poetry env info --path)\" && . \"$pt_poetry_env/bin/activate\"".into()
+}
+
 fn escape_cmd_activation_argument(input: &str) -> AppResult<String> {
     // CMD expands `%VAR%` before caret escapes are applied. Delayed expansion
     // likewise treats `!VAR!` specially. There is no reliable literal form for
@@ -360,5 +483,35 @@ mod tests {
             build_activation_script(&p).unwrap(),
             "source .venv/bin/activate\r\n"
         );
+    }
+
+    #[test]
+    fn remote_conda_uses_remote_posix_paths_and_soft_failure_wrapper() {
+        let mut profile = base_profile();
+        profile.shell_type = ShellType::RemoteBash;
+        profile.environment_type = EnvironmentType::Conda;
+        profile.conda = Some(CondaEnvironmentConfig {
+            conda_executable: None,
+            conda_root: Some("/opt/miniconda3".into()),
+            environment_name: Some("ml".into()),
+            environment_path: None,
+            activation_mode: CondaActivationMode::ShellHook,
+            auto_activate: true,
+        });
+        let commands = build_remote_initialization_commands(&profile).unwrap();
+        assert!(commands[0].contains("/opt/miniconda3/etc/profile.d/conda.sh"));
+        assert!(commands[0].contains("conda activate ml"));
+        assert!(commands[0].contains("remote shell remains available"));
+    }
+
+    #[test]
+    fn remote_environment_variable_names_are_validated() {
+        let mut profile = base_profile();
+        profile.shell_type = ShellType::RemoteBash;
+        profile.environment_variables = Some(std::collections::BTreeMap::from([(
+            "BAD-NAME".into(),
+            "x".into(),
+        )]));
+        assert!(build_remote_initialization_commands(&profile).is_err());
     }
 }

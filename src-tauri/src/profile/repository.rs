@@ -135,6 +135,33 @@ pub fn default_powershell_profile(id: String, project_id: String) -> TerminalPro
     }
 }
 
+/// Default profile for an SSH project. Its shell runs on the remote host, not
+/// on the Windows machine that launches `ssh.exe`.
+pub fn default_remote_profile(id: String, project_id: String) -> TerminalProfile {
+    let now = Utc::now();
+    TerminalProfile {
+        id,
+        project_id,
+        name: "Remote shell".into(),
+        shell_type: ShellType::RemoteDefault,
+        shell_executable: None,
+        shell_args: vec![],
+        environment_type: EnvironmentType::None,
+        environment_name: None,
+        environment_path: None,
+        conda: None,
+        activation_command: None,
+        startup_commands: vec![],
+        environment_variables: None,
+        wsl_distribution: None,
+        wsl_working_directory: None,
+        remote_shell_command: None,
+        is_default: true,
+        created_at: now,
+        updated_at: now,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

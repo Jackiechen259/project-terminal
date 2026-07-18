@@ -35,48 +35,58 @@ export function TerminalWorkspace() {
   const updateTab = useTerminalStore((s) => s.updateTab);
   const removeTab = useTerminalStore((s) => s.removeTab);
   const [error, setError] = useState<string | null>(null);
-  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
 
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const group = activeProjectId ? tabGroups[activeProjectId] : undefined;
   const tabIds = useMemo(() => group?.tabIds ?? [], [group]);
   const activeTabId = group?.activeTabId ?? null;
 
-  const handleNewTerminal = useCallback(async (projectId: string) => {
-    setError(null);
-    try {
-      const profiles = await profileService.list(projectId);
-      if (profiles.length === 0) {
-        setError("This project has no terminal profiles yet.");
-        return;
+  const handleNewTerminal = useCallback(
+    async (projectId: string) => {
+      setError(null);
+      try {
+        const profiles = await profileService.list(projectId);
+        if (profiles.length === 0) {
+          setError("This project has no terminal profiles yet.");
+          return;
+        }
+        const profile = profiles.find((p) => p.isDefault) ?? profiles[0];
+        // Reserve the tab id. sessionId will be filled in by TerminalView's
+        // onSessionId callback once the backend PTY is created.
+        const tab: TerminalTab = {
+          id: crypto.randomUUID(),
+          sessionId: "",
+          projectId,
+          profileId: profile.id,
+          title: profile.name,
+          cwd: "",
+          status: "starting",
+          createdAt: Date.now(),
+          lastActivatedAt: Date.now(),
+        };
+        registerTab(tab);
+      } catch (e) {
+        const err = e as { message?: string };
+        setError(err.message ?? "Failed to start terminal");
       }
-      const profile = profiles.find((p) => p.isDefault) ?? profiles[0];
-      // Reserve the tab id. sessionId will be filled in by TerminalView's
-      // onSessionId callback once the backend PTY is created.
-      const tab: TerminalTab = {
-        id: crypto.randomUUID(),
-        sessionId: "",
-        projectId,
-        profileId: profile.id,
-        title: profile.name,
-        cwd: "",
-        status: "starting",
-        createdAt: Date.now(),
-        lastActivatedAt: Date.now(),
-      };
-      registerTab(tab);
-    } catch (e) {
-      const err = e as { message?: string };
-      setError(err.message ?? "Failed to start terminal");
-    }
-  }, [registerTab]);
+    },
+    [registerTab],
+  );
 
   function handleSessionId(tabId: string, sessionId: string) {
     updateTab(tabId, { sessionId, status: "running", exitCode: undefined });
   }
 
-  function handleExit(tabId: string, code: number | null) {
-    updateTab(tabId, { status: "exited", exitCode: code ?? undefined });
+  function handleExit(
+    tabId: string,
+    code: number | null,
+    status: "exited" | "error" = "exited",
+  ) {
+    updateTab(tabId, { status, exitCode: code ?? undefined });
   }
   async function handleRestart(tabId: string) {
     const oldTab = tabsById[tabId];
@@ -100,18 +110,25 @@ export function TerminalWorkspace() {
     removeTab(tabId);
   }
 
-  const handleCloseTab = useCallback(async (tabId: string) => {
-    // TerminalView's unmount cleanup closes the backend session, so we only
-    // need to remove the tab here.
-    removeTab(tabId);
-  }, [removeTab]);
+  const handleCloseTab = useCallback(
+    async (tabId: string) => {
+      // TerminalView's unmount cleanup closes the backend session, so we only
+      // need to remove the tab here.
+      removeTab(tabId);
+    },
+    [removeTab],
+  );
 
-  const selectRelativeTab = useCallback((direction: 1 | -1) => {
-    if (!activeProjectId || tabIds.length < 2 || !activeTabId) return;
-    const currentIndex = tabIds.indexOf(activeTabId);
-    const nextIndex = (currentIndex + direction + tabIds.length) % tabIds.length;
-    setActiveTab(activeProjectId, tabIds[nextIndex]);
-  }, [activeProjectId, activeTabId, setActiveTab, tabIds]);
+  const selectRelativeTab = useCallback(
+    (direction: 1 | -1) => {
+      if (!activeProjectId || tabIds.length < 2 || !activeTabId) return;
+      const currentIndex = tabIds.indexOf(activeTabId);
+      const nextIndex =
+        (currentIndex + direction + tabIds.length) % tabIds.length;
+      setActiveTab(activeProjectId, tabIds[nextIndex]);
+    },
+    [activeProjectId, activeTabId, setActiveTab, tabIds],
+  );
 
   useEffect(() => {
     return listenForAppCommands((command) => {
@@ -125,7 +142,11 @@ export function TerminalWorkspace() {
     const isEditableControl = (target: EventTarget | null) => {
       if (!(target instanceof Element)) return false;
       if (target.closest(".xterm")) return false;
-      return Boolean(target.closest("input, textarea, select, [contenteditable='true'], [role='dialog']"));
+      return Boolean(
+        target.closest(
+          "input, textarea, select, [contenteditable='true'], [role='dialog']",
+        ),
+      );
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -171,8 +192,17 @@ export function TerminalWorkspace() {
     // Capture phase ensures these commands win over WebView2's Edge-style
     // browser accelerators, including while xterm's hidden textarea is focused.
     window.addEventListener("keydown", handleKeyDown, { capture: true });
-    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, [activeProjectId, activeTabId, tabIds, handleCloseTab, handleNewTerminal, selectRelativeTab, setActiveTab]);
+    return () =>
+      window.removeEventListener("keydown", handleKeyDown, { capture: true });
+  }, [
+    activeProjectId,
+    activeTabId,
+    tabIds,
+    handleCloseTab,
+    handleNewTerminal,
+    selectRelativeTab,
+    setActiveTab,
+  ]);
 
   const hasAnyTab = Object.keys(tabsById).length > 0;
 
@@ -304,7 +334,7 @@ export function TerminalWorkspace() {
                     onSessionId={(sessionId) =>
                       handleSessionId(tab.id, sessionId)
                     }
-                    onExit={(code) => handleExit(tab.id, code)}
+                    onExit={(code, status) => handleExit(tab.id, code, status)}
                   />
                 </div>
               );
@@ -331,7 +361,8 @@ export function TerminalWorkspace() {
               shortcut: "Ctrl+Shift+T",
               icon: Plus,
               disabled: !activeProject,
-              onSelect: () => activeProject && void handleNewTerminal(activeProject.id),
+              onSelect: () =>
+                activeProject && void handleNewTerminal(activeProject.id),
             },
             {
               label: "Close active terminal",

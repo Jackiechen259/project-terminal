@@ -102,6 +102,11 @@ export interface TerminalOutputChunk {
   data: string;
 }
 
+export interface TerminalSessionStatus {
+  status: "starting" | "running" | "exited" | "error";
+  exitCode?: number;
+}
+
 interface ListResponse<T> {
   items: T[];
 }
@@ -193,6 +198,10 @@ export const terminalService = {
     invokeOrThrow<void>("write_terminal", { sessionId, data }),
   resize: (sessionId: string, rows: number, cols: number) =>
     invokeOrThrow<void>("resize_terminal", { sessionId, rows, cols }),
+  status: (sessionId: string) =>
+    invokeOrThrow<TerminalSessionStatus>("terminal_session_status", {
+      sessionId,
+    }),
   close: (sessionId: string) =>
     invokeOrThrow<void>("close_terminal", { sessionId }),
   restart: async (
