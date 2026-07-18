@@ -75,30 +75,16 @@ struct SessionInner {
     closing: bool,
 }
 
-fn ready_output_contains_marker(output: &[u8], marker: &[u8]) -> bool {
-    let mut normalized = Vec::with_capacity(output.len());
-    let mut index = 0;
-    while index < output.len() {
-        if output[index] == 0x1b && output.get(index + 1) == Some(&b'[') {
-            index += 2;
-            while index < output.len() {
-                let byte = output[index];
-                index += 1;
-                if (0x40..=0x7e).contains(&byte) {
-                    break;
-                }
-            }
-        } else {
-            normalized.push(output[index]);
-            index += 1;
-        }
-    }
+fn find_ready_marker(output: &[u8], marker: &[u8]) -> Option<usize> {
+    // Known shells receive an encoded command that does not contain the raw
+    // marker. Match the raw marker in their output instead of relying on it
+    // being immediately adjacent to a newline: PSReadLine may insert SGR and
+    // cursor-control sequences around the output line.
+    find_subslice(output, marker)
+}
 
-    let mut framed = Vec::with_capacity(marker.len() + 2);
-    framed.push(b'\n');
-    framed.push(b'[');
-    framed.extend_from_slice(marker);
-    find_subslice(&normalized, &framed).is_some()
+fn ready_output_contains_marker(output: &[u8], marker: &[u8]) -> bool {
+    find_ready_marker(output, marker).is_some()
 }
 
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -120,20 +106,19 @@ impl ReadyWatcher {
         };
 
         self.pending.extend_from_slice(bytes);
-        if ready_output_contains_marker(&self.pending, marker) {
-            let position = find_subslice(&self.pending, marker)
-                .expect("framed marker must include the raw marker");
-            let start = if position > 0 && self.pending[position - 1] == b'[' {
-                position - 1
-            } else {
-                position
-            };
-            let mut end = position + marker.len();
-            if self.pending.get(end) == Some(&b']') {
-                end += 1;
-            }
-            let mut output = self.pending[..start].to_vec();
-            output.extend_from_slice(&self.pending[end..]);
+        if let Some(marker_start) = find_ready_marker(&self.pending, marker) {
+            let marker_end = marker_start + marker.len();
+
+            // The shell echoes the readiness command before printing its
+            // marker. It is internal protocol traffic, not terminal output;
+            // discard it together with the marker's entire output line.
+            let output_start = self.pending[marker_end..]
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map(|offset| marker_end + offset + 1)
+                .unwrap_or(self.pending.len());
+            let output = self.pending[output_start..].to_vec();
+
             if let Some(sender) = self.sender.take() {
                 let _ = sender.send(());
             }
@@ -142,12 +127,9 @@ impl ReadyWatcher {
             return output;
         }
 
-        // Delay a bounded suffix so a marker split between PTY reads never
-        // reaches xterm. Everything before that suffix is ordinary output.
-        let keep = marker.len() + 1;
-        if self.pending.len() > keep {
-            return self.pending.drain(..self.pending.len() - keep).collect();
-        }
+        // Keep every byte until the handshake completes. Shells echo the
+        // injected command, and forwarding partial output would expose that
+        // protocol text above the actual terminal prompt.
         Vec::new()
     }
 }
@@ -527,20 +509,14 @@ mod tests {
     }
 
     #[test]
-    fn ready_marker_requires_a_standalone_output_line() {
+    fn ready_marker_survives_terminal_styling_around_output() {
         let marker = b"__PROJECT_TERMINAL_READY_test__";
-        let mut output = b"PS C:\\> Write-Output '[__PROJECT_TERMINAL_READY_test__]'\r\n".to_vec();
-        assert!(!ready_output_contains_marker(&output, marker));
-
-        output.extend_from_slice(b"\r\n[__PROJECT_TERMINAL_");
-        assert!(!ready_output_contains_marker(&output, marker));
-
-        output.extend_from_slice(b"READY_test__]\r\n");
-        assert!(ready_output_contains_marker(&output, marker));
+        let output = b"\x1b[38;5;9m[__PROJECT_TERMINAL_READY_test__]\x1b[m\r\n";
+        assert!(ready_output_contains_marker(output, marker));
     }
 
     #[test]
-    fn ready_watcher_preserves_framing_across_split_marker_output() {
+    fn ready_watcher_discards_protocol_output_across_split_marker() {
         let marker = b"abcdef";
         let (sender, receiver) = mpsc::channel();
         let mut watcher = ReadyWatcher {
@@ -549,8 +525,10 @@ mod tests {
             pending: Vec::new(),
         };
 
-        assert_eq!(watcher.process(b"xxxxxxxx\n[abcde"), b"xxxxxxxx");
-        assert_eq!(watcher.process(b"f]\r\n"), b"\n\r\n");
+        assert!(watcher
+            .process(b"echo [$env:PROJECT_TERMINAL_READY]\r\n\r\n[abcde")
+            .is_empty());
+        assert_eq!(watcher.process(b"f]\r\nPS C:\\> "), b"PS C:\\> ");
         receiver
             .recv_timeout(Duration::from_millis(10))
             .expect("split marker not detected");
@@ -596,6 +574,11 @@ mod tests {
             "ready marker leaked into terminal output: {:?}",
             String::from_utf8_lossy(&output)
         );
+        assert!(
+            !String::from_utf8_lossy(&output).contains("$env:PROJECT_TERMINAL_READY"),
+            "readiness command leaked into terminal output: {:?}",
+            String::from_utf8_lossy(&output)
+        );
         session.close();
     }
     #[test]
@@ -607,7 +590,10 @@ mod tests {
                 program: "powershell.exe".to_string(),
                 args: vec!["-NoLogo".to_string()],
                 cwd: None,
-                env: vec![],
+                env: vec![(
+                    "PROJECT_TERMINAL_READY".to_string(),
+                    "__PROJECT_TERMINAL_READY_powershell__".to_string(),
+                )],
                 rows: 24,
                 cols: 80,
             },
@@ -615,18 +601,10 @@ mod tests {
         )
         .expect("spawn PowerShell session");
         let marker = "__PROJECT_TERMINAL_READY_powershell__";
-        let codepoints = marker
-            .bytes()
-            .map(|byte| byte.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
-
         session
             .wait_for_ready(
                 marker,
-                &format!(
-                    "& {{ $ptReady = [string]([char[]]({codepoints}) -join ''); Write-Output \"[$ptReady]\" }}\r\n"
-                ),
+                "echo \"[$env:PROJECT_TERMINAL_READY]\"\r",
                 Duration::from_secs(5),
             )
             .expect("PowerShell becomes ready");
@@ -634,6 +612,11 @@ mod tests {
         assert_eq!(session.status(), SessionStatus::Running);
 
         let output = drain_output(&rx, Instant::now() + Duration::from_millis(250));
+        assert!(
+            !output.windows(4).any(|window| window == b"\r\n>>"),
+            "PowerShell entered a continuation prompt: {:?}",
+            String::from_utf8_lossy(&output)
+        );
         assert!(
             !output
                 .windows(marker.len())

@@ -1,6 +1,6 @@
 # Project Terminal
 
-> Status: Phases 1–4 complete. The app shell renders; project/profile/SSH-connection models persist atomically; the PTY terminal backend spawns real local shells (PowerShell, CMD, Git Bash, and WSL) via portable-pty, forwards output over a Tauri Channel to xterm.js, and supports write, resize, close, and restart. Per-project terminal views stay mounted across project switches (no PTY teardown). Profiles support per-session environment variables, startup commands, Conda, venv, Poetry, uv, and custom activation. Poetry resolves its managed environment path in the target shell; the app never runs `poetry shell`, `uv sync`, or `conda init`.
+> Status: Phases 1–5 complete. The app shell renders; project/profile/SSH-connection models persist atomically; the PTY terminal backend spawns real local shells (PowerShell, CMD, Git Bash, and WSL) via portable-pty, forwards output over a Tauri Channel to xterm.js, and supports write, resize, close, and restart. Per-project terminal views stay mounted across project switches (no PTY teardown). Profiles support per-session environment variables, startup commands, Conda, venv, Poetry, uv, and custom activation. SSH connections now have a reusable management UI, system OpenSSH discovery, safe argv construction, host-key-safe non-interactive tests, and SSH project creation. Poetry resolves its managed environment path in the target shell; the app never runs `poetry shell`, `uv sync`, or `conda init`.
 
 ## Features (planned)
 
@@ -177,4 +177,4 @@ Writes are atomic: serialize → temp file → flush → rename. Corrupt files a
 
 ## Roadmap
 
-See `project-terminal-agent-plan.md` §37 for the phase breakdown. Current phases: **Phases 1–4 complete: skeleton; project, profile, and configuration persistence; local PTY terminals; profile environment/startup initialization; and project-scoped terminal tab groups. SSH remote terminals are next.**
+See `project-terminal-agent-plan.md` §37 for the phase breakdown. Current phases: **Phases 1–5 complete: skeleton; persistent project/profile configuration; local PTY terminals and environments; project-scoped tab groups; and SSH connection configuration. Interactive SSH terminals are next (Phase 6).**

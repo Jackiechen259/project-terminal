@@ -5,12 +5,13 @@
 //! `validate_ssh_connection`, `test_ssh_connection`, `detect_ssh_client`,
 //! `read_ssh_host_fingerprint`.
 //!
-//! Phase 5 implements `test_ssh_connection`, `detect_ssh_client`, and
-//! `read_ssh_host_fingerprint`. For now those return an explicit
-//! "not implemented" error.
+//! Phase 5 also provides OpenSSH discovery and a bounded non-interactive
+//! connection test. Interactive terminals remain Phase 6 work.
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use crate::commands::ListResponse;
 use crate::error::{AppError, AppResult};
@@ -156,22 +157,102 @@ pub fn delete_ssh_connection_inner(state: &AppState, id: &str) -> AppResult<()> 
     state.ssh.delete(id, &references)
 }
 
-pub fn test_ssh_connection_inner(_state: &AppState, _id: &str) -> AppResult<String> {
-    Err(AppError::Configuration(
-        "test_ssh_connection is not implemented until Phase 5".into(),
-    ))
+pub fn test_ssh_connection_inner(state: &AppState, id: &str) -> AppResult<String> {
+    let connection = state.ssh.get(id)?;
+    let client = crate::ssh::detect_ssh_client().ok_or(AppError::SshClientNotFound)?;
+    let command = crate::ssh::build_ssh_test_argv(&connection);
+    let mut child = Command::new(&client.executable)
+        .args(&command.args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| AppError::SshConnectionFailed(error.to_string()))?;
+    // A connection test must not leave the UI waiting for an unreachable host
+    // forever. Interactive sessions use the saved timeout in Phase 6; the
+    // diagnostic probe is deliberately capped at 30 seconds.
+    let timeout = Duration::from_secs(u64::from(connection.connect_timeout_seconds.min(30)) + 2);
+    let deadline = Instant::now() + timeout;
+    loop {
+        if child
+            .try_wait()
+            .map_err(|error| AppError::SshConnectionFailed(error.to_string()))?
+            .is_some()
+        {
+            break;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(AppError::SshConnectionFailed(format!(
+                "Connection test timed out after {} seconds",
+                timeout.as_secs()
+            )));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| AppError::SshConnectionFailed(error.to_string()))?;
+
+    if output.status.success() {
+        return Ok(format!(
+            "Connected to {} using {}.",
+            connection.host,
+            client.executable.display()
+        ));
+    }
+
+    let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let safe_detail = if detail.is_empty() {
+        format!("ssh exited with status {}", output.status)
+    } else {
+        // stderr can contain an authentication prompt but never a password;
+        // it is returned only to the initiating UI, not logged or persisted.
+        detail
+    };
+    if safe_detail
+        .to_ascii_lowercase()
+        .contains("host key verification failed")
+        || safe_detail
+            .to_ascii_lowercase()
+            .contains("remote host identification has changed")
+    {
+        return Err(AppError::SshHostKeyFailed(safe_detail));
+    }
+    Err(AppError::SshConnectionFailed(safe_detail))
 }
 
 pub fn detect_ssh_client_inner() -> AppResult<Option<String>> {
-    // Phase 5 will return the path to a detected ssh.exe. For now, return None
-    // so the frontend can render the right "not detected yet" UI.
-    Ok(None)
+    Ok(crate::ssh::detect_ssh_client()
+        .map(|client| client.executable.to_string_lossy().into_owned()))
 }
 
-pub fn read_ssh_host_fingerprint_inner(_state: &AppState, _id: &str) -> AppResult<String> {
-    Err(AppError::Configuration(
-        "read_ssh_host_fingerprint is not implemented until Phase 5".into(),
-    ))
+pub fn read_ssh_host_fingerprint_inner(state: &AppState, id: &str) -> AppResult<String> {
+    let connection = state.ssh.get(id)?;
+    let client = crate::ssh::detect_ssh_client().ok_or(AppError::SshClientNotFound)?;
+    let keygen = crate::ssh::resolve_ssh_keygen(&client).ok_or(AppError::SshClientNotFound)?;
+
+    let host = if connection.port == 22 {
+        connection.host.clone()
+    } else {
+        format!("[{}]:{}", connection.host, connection.port)
+    };
+    let mut command = Command::new(keygen);
+    command.args(["-F", &host]);
+    if let Some(known_hosts) = connection.known_hosts_file.as_deref() {
+        command.args(["-f", known_hosts]);
+    }
+    let output = command
+        .output()
+        .map_err(|error| AppError::SshConnectionFailed(error.to_string()))?;
+    if output.status.success() {
+        let entries = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !entries.is_empty() {
+            return Ok(entries);
+        }
+    }
+    Ok("No saved host-key entry was found. The first interactive connection will ask for confirmation; this app will not accept it automatically.".into())
 }
 
 #[tauri::command]
@@ -326,14 +407,16 @@ mod tests {
     }
 
     #[test]
-    fn test_and_fingerprint_return_configuration_error() {
+    fn test_and_fingerprint_require_a_real_connection_or_client() {
         let state = test_state();
         assert!(test_ssh_connection_inner(&state, "x").is_err());
         assert!(read_ssh_host_fingerprint_inner(&state, "x").is_err());
     }
 
     #[test]
-    fn detect_ssh_client_returns_none() {
-        assert!(detect_ssh_client_inner().unwrap().is_none());
+    fn detect_ssh_client_returns_a_file_when_available() {
+        if let Some(path) = detect_ssh_client_inner().unwrap() {
+            assert!(std::path::Path::new(&path).is_file());
+        }
     }
 }

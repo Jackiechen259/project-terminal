@@ -1,8 +1,11 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { Clipboard, ClipboardPaste, Eraser } from "lucide-react";
 
+import { ContextMenu } from "@/components/ui/context-menu";
+import { listenForAppCommands } from "@/lib/appCommands";
 import { terminalService } from "@/services";
 
 /**
@@ -53,6 +56,27 @@ export function TerminalView({
   const fitRef = useRef<FitAddon | null>(null);
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
+
+  const copySelection = useCallback(async () => {
+    const selection = termRef.current?.getSelection() ?? "";
+    if (selection) await navigator.clipboard.writeText(selection);
+    termRef.current?.focus();
+  }, []);
+
+  const pasteClipboard = useCallback(async () => {
+    const text = await navigator.clipboard.readText();
+    if (text) termRef.current?.paste(text);
+    termRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    return listenForAppCommands((command) => {
+      if (!active) return;
+      if (command.type === "copy-terminal") void copySelection();
+      if (command.type === "paste-terminal") void pasteClipboard();
+    });
+  }, [active, copySelection, pasteClipboard]);
 
   useEffect(() => {
     const term = new Terminal({
@@ -72,6 +96,22 @@ export function TerminalView({
     termRef.current = term;
     fitRef.current = fit;
 
+    const fitAndResize = () => {
+      const container = containerRef.current;
+      if (!container || !container.clientWidth || !container.clientHeight) {
+        return;
+      }
+      try {
+        fit.fit();
+        const sid = sessionIdRef.current;
+        if (sid) {
+          void terminalService.resize(sid, term.rows, term.cols);
+        }
+      } catch {
+        // Fitting can fail while a tab is being attached or hidden.
+      }
+    };
+
     const disposable = term.onData((data) => {
       const sid = sessionIdRef.current;
       if (sid) void terminalService.write(sid, data);
@@ -80,20 +120,7 @@ export function TerminalView({
     const ro = new ResizeObserver(() => {
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
       resizeTimerRef.current = setTimeout(() => {
-        if (!termRef.current || !fitRef.current) return;
-        try {
-          fitRef.current.fit();
-          const sid = sessionIdRef.current;
-          if (sid) {
-            void terminalService.resize(
-              sid,
-              termRef.current.rows,
-              termRef.current.cols,
-            );
-          }
-        } catch {
-          // Fit can throw if the container has no layout yet.
-        }
+        fitAndResize();
       }, 80);
     });
     if (containerRef.current) ro.observe(containerRef.current);
@@ -125,6 +152,10 @@ export function TerminalView({
         }
         sessionIdRef.current = sessionId;
         onSessionId?.(sessionId);
+        // The first ResizeObserver fit normally runs before the asynchronous
+        // PTY session id exists. Resize once it is available so applications
+        // in the shell receive the same grid dimensions as xterm.
+        requestAnimationFrame(fitAndResize);
       })
       .catch((e) => {
         const err = e as { message?: string };
@@ -174,9 +205,47 @@ export function TerminalView({
 
   return (
     <div
-      ref={containerRef}
-      className="h-full w-full"
-      style={{ display: active ? "block" : "none" }}
-    />
+      className="h-full w-full p-2"
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setMenuPosition({ x: event.clientX, y: event.clientY });
+      }}
+    >
+      <div
+        ref={containerRef}
+        className="h-full w-full"
+        style={{ display: active ? "block" : "none" }}
+      />
+      {menuPosition ? (
+        <ContextMenu
+          position={menuPosition}
+          onClose={() => setMenuPosition(null)}
+          items={[
+            {
+              label: "Copy selection",
+              shortcut: "Ctrl+Shift+C",
+              icon: Clipboard,
+              disabled: !termRef.current?.hasSelection(),
+              onSelect: () => void copySelection(),
+            },
+            {
+              label: "Paste",
+              shortcut: "Ctrl+Shift+V",
+              icon: ClipboardPaste,
+              onSelect: () => void pasteClipboard(),
+            },
+            {
+              label: "Clear terminal",
+              icon: Eraser,
+              onSelect: () => {
+                termRef.current?.clear();
+                termRef.current?.focus();
+              },
+            },
+          ]}
+        />
+      ) : null}
+    </div>
   );
 }

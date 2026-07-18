@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { Folder, Plus, Server, Settings, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Folder, Plus, Server, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useProjectStore } from "@/stores/projectStore";
@@ -7,6 +7,9 @@ import { useTerminalStore } from "@/stores/terminalStore";
 import { cn } from "@/lib/utils";
 
 import { ProjectDialog } from "./ProjectDialog";
+import { ProjectContextMenu } from "./ProjectContextMenu";
+import { SettingsDialog } from "@/components/settings/SettingsDialog";
+import { SshConnectionDialog } from "@/components/ssh/SshConnectionDialog";
 
 /**
  * Sidebar listing saved projects. Selecting a project switches the terminal
@@ -43,7 +46,7 @@ export function ProjectSidebar() {
         />
       </header>
 
-      <div className="flex flex-1 flex-col gap-1 overflow-y-auto p-2 no-scrollbar">
+      <div className="app-scrollbar flex flex-1 flex-col gap-1 overflow-y-auto p-2">
         {loading && projects.length === 0 ? (
           <div className="px-3 py-6 text-center text-xs text-muted-foreground">
             Loading projects...
@@ -73,9 +76,8 @@ export function ProjectSidebar() {
       </div>
 
       <footer className="flex flex-row gap-1 border-t border-border p-2">
-        <Button variant="secondary" size="icon" aria-label="Settings">
-          <Settings className="h-4 w-4" />
-        </Button>
+        <SshConnectionDialog trigger={<Button variant="ghost" size="sm" className="flex-1 justify-start text-xs"><Server className="mr-2 h-3.5 w-3.5" />SSH</Button>} />
+        <SettingsDialog />
       </footer>
     </aside>
   );
@@ -92,38 +94,61 @@ function ProjectRow({
 }) {
   const Icon = project.type === "local" ? Folder : Server;
   const deleteProject = useProjectStore((s) => s.deleteProject);
+  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
+
+  function removeProject() {
+    if (window.confirm(`Remove project "${project.name}"?`)) {
+      void deleteProject(project.id);
+    }
+  }
+
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onSelect}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
+    <>
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onSelect}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
           onSelect();
-        }
-      }}
-      className={cn(
-        "group flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground",
-        active && "bg-accent text-accent-foreground",
-      )}
-    >
-      <Icon className="h-4 w-4 shrink-0" />
-      <span className="flex-1 truncate">{project.name}</span>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-6 w-6 opacity-0 group-hover:opacity-100"
-        aria-label="Remove project"
-        onClick={(e) => {
-          e.stopPropagation();
-          if (window.confirm(`Remove project "${project.name}"?`)) {
-            void deleteProject(project.id);
+          setMenuPosition({ x: event.clientX, y: event.clientY });
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onSelect();
           }
         }}
+        className={cn(
+          "group flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground",
+          active && "bg-accent text-accent-foreground",
+        )}
       >
-        <Trash2 className="h-3.5 w-3.5" />
-      </Button>
-    </div>
+        <Icon className="h-4 w-4 shrink-0" />
+        <span className="flex-1 truncate">{project.name}</span>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6 opacity-0 group-hover:opacity-100"
+          aria-label="Remove project"
+          onClick={(e) => {
+            e.stopPropagation();
+            removeProject();
+          }}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+      {menuPosition ? (
+        <ProjectContextMenu
+          project={project}
+          position={menuPosition}
+          onOpen={onSelect}
+          onRemove={removeProject}
+          onClose={() => setMenuPosition(null)}
+        />
+      ) : null}
+    </>
   );
 }

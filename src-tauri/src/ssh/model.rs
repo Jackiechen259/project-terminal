@@ -75,15 +75,23 @@ impl SshConnection {
                 "SSH host must not be empty".to_string(),
             ));
         }
+        validate_endpoint_component("SSH host", &self.host)?;
         if self.port == 0 {
             return Err(crate::error::AppError::Configuration(
                 "SSH port must be in 1..=65535".to_string(),
             ));
         }
-        if self.username.trim().is_empty() {
+        // A system SSH config alias owns its user/key/jump settings, so a
+        // username is intentionally optional in that one mode (§16.5).
+        if self.username.trim().is_empty()
+            && self.authentication_type != SshAuthenticationType::SystemConfig
+        {
             return Err(crate::error::AppError::Configuration(
                 "SSH username must not be empty".to_string(),
             ));
+        }
+        if !self.username.trim().is_empty() {
+            validate_endpoint_component("SSH username", &self.username)?;
         }
         if self.authentication_type == SshAuthenticationType::Key {
             let key = self
@@ -115,10 +123,31 @@ impl SshConnection {
                     "Jump host port must be in 1..=65535".to_string(),
                 ));
             }
+            validate_endpoint_component("Jump host", &jump.host)?;
+            if let Some(username) = &jump.username {
+                if !username.trim().is_empty() {
+                    validate_endpoint_component("Jump host username", username)?;
+                }
+            }
         }
         validate_extra_args(&self.extra_args)?;
         Ok(())
     }
+}
+
+/// Host/user values eventually become part of an OpenSSH `-J` argument.
+/// Keeping them to a single non-whitespace argv component prevents malformed
+/// configurations from changing its meaning without ever using a shell.
+fn validate_endpoint_component(label: &str, value: &str) -> Result<(), crate::error::AppError> {
+    if value
+        .chars()
+        .any(|c| c.is_control() || c.is_whitespace() || c == '@' || c == ':')
+    {
+        return Err(crate::error::AppError::Configuration(format!(
+            "{label} may not contain whitespace, control characters, @, or :"
+        )));
+    }
+    Ok(())
 }
 
 /// Per-plan §7/§33: `extra_args` is a power-user escape hatch, but it MUST
@@ -324,6 +353,26 @@ mod tests {
         assert!(conn.validate().is_err());
         conn.host = "h".into();
         conn.username = "  ".into();
+        assert!(conn.validate().is_err());
+    }
+
+    #[test]
+    fn system_config_allows_an_empty_username_but_other_modes_do_not() {
+        let mut conn = sample();
+        conn.authentication_type = SshAuthenticationType::SystemConfig;
+        conn.username.clear();
+        conn.validate().unwrap();
+        conn.authentication_type = SshAuthenticationType::Agent;
+        assert!(conn.validate().is_err());
+    }
+
+    #[test]
+    fn unsafe_endpoint_components_are_rejected() {
+        let mut conn = sample();
+        conn.host = "host name".into();
+        assert!(conn.validate().is_err());
+        conn.host = "host".into();
+        conn.username = "user@host".into();
         assert!(conn.validate().is_err());
     }
 

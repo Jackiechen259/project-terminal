@@ -62,21 +62,114 @@
     border-color: hsl(var(--border));
   }
 
-  /* Hide default scrollbars inside the app chrome; terminals scroll themselves. */
-  .no-scrollbar::-webkit-scrollbar {
-    display: none;
+  /* A restrained scrollbar treatment for app chrome and xterm's viewport. */
+  .app-scrollbar,
+  .xterm .xterm-viewport {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(240 5% 31%) transparent;
   }
-  .no-scrollbar {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
+
+  .app-scrollbar::-webkit-scrollbar,
+  .xterm .xterm-viewport::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  .app-scrollbar::-webkit-scrollbar-track,
+  .xterm .xterm-viewport::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .app-scrollbar::-webkit-scrollbar-thumb,
+  .xterm .xterm-viewport::-webkit-scrollbar-thumb {
+    min-height: 36px;
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background: hsl(240 5% 31% / 0.8);
+    background-clip: padding-box;
+  }
+
+  .app-scrollbar::-webkit-scrollbar-thumb:hover,
+  .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(240 5% 45% / 0.9);
+  }
+
+  .app-scrollbar::-webkit-scrollbar-corner,
+  .xterm .xterm-viewport::-webkit-scrollbar-corner {
+    background: transparent;
   }
 }
 
 /* xterm.js sizing - terminal fills its container. */
 .xterm {
   height: 100%;
-  padding: 6px 8px;
 }
 .xterm .xterm-viewport {
   background-color: transparent !important;
+}
+
+/* A subtle top edge gives the borderless desktop shell a finished frame. */
+.app-frame {
+  position: relative;
+}
+
+.app-frame::before {
+  position: absolute;
+  z-index: 20;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 1px;
+  content: "";
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    hsl(240 5% 20%),
+    hsl(210 45% 47% / 0.7) 42%,
+    hsl(270 40% 48% / 0.55) 62%,
+    hsl(240 5% 20%)
+  );
+  box-shadow: 0 1px 12px hsl(220 70% 55% / 0.15);
+}
+
+/* Desktop window chrome. The controls deliberately use the familiar Windows
+   hit areas while sharing the application's dark surface and blue accent. */
+.window-titlebar {
+  position: relative;
+  z-index: 30;
+  box-shadow: 0 1px 0 hsl(240 5% 4% / 0.65);
+}
+
+.window-control {
+  display: inline-flex;
+  width: 46px;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  color: hsl(var(--muted-foreground));
+  background: transparent;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.window-control:hover {
+  color: hsl(var(--foreground));
+  background: hsl(var(--accent));
+}
+
+.window-control:focus-visible {
+  z-index: 1;
+  outline: 2px solid hsl(210 75% 56%);
+  outline-offset: -2px;
+}
+
+.window-control--close:hover {
+  color: white;
+  background: hsl(0 72% 51%);
+}
+
+.window-control svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.8;
 }

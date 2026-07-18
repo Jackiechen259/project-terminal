@@ -127,6 +127,10 @@ fn build_session_spawn(
     }
     env.push(("PROJECT_TERMINAL_PROJECT_ID".into(), project.id.clone()));
     env.push(("PROJECT_TERMINAL_PROFILE_ID".into(), profile.id.clone()));
+    env.push((
+        "PROJECT_TERMINAL_READY".into(),
+        format!("__PROJECT_TERMINAL_READY_{session_id}__"),
+    ));
 
     Ok(SessionSpawn {
         session_id: session_id.to_string(),
@@ -148,15 +152,11 @@ fn wait_for_interactive_shell(
     let profile = app.profiles.get(profile_id)?;
     let marker = format!("__PROJECT_TERMINAL_READY_{session_id}__");
     let command = match profile.shell_type {
+        // Keep this command short. A long, generated command makes
+        // PSReadLine repaint wrapped fragments into the terminal before the
+        // handshake can filter them.
         crate::profile::ShellType::Powershell => {
-            let codepoints = marker
-                .bytes()
-                .map(|byte| byte.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            format!(
-                "& {{ $ptReady = [string]([char[]]({codepoints}) -join ''); Write-Output \"[$ptReady]\" }}\r\n"
-            )
+            shell_command_line(profile.shell_type, "echo \"[$env:PROJECT_TERMINAL_READY]\"")
         }
         crate::profile::ShellType::Cmd => {
             let encoded_marker = marker
@@ -192,6 +192,27 @@ fn wait_for_interactive_shell(
     )
 }
 
+fn shell_command_line(shell_type: crate::profile::ShellType, command: &str) -> String {
+    // Interactive PowerShell/PSReadLine treats CR as Enter and the following
+    // LF as a separate AddLine input, which leaves the terminal at a `>>`
+    // continuation prompt. Other supported shells accept the conventional
+    // CRLF pair used by the existing protocol.
+    let terminator = if shell_type == crate::profile::ShellType::Powershell {
+        "\r"
+    } else {
+        "\r\n"
+    };
+    format!("{command}{terminator}")
+}
+
+fn normalize_initialization_script(shell_type: crate::profile::ShellType, script: &str) -> String {
+    if shell_type != crate::profile::ShellType::Powershell {
+        return script.to_string();
+    }
+
+    script.replace("\r\n", "\r").replace('\n', "\r")
+}
+
 fn execute_startup_commands(
     app: &AppState,
     terminal: &TerminalState,
@@ -206,6 +227,7 @@ fn execute_startup_commands(
     match crate::terminal::build_activation_script(&profile) {
         Ok(activation) => {
             if !activation.is_empty() {
+                let activation = normalize_initialization_script(profile.shell_type, &activation);
                 if let Err(e) = terminal.manager.write(session_id, activation.as_bytes()) {
                     let _ = terminal.manager.close(session_id);
                     return Err(e);
@@ -219,7 +241,10 @@ fn execute_startup_commands(
             let display_cmd = match profile.shell_type {
                 crate::profile::ShellType::Powershell => {
                     let escaped = crate::terminal::escaping::escape_powershell_argument(&err_msg);
-                    format!("Write-Host -ForegroundColor Red {escaped}\r\n")
+                    shell_command_line(
+                        profile.shell_type,
+                        &format!("Write-Host -ForegroundColor Red {escaped}"),
+                    )
                 }
                 crate::profile::ShellType::Cmd => {
                     let escaped = crate::terminal::escaping::escape_cmd_argument(&err_msg);
@@ -241,9 +266,7 @@ fn execute_startup_commands(
     // immediately, which works for fast-starting shells but races heavy
     // initializations.
     for cmd in &profile.startup_commands {
-        let mut line = String::new();
-        line.push_str(cmd);
-        line.push_str("\r\n");
+        let line = shell_command_line(profile.shell_type, cmd);
         if let Err(e) = terminal.manager.write(session_id, line.as_bytes()) {
             let _ = terminal.manager.close(session_id);
             return Err(e);
@@ -370,6 +393,22 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
+    #[test]
+    fn powershell_injected_input_uses_a_single_carriage_return() {
+        assert_eq!(
+            shell_command_line(ShellType::Powershell, "echo ready"),
+            "echo ready\r"
+        );
+        assert_eq!(
+            shell_command_line(ShellType::Cmd, "echo ready"),
+            "echo ready\r\n"
+        );
+        assert_eq!(
+            normalize_initialization_script(ShellType::Powershell, "first\r\nsecond\r\n"),
+            "first\rsecond\r"
+        );
+    }
+
     fn test_state() -> AppState {
         let root = std::env::temp_dir().join(format!("pt-term-cmd-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
@@ -429,6 +468,9 @@ mod tests {
             .env
             .iter()
             .any(|(k, v)| k == "PROJECT_TERMINAL_PROJECT_ID" && v == "p1"));
+        assert!(spawn.env.iter().any(|(k, v)| {
+            k == "PROJECT_TERMINAL_READY" && v == "__PROJECT_TERMINAL_READY_session-1__"
+        }));
     }
 
     #[test]

@@ -1,7 +1,10 @@
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Plus, RotateCcw, Terminal as TerminalIcon, X } from "lucide-react";
 
+import { ContextMenu } from "@/components/ui/context-menu";
+import { dispatchAppCommand, listenForAppCommands } from "@/lib/appCommands";
+import { getAppShortcut, isBrowserShortcut } from "@/lib/keyboardShortcuts";
 import { profileService } from "@/services";
 import { useProjectStore } from "@/stores/projectStore";
 import { useTerminalStore } from "@/stores/terminalStore";
@@ -32,13 +35,14 @@ export function TerminalWorkspace() {
   const updateTab = useTerminalStore((s) => s.updateTab);
   const removeTab = useTerminalStore((s) => s.removeTab);
   const [error, setError] = useState<string | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
 
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const group = activeProjectId ? tabGroups[activeProjectId] : undefined;
-  const tabIds = group?.tabIds ?? [];
+  const tabIds = useMemo(() => group?.tabIds ?? [], [group]);
   const activeTabId = group?.activeTabId ?? null;
 
-  async function handleNewTerminal(projectId: string) {
+  const handleNewTerminal = useCallback(async (projectId: string) => {
     setError(null);
     try {
       const profiles = await profileService.list(projectId);
@@ -65,7 +69,7 @@ export function TerminalWorkspace() {
       const err = e as { message?: string };
       setError(err.message ?? "Failed to start terminal");
     }
-  }
+  }, [registerTab]);
 
   function handleSessionId(tabId: string, sessionId: string) {
     updateTab(tabId, { sessionId, status: "running", exitCode: undefined });
@@ -96,16 +100,90 @@ export function TerminalWorkspace() {
     removeTab(tabId);
   }
 
-  async function handleCloseTab(tabId: string) {
+  const handleCloseTab = useCallback(async (tabId: string) => {
     // TerminalView's unmount cleanup closes the backend session, so we only
     // need to remove the tab here.
     removeTab(tabId);
-  }
+  }, [removeTab]);
+
+  const selectRelativeTab = useCallback((direction: 1 | -1) => {
+    if (!activeProjectId || tabIds.length < 2 || !activeTabId) return;
+    const currentIndex = tabIds.indexOf(activeTabId);
+    const nextIndex = (currentIndex + direction + tabIds.length) % tabIds.length;
+    setActiveTab(activeProjectId, tabIds[nextIndex]);
+  }, [activeProjectId, activeTabId, setActiveTab, tabIds]);
+
+  useEffect(() => {
+    return listenForAppCommands((command) => {
+      if (command.type === "new-terminal") {
+        void handleNewTerminal(command.projectId);
+      }
+    });
+  }, [handleNewTerminal]);
+
+  useEffect(() => {
+    const isEditableControl = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) return false;
+      if (target.closest(".xterm")) return false;
+      return Boolean(target.closest("input, textarea, select, [contenteditable='true'], [role='dialog']"));
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (isBrowserShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      if (isEditableControl(event.target)) return;
+
+      const shortcut = getAppShortcut(event);
+      if (!shortcut) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      switch (shortcut.type) {
+        case "new-terminal":
+          if (activeProjectId) void handleNewTerminal(activeProjectId);
+          break;
+        case "close-terminal":
+          if (activeTabId) void handleCloseTab(activeTabId);
+          break;
+        case "next-tab":
+          selectRelativeTab(1);
+          break;
+        case "previous-tab":
+          selectRelativeTab(-1);
+          break;
+        case "select-tab": {
+          const tabId = tabIds[shortcut.index];
+          if (activeProjectId && tabId) setActiveTab(activeProjectId, tabId);
+          break;
+        }
+        case "copy-terminal":
+          dispatchAppCommand({ type: "copy-terminal" });
+          break;
+        case "paste-terminal":
+          dispatchAppCommand({ type: "paste-terminal" });
+          break;
+      }
+    };
+
+    // Capture phase ensures these commands win over WebView2's Edge-style
+    // browser accelerators, including while xterm's hidden textarea is focused.
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
+  }, [activeProjectId, activeTabId, tabIds, handleCloseTab, handleNewTerminal, selectRelativeTab, setActiveTab]);
 
   const hasAnyTab = Object.keys(tabsById).length > 0;
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col">
+    <section
+      className="flex min-w-0 flex-1 flex-col"
+      onContextMenu={(event) => {
+        event.preventDefault();
+        setMenuPosition({ x: event.clientX, y: event.clientY });
+      }}
+    >
       <div className="flex h-10 items-center gap-1 border-b border-border bg-surface px-2">
         {tabIds.length === 0 ? (
           <span className="px-2 text-xs text-muted-foreground">
@@ -126,6 +204,12 @@ export function TerminalWorkspace() {
                   "group flex items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                   id === activeTabId && "bg-accent text-accent-foreground",
                 )}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (activeProjectId) setActiveTab(activeProjectId, id);
+                  setMenuPosition({ x: event.clientX, y: event.clientY });
+                }}
               >
                 <div className="flex flex-col items-start">
                   <span className="max-w-[160px] truncate">{tab.title}</span>
@@ -237,6 +321,28 @@ export function TerminalWorkspace() {
           </div>
         )}
       </div>
+      {menuPosition ? (
+        <ContextMenu
+          position={menuPosition}
+          onClose={() => setMenuPosition(null)}
+          items={[
+            {
+              label: "New terminal",
+              shortcut: "Ctrl+Shift+T",
+              icon: Plus,
+              disabled: !activeProject,
+              onSelect: () => activeProject && void handleNewTerminal(activeProject.id),
+            },
+            {
+              label: "Close active terminal",
+              shortcut: "Ctrl+Shift+W",
+              icon: X,
+              disabled: !activeTabId,
+              onSelect: () => activeTabId && void handleCloseTab(activeTabId),
+            },
+          ]}
+        />
+      ) : null}
     </section>
   );
 }

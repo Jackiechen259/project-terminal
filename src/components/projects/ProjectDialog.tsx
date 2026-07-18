@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FolderOpen } from "lucide-react";
 
@@ -22,27 +22,38 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useProjectStore } from "@/stores/projectStore";
+import { useSshStore } from "@/stores/sshStore";
 import type { ProjectInput } from "@/services";
+import { SshConnectionDialog } from "@/components/ssh/SshConnectionDialog";
 
 /**
- * Add-project dialog. Phase 2 supports Local projects with a native folder
- * picker. SSH project fields are present in the type but not yet wired in
- * the form - Phase 5 adds the SSH connection selector.
+ * Add a local folder or an SSH remote project. SSH connections are reusable:
+ * projects store only the selected connection id and their remote path.
  */
 export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
   const [openState, setOpenState] = useState(false);
   const [name, setName] = useState("");
   const [type, setType] = useState<"local" | "ssh">("local");
   const [localPath, setLocalPath] = useState("");
+  const [sshConnectionId, setSshConnectionId] = useState("");
+  const [remotePath, setRemotePath] = useState("~");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const createProject = useProjectStore((s) => s.createProject);
+  const connections = useSshStore((s) => s.connections);
+  const loadConnections = useSshStore((s) => s.loadConnections);
+
+  useEffect(() => {
+    if (openState) void loadConnections();
+  }, [openState, loadConnections]);
 
   function reset() {
     setName("");
     setType("local");
     setLocalPath("");
+    setSshConnectionId("");
+    setRemotePath("~");
     setError(null);
   }
 
@@ -62,10 +73,18 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
       setError("Local path is required");
       return;
     }
+    if (type === "ssh" && !sshConnectionId) {
+      setError("Choose an SSH connection first");
+      return;
+    }
+    if (type === "ssh" && !remotePath.trim()) {
+      setError("Remote path is required");
+      return;
+    }
     const input: ProjectInput = {
       name: name.trim(),
       type,
-      ...(type === "local" ? { local: { path: localPath } } : {}),
+      ...(type === "local" ? { local: { path: localPath.trim() } } : { ssh: { connectionId: sshConnectionId, remotePath: remotePath.trim() } }),
     };
     setSubmitting(true);
     setError(null);
@@ -122,9 +141,7 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="local">Local folder</SelectItem>
-                <SelectItem value="ssh" disabled>
-                  SSH remote (Phase 5)
-                </SelectItem>
+                <SelectItem value="ssh">SSH remote</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -148,6 +165,20 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
                   <FolderOpen className="h-4 w-4" />
                 </Button>
               </div>
+            </div>
+          ) : null}
+
+          {type === "ssh" ? (
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-3"><Label htmlFor="ssh-connection">SSH connection</Label><SshConnectionDialog onClosed={() => void loadConnections()} trigger={<Button type="button" variant="link" className="h-auto p-0 text-xs">Manage connections</Button>} /></div>
+                <Select value={sshConnectionId} onValueChange={setSshConnectionId}>
+                  <SelectTrigger id="ssh-connection"><SelectValue placeholder={connections.length ? "Choose a connection" : "No saved connections"} /></SelectTrigger>
+                  <SelectContent>{connections.map((connection) => <SelectItem key={connection.id} value={connection.id}>{connection.name} — {connection.host}</SelectItem>)}</SelectContent>
+                </Select>
+                {connections.length === 0 ? <span className="text-xs text-muted-foreground">Create a reusable SSH connection before adding this project.</span> : null}
+              </div>
+              <div className="flex flex-col gap-2"><Label htmlFor="remote-path">Remote path</Label><Input id="remote-path" value={remotePath} onChange={(event) => setRemotePath(event.target.value)} placeholder="/home/developer/project" /><span className="text-xs text-muted-foreground">The remote working directory. It is used when interactive SSH terminals are added in Phase 6.</span></div>
             </div>
           ) : null}
 
