@@ -144,4 +144,18 @@ describe("terminalStore", () => {
       expect(tab.exitCode).toBe(0);
     });
   });
+
+  it("cleans up all tabs when a project is deleted", () => {
+    const { registerTab, removeProjectTabs, setActiveProject } =
+      useTerminalStore.getState();
+    registerTab(makeTab("p1t1", "p1"));
+    registerTab(makeTab("p1t2", "p1"));
+    registerTab(makeTab("p2t1", "p2"));
+    setActiveProject("p1");
+    removeProjectTabs("p1");
+    expect(useTerminalStore.getState().tabsById.p1t1).toBeUndefined();
+    expect(useTerminalStore.getState().tabsById.p2t1).toBeDefined();
+    expect(useTerminalStore.getState().tabGroupsByProjectId.p1).toBeUndefined();
+    expect(useTerminalStore.getState().activeProjectId).toBeNull();
+  });
 });

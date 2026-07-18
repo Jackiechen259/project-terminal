@@ -500,6 +500,14 @@ mod tests {
     }
 
     #[test]
+    fn close_is_idempotent() {
+        let (session, _rx) = make_session("cmd.exe", &["/Q"]);
+        session.close();
+        session.close();
+        assert_eq!(session.status(), SessionStatus::Exited);
+    }
+
+    #[test]
     fn encode_bytes_handles_empty_and_padded_lengths() {
         assert_eq!(encode_bytes(b""), "");
         assert_eq!(encode_bytes(b"A"), "QQ==");

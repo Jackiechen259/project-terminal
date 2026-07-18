@@ -1,11 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Folder, Plus, Server, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useProjectStore } from "@/stores/projectStore";
 import { useTerminalStore } from "@/stores/terminalStore";
-import { sshService } from "@/services";
-import { projectService } from "@/services";
+import { projectService, sshService, terminalService } from "@/services";
 import { cn } from "@/lib/utils";
 import type { Project } from "@/types";
 
@@ -150,15 +149,34 @@ function ProjectRow({
   ).length;
   const hasError = tabs.some((tab) => tab.status === "error");
   const deleteProject = useProjectStore((s) => s.deleteProject);
+  const projectGroup = useTerminalStore(
+    (s) => s.tabGroupsByProjectId[project.id],
+  );
+  const allTabs = useTerminalStore((s) => s.tabsById);
+  const projectTabs = useMemo(
+    () => projectGroup?.tabIds.map((id) => allTabs[id]).filter(Boolean) ?? [],
+    [allTabs, projectGroup],
+  );
+  const removeProjectTabs = useTerminalStore((s) => s.removeProjectTabs);
   const [menuPosition, setMenuPosition] = useState<{
     x: number;
     y: number;
   } | null>(null);
   const [editing, setEditing] = useState(false);
 
-  function removeProject() {
+  async function removeProject() {
     if (window.confirm(`Remove project "${project.name}"?`)) {
-      void deleteProject(project.id);
+      try {
+        await Promise.all(
+          projectTabs
+            .filter((tab) => tab.sessionId)
+            .map((tab) => terminalService.close(tab.sessionId)),
+        );
+        await deleteProject(project.id);
+        removeProjectTabs(project.id);
+      } catch {
+        // Keep state intact when persistence fails, so the user can recover.
+      }
     }
   }
 
@@ -205,7 +223,7 @@ function ProjectRow({
           aria-label="Remove project"
           onClick={(e) => {
             e.stopPropagation();
-            removeProject();
+            void removeProject();
           }}
         >
           <Trash2 className="h-3.5 w-3.5" />
@@ -216,7 +234,7 @@ function ProjectRow({
           project={project}
           position={menuPosition}
           onOpen={onSelect}
-          onRemove={removeProject}
+          onRemove={() => void removeProject()}
           onTestSsh={onTestSsh}
           onEdit={() => setEditing(true)}
           onOpenExplorer={() => void projectService.openInExplorer(project.id)}

@@ -2,8 +2,6 @@ import type { MouseEvent } from "react";
 import { Minus, Square, Terminal, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-const appWindow = getCurrentWindow();
-
 /**
  * Application-owned title bar for the undecorated desktop window. Keeping the
  * window actions here means the chrome follows the rest of the dark UI rather
@@ -12,12 +10,12 @@ const appWindow = getCurrentWindow();
 export function WindowTitleBar() {
   function startDragging(event: MouseEvent<HTMLElement>) {
     if (event.button === 0) {
-      void appWindow.startDragging();
+      void getCurrentWindow().startDragging();
     }
   }
 
   function toggleMaximize() {
-    void appWindow.toggleMaximize();
+    void getCurrentWindow().toggleMaximize();
   }
 
   return (
@@ -44,13 +42,20 @@ export function WindowTitleBar() {
         onMouseDown={(event) => event.stopPropagation()}
         onDoubleClick={(event) => event.stopPropagation()}
       >
-        <WindowControl label="Minimize" onClick={() => void appWindow.minimize()}>
+        <WindowControl
+          label="Minimize"
+          onClick={() => void getCurrentWindow().minimize()}
+        >
           <Minus />
         </WindowControl>
         <WindowControl label="Maximize or restore" onClick={toggleMaximize}>
           <Square />
         </WindowControl>
-        <WindowControl label="Close" close onClick={() => void appWindow.close()}>
+        <WindowControl
+          label="Close"
+          close
+          onClick={() => void getCurrentWindow().close()}
+        >
           <X />
         </WindowControl>
       </div>

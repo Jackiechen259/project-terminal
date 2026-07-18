@@ -43,6 +43,9 @@ export interface TerminalStoreState {
 
   /** Ensure every project has a tab group. */
   ensureGroup: (projectId: string) => ProjectTabGroup;
+
+  /** Clear tabs for a deleted project after its PTYs have been closed. */
+  removeProjectTabs: (projectId: string) => void;
 }
 
 export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
@@ -67,6 +70,21 @@ export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
       },
     });
     return fresh;
+  },
+
+  removeProjectTabs: (projectId) => {
+    const group = get().tabGroupsByProjectId[projectId];
+    if (!group) return;
+    const tabsById = { ...get().tabsById };
+    for (const tabId of group.tabIds) delete tabsById[tabId];
+    const tabGroupsByProjectId = { ...get().tabGroupsByProjectId };
+    delete tabGroupsByProjectId[projectId];
+    set({
+      tabsById,
+      tabGroupsByProjectId,
+      activeProjectId:
+        get().activeProjectId === projectId ? null : get().activeProjectId,
+    });
   },
 
   registerTab: (tab) => {
