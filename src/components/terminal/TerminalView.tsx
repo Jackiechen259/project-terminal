@@ -36,6 +36,16 @@ interface PendingSession {
 }
 
 /**
+ * OSC window-title sequences are emitted by shells and interactive agents.
+ * Keep the tab strip readable and avoid accepting terminal control characters
+ * as visible UI text.
+ */
+function normaliseTerminalTitle(value: string): string | null {
+  const title = value.replace(/\p{Cc}/gu, "").trim();
+  return title ? title.slice(0, 160) : null;
+}
+
+/**
  * Mount an xterm.js terminal and create a backend PTY for the given project
  * + profile. Output bytes flow from the PTY through a Tauri Channel into the
  * Terminal. Input bytes flow from the Terminal through terminalService.write.
@@ -45,11 +55,14 @@ export function TerminalView({
   active,
   onSessionId,
   onExit,
+  onTitleChange,
 }: {
   pending: PendingSession;
   active: boolean;
   onSessionId?: (sessionId: string) => void;
   onExit?: (code: number | null, status?: "exited" | "error") => void;
+  /** Called when the terminal emits OSC 0/2 to update its window title. */
+  onTitleChange?: (title: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -58,6 +71,7 @@ export function TerminalView({
   const statusTimerRef = useRef<number | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const reportedExitRef = useRef(false);
+  const onTitleChangeRef = useRef(onTitleChange);
   const [menuPosition, setMenuPosition] = useState<{
     x: number;
     y: number;
@@ -74,6 +88,12 @@ export function TerminalView({
     if (text) termRef.current?.paste(text);
     termRef.current?.focus();
   }, []);
+
+  // The terminal is intentionally not recreated when a parent callback gets
+  // a new identity. Keep the latest callback available to its xterm listener.
+  useEffect(() => {
+    onTitleChangeRef.current = onTitleChange;
+  }, [onTitleChange]);
 
   useEffect(() => {
     return listenForAppCommands((command) => {
@@ -120,6 +140,10 @@ export function TerminalView({
     const disposable = term.onData((data) => {
       const sid = sessionIdRef.current;
       if (sid) void terminalService.write(sid, data);
+    });
+    const titleDisposable = term.onTitleChange((nextTitle) => {
+      const title = normaliseTerminalTitle(nextTitle);
+      if (title) onTitleChangeRef.current?.(title);
     });
 
     const ro = new ResizeObserver(() => {
@@ -192,6 +216,7 @@ export function TerminalView({
     return () => {
       cancelled = true;
       disposable.dispose();
+      titleDisposable.dispose();
       ro.disconnect();
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
       if (statusTimerRef.current) window.clearInterval(statusTimerRef.current);

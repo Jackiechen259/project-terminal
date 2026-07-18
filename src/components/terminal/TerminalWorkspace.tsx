@@ -394,6 +394,7 @@ export function TerminalWorkspace() {
                       handleSessionId(tab.id, sessionId)
                     }
                     onExit={(code, status) => handleExit(tab.id, code, status)}
+                    onTitleChange={(title) => updateTab(tab.id, { title })}
                   />
                 </div>
               );
