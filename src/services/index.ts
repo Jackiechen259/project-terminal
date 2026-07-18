@@ -208,3 +208,18 @@ export const terminalService = {
   },
   decodeBase64,
 };
+
+export interface DetectedCondaEnvironment {
+  name?: string;
+  path: string;
+  isActive: boolean;
+  isBase: boolean;
+}
+
+export const environmentService = {
+  detectConda: () => invokeOrThrow<string[]>("detect_conda_installations"),
+  listConda: (condaExecutable: string) =>
+    invokeOrThrow<DetectedCondaEnvironment[]>("list_conda_environments", {
+      condaExecutable,
+    }),
+};

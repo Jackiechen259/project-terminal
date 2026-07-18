@@ -173,7 +173,7 @@ Writes are atomic: serialize → temp file → flush → rename. Corrupt files a
 - No AI command suggestions, split panes, cloud sync, file manager, built-in editor, SFTP UI, port-forwarding UI, Git GUI, multi-window, or plugin system.
 - Running sessions are not restored across application restarts.
 - Terminal output is not persisted.
-- The application does not create, modify, or install Conda/venv/poetry/uv environments.
+- Startup commands are written immediately to the PTY upon session creation. The application does not currently wait for a shell prompt before dispatching them, which means fast startup commands may race with heavy shell initialization scripts (e.g. bashrc/profile).
 - The application does not auto-accept unknown SSH host keys.
 
 ## Roadmap

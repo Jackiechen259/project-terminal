@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Plus, Terminal as TerminalIcon } from "lucide-react";
+import { Plus, RotateCcw, Terminal as TerminalIcon, X } from "lucide-react";
 
 import { profileService } from "@/services";
 import { useProjectStore } from "@/stores/projectStore";
@@ -68,12 +68,37 @@ export function TerminalWorkspace() {
   }
 
   function handleSessionId(tabId: string, sessionId: string) {
-    updateTab(tabId, { sessionId, status: "running" });
+    updateTab(tabId, { sessionId, status: "running", exitCode: undefined });
+  }
+
+  function handleExit(tabId: string, code: number | null) {
+    updateTab(tabId, { status: "exited", exitCode: code ?? undefined });
+  }
+  async function handleRestart(tabId: string) {
+    const oldTab = tabsById[tabId];
+    if (!oldTab) return;
+
+    // TerminalView owns channel creation, so the cleanest frontend restart
+    // is dropping the old tab (closing its PTY via unmount) and inserting
+    // a new tab that triggers create_terminal.
+    const tab: TerminalTab = {
+      id: crypto.randomUUID(),
+      sessionId: "",
+      projectId: oldTab.projectId,
+      profileId: oldTab.profileId,
+      title: oldTab.title,
+      cwd: oldTab.cwd,
+      status: "starting",
+      createdAt: Date.now(),
+      lastActivatedAt: Date.now(),
+    };
+    registerTab(tab);
+    removeTab(tabId);
   }
 
   async function handleCloseTab(tabId: string) {
     // TerminalView's unmount cleanup closes the backend session, so we only
-    // need to remove the tab here. The view will dispose its xterm.
+    // need to remove the tab here.
     removeTab(tabId);
   }
 
@@ -98,11 +123,32 @@ export function TerminalWorkspace() {
                   activeProjectId && setActiveTab(activeProjectId, id)
                 }
                 className={cn(
-                  "group flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                  "group flex items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                   id === activeTabId && "bg-accent text-accent-foreground",
                 )}
               >
-                <span className="max-w-[160px] truncate">{tab.title}</span>
+                <div className="flex flex-col items-start">
+                  <span className="max-w-[160px] truncate">{tab.title}</span>
+                  {tab.status === "exited" ? (
+                    <span className="text-[10px] text-danger">
+                      Exited ({tab.exitCode ?? "?"})
+                    </span>
+                  ) : null}
+                </div>
+                {tab.status === "exited" ? (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleRestart(id);
+                    }}
+                    className="opacity-50 hover:opacity-100"
+                    aria-label="Restart tab"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                  </span>
+                ) : null}
                 <span
                   role="button"
                   tabIndex={0}
@@ -119,7 +165,7 @@ export function TerminalWorkspace() {
                   className="opacity-50 hover:opacity-100"
                   aria-label="Close tab"
                 >
-                  ×
+                  <X className="h-3.5 w-3.5" />
                 </span>
               </button>
             );
@@ -174,6 +220,7 @@ export function TerminalWorkspace() {
                     onSessionId={(sessionId) =>
                       handleSessionId(tab.id, sessionId)
                     }
+                    onExit={(code) => handleExit(tab.id, code)}
                   />
                 </div>
               );

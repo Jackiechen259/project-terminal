@@ -4,10 +4,13 @@
 //! (`ssh.exe`) sessions arrive in Phase 6; environment initialization
 //! (Conda/venv/Poetry/uv) arrives in Phase 3.6/3.7.
 
+pub mod conda;
 pub mod escaping;
+pub mod initializer;
 pub mod manager;
 pub mod session;
 
+pub use initializer::build_activation_script;
 pub use manager::TerminalManager;
 pub use session::{SessionSpawn, SessionStatus, TerminalOutput, TerminalSession};
 

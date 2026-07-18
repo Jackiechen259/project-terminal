@@ -17,7 +17,7 @@ use tauri::State;
 use crate::error::{AppError, AppResult};
 use crate::state::{new_id, AppState};
 use crate::terminal::{
-    profile_needs_environment, resolve_local_shell, SessionSpawn, TerminalManager, TerminalOutput,
+    resolve_local_shell, SessionSpawn, TerminalManager, TerminalOutput,
 };
 
 use super::ListResponse;
@@ -92,6 +92,12 @@ fn build_session_spawn(
     session_id: &str,
 ) -> AppResult<SessionSpawn> {
     let project = app.projects.get(&request.project_id)?;
+    if project.project_type != crate::project::ProjectType::Local {
+        return Err(AppError::Configuration(format!(
+            "Terminal creation for non-local projects is not implemented until Phase 6 (got {:?})",
+            project.project_type
+        )));
+    }
     let profile = app.profiles.get(&request.profile_id)?;
     if profile.project_id != project.id {
         return Err(AppError::Configuration(format!(
@@ -121,22 +127,15 @@ fn build_session_spawn(
             env.push((k.clone(), v.clone()));
         }
     }
-    env.push(("PROJECT_TERMINAL_PROJECT_ID".into(), project.id.clone()));
-    env.push(("PROJECT_TERMINAL_PROFILE_ID".into(), profile.id.clone()));
+    env.push((
+        "PROJECT_TERMINAL_PROJECT_ID".into(),
+        project.id.clone(),
+    ));
+    env.push((
+        "PROJECT_TERMINAL_PROFILE_ID".into(),
+        profile.id.clone(),
+    ));
 
-    // Environment initialization (Conda/venv/Poetry/uv) arrives in Phase
-    // 3.6/3.7. For Phase 3, a non-`none` environment type surfaces a clear
-    // error so the frontend does not silently start a session without the
-    // requested activation.
-    if profile_needs_environment(&profile) {
-        return Err(AppError::EnvironmentInitializationFailed(format!(
-            "Environment type {:?} is not supported until Phase 3.6/3.7",
-            profile.environment_type
-        )));
-    }
-
-    // Startup commands arrive in Phase 3.5; for Phase 3 we accept the profile
-    // but do not yet execute startup_commands.
     Ok(SessionSpawn {
         session_id: session_id.to_string(),
         program,
@@ -146,6 +145,66 @@ fn build_session_spawn(
         rows: request.rows.max(1),
         cols: request.cols.max(1),
     })
+}
+
+fn execute_startup_commands(
+    app: &AppState,
+    terminal: &TerminalState,
+    profile_id: &str,
+    session_id: &str,
+) -> AppResult<()> {
+    let profile = app.profiles.get(profile_id)?;
+    
+    // Phase 3.6/3.7: Environment activation is evaluated and pushed first.
+    // Plan §20.8 / §22: if activation generation fails, we MUST retain the
+    // shell so the user can manually inspect or fix it.
+    match crate::terminal::build_activation_script(&profile) {
+        Ok(activation) => {
+            if !activation.is_empty() {
+                if let Err(e) = terminal.manager.write(session_id, activation.as_bytes()) {
+                    let _ = terminal.manager.close(session_id);
+                    return Err(e);
+                }
+            }
+        }
+        Err(e) => {
+            // Write a shell-safe echo command so the error displays visibly
+            // but is not parsed as a malformed bare text command by the shell.
+            let err_msg = format!("Environment activation failed: {e}");
+            let display_cmd = match profile.shell_type {
+                crate::profile::ShellType::Powershell => {
+                    let escaped = crate::terminal::escaping::escape_powershell_argument(&err_msg);
+                    format!("Write-Host -ForegroundColor Red {escaped}\r\n")
+                }
+                crate::profile::ShellType::Cmd => {
+                    let escaped = crate::terminal::escaping::escape_cmd_argument(&err_msg);
+                    format!("echo {escaped}\r\n")
+                }
+                _ => {
+                    let escaped = crate::terminal::escaping::escape_bash_argument(&err_msg);
+                    format!("echo {escaped}\r\n")
+                }
+            };
+            let _ = terminal.manager.write(session_id, display_cmd.as_bytes());
+        }
+    }
+
+    // Per plan §22 (Wait until interactive shell is available): portable-pty
+    // buffers writes until the shell reads them. A true prompt-sync handshake
+    // (waiting for the shell's PS1 or native ready marker) is a complex
+    // feature that we defer out of MVP scope. We write the commands to the PTY
+    // immediately, which works for fast-starting shells but races heavy
+    // initializations.
+    for cmd in &profile.startup_commands {
+        let mut line = String::new();
+        line.push_str(cmd);
+        line.push_str("\r\n");
+        if let Err(e) = terminal.manager.write(session_id, line.as_bytes()) {
+            let _ = terminal.manager.close(session_id);
+            return Err(e);
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -158,6 +217,11 @@ pub fn create_terminal(
     let session_id = new_id("session");
     let spawn = build_session_spawn(&app, &request, &session_id)?;
     let id = terminal.manager.create(spawn, Box::new(on_output))?;
+
+    if let Err(e) = execute_startup_commands(&app, &terminal, &request.profile_id, &id) {
+        return Err(e);
+    }
+
     terminal.remember(&id, &request.project_id, &request.profile_id);
     Ok(id)
 }
@@ -184,7 +248,10 @@ pub fn resize_terminal(
 }
 
 #[tauri::command]
-pub fn close_terminal(terminal: State<'_, TerminalState>, session_id: String) -> AppResult<()> {
+pub fn close_terminal(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+) -> AppResult<()> {
     terminal.manager.close(&session_id)?;
     terminal.forget(&session_id);
     Ok(())
@@ -216,8 +283,23 @@ pub fn restart_terminal(
     };
     let spawn = build_session_spawn(&app, &request, &new_id)?;
     let id = terminal.manager.create(spawn, Box::new(on_output))?;
+
+    if let Err(e) = execute_startup_commands(&app, &terminal, &profile_id, &id) {
+        return Err(e);
+    }
+
     terminal.remember(&id, &project_id, &profile_id);
     Ok(id)
+}
+
+#[tauri::command]
+pub fn detect_conda_installations() -> Vec<String> {
+    crate::terminal::conda::detect_conda_installations()
+}
+
+#[tauri::command]
+pub fn list_conda_environments(conda_executable: String) -> AppResult<Vec<crate::terminal::conda::DetectedCondaEnvironment>> {
+    crate::terminal::conda::list_conda_environments(&conda_executable)
 }
 
 // keep ListResponse import live for downstream additions.
@@ -228,9 +310,7 @@ type _ListResponseMarker<T> = ListResponse<T>;
 mod tests {
     use super::*;
     use crate::config_dirs::ConfigDirs;
-    use crate::profile::{
-        default_powershell_profile, EnvironmentType, ProfileRepository, ShellType,
-    };
+    use crate::profile::{default_powershell_profile, EnvironmentType, ProfileRepository, ShellType};
     use crate::project::{LocalProjectConfig, Project, ProjectRepository, ProjectType};
     use crate::ssh::SshConnectionRepository;
     use chrono::Utc;
@@ -317,33 +397,6 @@ mod tests {
     }
 
     #[test]
-    fn build_session_spawn_rejects_environment_until_phase_3_6() {
-        let app = test_state();
-        let dir = seed_project(&app, "p1");
-        let mut profile = default_powershell_profile("profile-1".into(), "p1".into());
-        profile.shell_executable = Some(
-            std::env::temp_dir()
-                .join("fake-shell.exe")
-                .to_string_lossy()
-                .into_owned(),
-        );
-        profile.environment_type = EnvironmentType::Conda;
-        app.profiles.upsert(profile).unwrap();
-
-        let request = CreateTerminalRequest {
-            project_id: "p1".into(),
-            profile_id: "profile-1".into(),
-            rows: 24,
-            cols: 80,
-        };
-        let err = build_session_spawn(&app, &request, "session-1").unwrap_err();
-        // The session spawn must fail loudly so we never silently start a
-        // session without the requested environment.
-        assert!(matches!(err, AppError::EnvironmentInitializationFailed(_)));
-        let _ = dir;
-    }
-
-    #[test]
     fn build_session_spawn_rejects_missing_local_path_directory() {
         let app = test_state();
         // Insert a project whose path does not exist on disk.
@@ -374,6 +427,37 @@ mod tests {
         assert!(matches!(err, AppError::ProjectPathNotFound(_)));
     }
 
+    #[test]
+    fn build_session_spawn_rejects_ssh_projects() {
+        let app = test_state();
+        let project = Project {
+            id: "p1".into(),
+            name: "Remote".into(),
+            project_type: ProjectType::Ssh,
+            local: None,
+            ssh: Some(crate::project::SshProjectConfig {
+                connection_id: "conn-1".into(),
+                remote_path: "/srv".into(),
+            }),
+            default_profile_id: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        app.projects.upsert(project).unwrap();
+
+        let request = CreateTerminalRequest {
+            project_id: "p1".into(),
+            profile_id: "profile-1".into(),
+            rows: 24,
+            cols: 80,
+        };
+        let err = build_session_spawn(&app, &request, "session-1").unwrap_err();
+        assert!(matches!(
+            err,
+            AppError::Configuration(msg) if msg.contains("non-local")
+        ));
+    }
+
     // Test that the public resolver surfaces an explicit error for custom
     // shells without an executable - covers the "no executable" guard path.
     #[test]
@@ -384,5 +468,146 @@ mod tests {
         p.shell_executable = None;
         let err = resolve_local_shell(&p).unwrap_err();
         assert!(matches!(err, AppError::ShellNotFound(_)));
+    }
+
+    #[test]
+    fn create_terminal_retains_shell_on_activation_error() {
+        use std::sync::mpsc;
+        let app = test_state();
+        let dir = seed_project(&app, "p1");
+
+        let mut profile = default_powershell_profile("profile-1".into(), "p1".into());
+        profile.shell_type = ShellType::Cmd;
+        profile.shell_executable = Some("cmd.exe".into());
+        profile.shell_args = vec!["/Q".into()];
+        // Intentionally misconfigure conda to cause an activation script error
+        profile.environment_type = EnvironmentType::Conda;
+        profile.conda = Some(crate::profile::CondaEnvironmentConfig {
+            conda_executable: None,
+            conda_root: None,
+            environment_name: Some("test-env".into()),
+            environment_path: None,
+            activation_mode: crate::profile::CondaActivationMode::CondaBat,
+            auto_activate: true,
+        }); // CondaBat requires conda_root
+        app.profiles.upsert(profile).unwrap();
+
+        let request = CreateTerminalRequest {
+            project_id: "p1".into(),
+            profile_id: "profile-1".into(),
+            rows: 24,
+            cols: 80,
+        };
+
+        let terminal = TerminalState::new();
+        let session_id = "test-session";
+        let spawn = build_session_spawn(&app, &request, session_id).unwrap();
+
+        struct MpscSink(mpsc::Sender<TerminalOutput>);
+        impl crate::terminal::session::OutputSink for MpscSink {
+            fn send_output(&self, output: TerminalOutput) -> bool {
+                self.0.send(output).is_ok()
+            }
+        }
+        let (tx, rx) = mpsc::channel();
+        let id = terminal.manager.create(spawn, Box::new(MpscSink(tx))).unwrap();
+
+        // The helper should write the error into the shell and NOT return an
+        // error, keeping the session alive.
+        execute_startup_commands(&app, &terminal, &request.profile_id, &id).unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let mut out = Vec::new();
+        use base64::Engine;
+        while std::time::Instant::now() < deadline {
+            match rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                Ok(chunk) => {
+                    let bytes =
+                        base64::engine::general_purpose::STANDARD.decode(chunk.data).unwrap();
+                    out.extend_from_slice(&bytes);
+                    if out.windows(27).any(|w| w == b"Environment activation failed") {
+                        break; 
+                    }
+                }
+                Err(_) => {}
+            }
+        }
+        terminal.manager.close_all();
+        
+        let output_str = String::from_utf8_lossy(&out);
+        assert!(output_str.contains("Environment activation failed"), "Got: {:?}", output_str);
+        let _ = dir;
+    }
+
+    #[test]
+    fn execute_startup_commands_sends_to_pty() {
+        use std::sync::mpsc;
+        let app = test_state();
+        let dir = seed_project(&app, "p1");
+
+        let mut profile = default_powershell_profile("profile-1".into(), "p1".into());
+        // Use cmd.exe with /Q to minimize prompt noise and verify the echo.
+        profile.shell_type = ShellType::Cmd;
+        profile.shell_executable = Some("cmd.exe".into());
+        profile.shell_args = vec!["/Q".into()];
+        profile.startup_commands = vec!["echo PT_STARTUP_OK".into()];
+        app.profiles.upsert(profile).unwrap();
+
+        let request = CreateTerminalRequest {
+            project_id: "p1".into(),
+            profile_id: "profile-1".into(),
+            rows: 24,
+            cols: 80,
+        };
+
+        let terminal = TerminalState::new();
+
+        // We bypass the public create_terminal wrapper (which requires Channel)
+        // and drive the internal pieces directly to observe the startup commands.
+        let session_id = "test-session";
+        let spawn = build_session_spawn(&app, &request, session_id).unwrap();
+
+        struct MpscSink(mpsc::Sender<TerminalOutput>);
+        impl crate::terminal::session::OutputSink for MpscSink {
+            fn send_output(&self, output: TerminalOutput) -> bool {
+                self.0.send(output).is_ok()
+            }
+        }
+        let (tx, rx) = mpsc::channel();
+        let id = terminal
+            .manager
+            .create(spawn, Box::new(MpscSink(tx)))
+            .unwrap();
+
+        // Execute startup commands manually (replicating the wrapper).
+        execute_startup_commands(&app, &terminal, &request.profile_id, &id).unwrap();
+
+        // Read until we see our marker or time out.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let mut out = Vec::new();
+        use base64::Engine;
+        while std::time::Instant::now() < deadline {
+            match rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                Ok(chunk) => {
+                    let bytes =
+                        base64::engine::general_purpose::STANDARD.decode(chunk.data).unwrap();
+                    out.extend_from_slice(&bytes);
+                    if out.windows(14).any(|w| w == b"PT_STARTUP_OK\r") {
+                        break;
+                    }
+                }
+                Err(_) => {}
+            }
+        }
+
+        terminal.manager.close_all();
+
+        let output_str = String::from_utf8_lossy(&out);
+        assert!(
+            output_str.contains("PT_STARTUP_OK"),
+            "expected startup command output, got: {:?}",
+            output_str
+        );
+        let _ = dir;
     }
 }

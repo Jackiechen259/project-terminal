@@ -108,6 +108,9 @@ pub fn run() {
                 commands::terminal::resize_terminal,
                 commands::terminal::close_terminal,
                 commands::terminal::restart_terminal,
+                // Environment detection (plan §12.4)
+                commands::terminal::detect_conda_installations,
+                commands::terminal::list_conda_environments,
             ])
             .on_window_event(move |_window, event| {
                 if let tauri::WindowEvent::CloseRequested { .. } = event {
