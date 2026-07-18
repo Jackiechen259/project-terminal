@@ -37,11 +37,23 @@ pub fn build_activation_script(profile: &TerminalProfile) -> AppResult<String> {
                 Ok(String::new())
             }
         }
-        EnvironmentType::Poetry | EnvironmentType::Uv => Err(AppError::Configuration(format!(
-            "{:?} initialization is not yet implemented",
-            profile.environment_type
-        ))),
+        EnvironmentType::Poetry => build_poetry_activation(profile),
+        EnvironmentType::Uv => build_uv_activation(profile),
     }
+}
+
+fn escape_cmd_activation_argument(input: &str) -> AppResult<String> {
+    // CMD expands `%VAR%` before caret escapes are applied. Delayed expansion
+    // likewise treats `!VAR!` specially. There is no reliable literal form for
+    // either sequence when injecting a command into an interactive CMD
+    // session, so reject those saved values instead of silently activating a
+    // different path or environment.
+    if input.contains(['%', '!', '\r', '\n']) {
+        return Err(AppError::Configuration(
+            "CMD expansion syntax is not supported in activation paths or names".into(),
+        ));
+    }
+    Ok(escape_cmd_argument(input))
 }
 
 fn build_conda_activation(shell: ShellType, config: &CondaEnvironmentConfig) -> AppResult<String> {
@@ -97,8 +109,8 @@ fn build_conda_activation(shell: ShellType, config: &CondaEnvironmentConfig) -> 
                     ));
                 }
                 let bat = format!("{root}\\condabin\\conda.bat");
-                let escaped_bat = escape_cmd_argument(&bat);
-                let escaped_target = escape_cmd_argument(target);
+                let escaped_bat = escape_cmd_activation_argument(&bat)?;
+                let escaped_target = escape_cmd_activation_argument(target)?;
                 Ok(format!("call {escaped_bat} activate {escaped_target}\r\n"))
             }
             _ => Err(AppError::Configuration(format!(
@@ -113,6 +125,46 @@ fn build_conda_activation(shell: ShellType, config: &CondaEnvironmentConfig) -> 
     }
 }
 
+fn build_poetry_activation(profile: &TerminalProfile) -> AppResult<String> {
+    if profile.environment_path.is_some() {
+        return build_venv_activation(profile);
+    }
+
+    // `poetry env info --path` resolves the managed virtual environment
+    // without creating or synchronizing it. Each shell activates the resolved
+    // path in-place; `poetry shell` would create a nested shell and race later
+    // startup commands.
+    match profile.shell_type {
+        ShellType::Powershell => Ok(
+            "$ptPoetryEnv = poetry env info --path\r\n\
+             if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($ptPoetryEnv)) { Write-Error 'Could not resolve the Poetry environment path' } else { & \"$ptPoetryEnv\\Scripts\\Activate.ps1\" }\r\n"
+                .into(),
+        ),
+        ShellType::Cmd => Ok(
+            "for /f \"delims=\" %P in ('poetry env info --path') do call \"%P\\Scripts\\activate.bat\"\r\n"
+                .into(),
+        ),
+        ShellType::GitBash => Ok(
+            "pt_poetry_env=\"$(poetry env info --path)\" && source \"$(cygpath -u \"$pt_poetry_env\")/Scripts/activate\"\r\n"
+                .into(),
+        ),
+        ShellType::Wsl => Ok(
+            "pt_poetry_env=\"$(poetry env info --path)\" && source \"$pt_poetry_env/bin/activate\"\r\n"
+                .into(),
+        ),
+        _ => Err(AppError::Configuration(format!(
+            "Poetry activation not supported for {:?}",
+            profile.shell_type
+        ))),
+    }
+}
+
+fn build_uv_activation(profile: &TerminalProfile) -> AppResult<String> {
+    // uv environments are standard venvs, typically in `.venv`.
+    // We can just reuse the venv logic.
+    build_venv_activation(profile)
+}
+
 fn build_venv_activation(profile: &TerminalProfile) -> AppResult<String> {
     let path = profile.environment_path.as_deref().unwrap_or(".venv");
     match profile.shell_type {
@@ -123,11 +175,16 @@ fn build_venv_activation(profile: &TerminalProfile) -> AppResult<String> {
         }
         ShellType::Cmd => {
             let script = format!("{path}\\Scripts\\activate.bat");
-            let escaped = escape_cmd_argument(&script);
+            let escaped = escape_cmd_activation_argument(&script)?;
             Ok(format!("{escaped}\r\n"))
         }
-        ShellType::GitBash | ShellType::Wsl => {
-            // Forward slashes for bash.
+        ShellType::GitBash => {
+            let path_fwd = path.replace('\\', "/");
+            let script = format!("{path_fwd}/Scripts/activate");
+            let escaped = escape_bash_argument(&script);
+            Ok(format!("source {escaped}\r\n"))
+        }
+        ShellType::Wsl => {
             let path_fwd = path.replace('\\', "/");
             let script = format!("{path_fwd}/bin/activate");
             let escaped = escape_bash_argument(&script);
@@ -187,7 +244,34 @@ mod tests {
             auto_activate: true,
         });
         let script = build_activation_script(&p).unwrap();
-        assert_eq!(script, "& D:\\conda\\shell\\condabin\\conda-hook.ps1\r\nconda activate test-env\r\n");
+        assert_eq!(
+            script,
+            "& D:\\conda\\shell\\condabin\\conda-hook.ps1\r\nconda activate test-env\r\n"
+        );
+    }
+
+    #[test]
+    fn conda_cmd_rejects_expansion_syntax_in_saved_configuration() {
+        for environment_name in ["%PATH%", "!PATH!"] {
+            let mut p = base_profile();
+            p.shell_type = ShellType::Cmd;
+            p.environment_type = EnvironmentType::Conda;
+            p.conda = Some(CondaEnvironmentConfig {
+                conda_executable: None,
+                conda_root: Some("C:\\conda".into()),
+                environment_name: Some(environment_name.into()),
+                environment_path: None,
+                activation_mode: CondaActivationMode::CondaBat,
+                auto_activate: true,
+            });
+
+            let error = build_activation_script(&p).unwrap_err();
+
+            assert!(matches!(
+                error,
+                AppError::Configuration(message) if message.contains("CMD expansion")
+            ));
+        }
     }
 
     #[test]
@@ -226,5 +310,55 @@ mod tests {
         p.environment_type = EnvironmentType::Venv;
         let script = build_activation_script(&p).unwrap();
         assert_eq!(script, "\".venv\\Scripts\\activate.bat\"\r\n");
+    }
+
+    #[test]
+    fn poetry_powershell_resolves_venv_path_and_activates_it() {
+        let mut p = base_profile();
+        p.environment_type = EnvironmentType::Poetry;
+
+        let script = build_activation_script(&p).unwrap();
+
+        assert_eq!(
+            script,
+            "$ptPoetryEnv = poetry env info --path\r\n\
+             if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($ptPoetryEnv)) { Write-Error 'Could not resolve the Poetry environment path' } else { & \"$ptPoetryEnv\\Scripts\\Activate.ps1\" }\r\n"
+        );
+    }
+
+    #[test]
+    fn venv_git_bash_uses_windows_scripts_activation() {
+        let mut p = base_profile();
+        p.shell_type = ShellType::GitBash;
+        p.environment_type = EnvironmentType::Venv;
+
+        assert_eq!(
+            build_activation_script(&p).unwrap(),
+            "source .venv/Scripts/activate\r\n"
+        );
+    }
+
+    #[test]
+    fn poetry_git_bash_normalizes_windows_venv_path() {
+        let mut p = base_profile();
+        p.shell_type = ShellType::GitBash;
+        p.environment_type = EnvironmentType::Poetry;
+
+        assert_eq!(
+            build_activation_script(&p).unwrap(),
+            "pt_poetry_env=\"$(poetry env info --path)\" && source \"$(cygpath -u \"$pt_poetry_env\")/Scripts/activate\"\r\n"
+        );
+    }
+
+    #[test]
+    fn venv_wsl_uses_linux_bin_activation() {
+        let mut p = base_profile();
+        p.shell_type = ShellType::Wsl;
+        p.environment_type = EnvironmentType::Venv;
+
+        assert_eq!(
+            build_activation_script(&p).unwrap(),
+            "source .venv/bin/activate\r\n"
+        );
     }
 }

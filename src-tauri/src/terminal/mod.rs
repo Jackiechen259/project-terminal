@@ -63,9 +63,28 @@ pub fn resolve_local_shell(profile: &TerminalProfile) -> AppResult<(String, Vec<
             find_git_bash().map(|p| (p, profile.shell_args.clone()))
         }
         ShellType::Wsl => {
-            // `wsl.exe` is on PATH on Windows. Default to no args so the
-            // user's default distribution starts.
-            Ok(("wsl.exe".to_string(), profile.shell_args.clone()))
+            // `wsl.exe` is on PATH on Windows. Persisted WSL fields become
+            // structured arguments; append shell_args last so a user-selected
+            // command runs inside the selected distribution and directory.
+            let mut args = Vec::new();
+            if let Some(distribution) = profile
+                .wsl_distribution
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
+                args.push("--distribution".into());
+                args.push(distribution.into());
+            }
+            if let Some(directory) = profile
+                .wsl_working_directory
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
+                args.push("--cd".into());
+                args.push(directory.into());
+            }
+            args.extend(profile.shell_args.clone());
+            Ok(("wsl.exe".to_string(), args))
         }
         ShellType::Custom => Err(AppError::ShellNotFound(
             "custom shell requires shellExecutable to be set".into(),
@@ -228,6 +247,29 @@ mod tests {
         let p = local_profile(ShellType::Wsl);
         let (exe, _) = resolve_local_shell(&p).unwrap();
         assert_eq!(exe, "wsl.exe");
+    }
+
+    #[test]
+    fn wsl_uses_saved_distribution_and_working_directory() {
+        let mut p = local_profile(ShellType::Wsl);
+        p.shell_args = vec!["--exec".into(), "bash".into()];
+        p.wsl_distribution = Some("Ubuntu-24.04".into());
+        p.wsl_working_directory = Some("/home/user/project".into());
+
+        let (exe, args) = resolve_local_shell(&p).unwrap();
+
+        assert_eq!(exe, "wsl.exe");
+        assert_eq!(
+            args,
+            vec![
+                "--distribution",
+                "Ubuntu-24.04",
+                "--cd",
+                "/home/user/project",
+                "--exec",
+                "bash",
+            ]
+        );
     }
 
     #[test]

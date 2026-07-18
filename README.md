@@ -1,6 +1,6 @@
 # Project Terminal
 
-> Status: Phases 1-3 complete. The app shell renders; project/profile/SSH-connection models persist atomically; the PTY terminal backend spawns real local shells (PowerShell/CMD/Git Bash/WSL) via portable-pty, forwards output over a Tauri Channel to xterm.js, and supports write, resize, close, and restart. Per-project terminal views stay mounted across project switches (no PTY teardown). Phase 3.5+ will add profile env vars, startup commands, Conda/venv activation, and SSH remote terminals.
+> Status: Phases 1–4 complete. The app shell renders; project/profile/SSH-connection models persist atomically; the PTY terminal backend spawns real local shells (PowerShell, CMD, Git Bash, and WSL) via portable-pty, forwards output over a Tauri Channel to xterm.js, and supports write, resize, close, and restart. Per-project terminal views stay mounted across project switches (no PTY teardown). Profiles support per-session environment variables, startup commands, Conda, venv, Poetry, uv, and custom activation. Poetry resolves its managed environment path in the target shell; the app never runs `poetry shell`, `uv sync`, or `conda init`.
 
 ## Features (planned)
 
@@ -178,4 +178,4 @@ Writes are atomic: serialize → temp file → flush → rename. Corrupt files a
 
 ## Roadmap
 
-See `project-terminal-agent-plan.md` §37 for the phase breakdown. Current phases: **Phases 1-3 complete (skeleton, project + config persistence, single local PTY terminal with PTY integration tests for input/output, Ctrl+C, and resize). Phase 3.5+ (profiles env vars, startup commands, Conda/venv, SSH remote) next.**
+See `project-terminal-agent-plan.md` §37 for the phase breakdown. Current phases: **Phases 1–4 complete: skeleton; project, profile, and configuration persistence; local PTY terminals; profile environment/startup initialization; and project-scoped terminal tab groups. SSH remote terminals are next.**
