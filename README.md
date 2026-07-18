@@ -2,6 +2,10 @@
 
 > Status: Phases 1–6.5 complete. The app shell renders; project/profile/SSH-connection models persist atomically; the PTY terminal backend spawns real local shells (PowerShell, CMD, Git Bash, and WSL) and interactive system-OpenSSH sessions via portable-pty. SSH password, keyboard-interactive, and key-passphrase prompts remain inside the terminal, while first host keys require an explicit OpenSSH confirmation. Per-project terminal views stay mounted across project switches (no PTY teardown). Local and remote profiles support per-session environment variables, startup commands, Conda, venv, Poetry, uv, and custom activation. Remote initialization occurs after the target directory is entered; an initialization error is shown but leaves the remote shell usable. The app never runs `poetry shell`, `uv sync`, or `conda init`.
 
+## About
+
+Project Terminal is a Windows-first desktop terminal workspace built for developers who work across local and remote projects every day. It organizes terminals by project, keeps each project's tabs and sessions isolated, and combines local shells with interactive SSH terminals in one app shell.
+
 ## Features (planned)
 
 - Local folder projects and SSH remote projects.
