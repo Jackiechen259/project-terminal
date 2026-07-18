@@ -175,6 +175,10 @@ Writes are atomic: serialize → temp file → flush → rename. Corrupt files a
 - Terminal output is not persisted.
 - The application does not auto-accept unknown SSH host keys.
 
+## License
+
+This project is licensed under the Apache License 2.0. See [LICENSE](./LICENSE) for details.
+
 ## Roadmap
 
 See `project-terminal-agent-plan.md` §37 for the phase breakdown. Current phases: **Phases 1–6.5 complete: skeleton; persistent project/profile configuration; local PTY terminals and environments; project-scoped tab groups; SSH connection configuration; interactive SSH terminals; and remote environment initialization. Sidebar and interaction refinement is next (Phase 7).**
