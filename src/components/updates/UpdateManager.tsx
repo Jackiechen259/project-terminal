@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -12,37 +12,56 @@ import {
 import {
   checkForUpdate,
   installUpdate,
+  onUpdateCheckRequested,
   type AvailableUpdate,
   type UpdateProgress,
 } from "@/services/updater";
+import { useSettingsStore } from "@/stores/settingsStore";
 
 type InstallState =
   | { kind: "idle" }
   | { kind: "installing"; progress: UpdateProgress }
   | { kind: "error"; message: string };
 
+type CheckState = "idle" | "checking" | "upToDate" | "error";
+
 /** Checks for signed GitHub releases once per application launch. */
 export function UpdateManager() {
+  const autoCheckForUpdates = useSettingsStore(
+    (state) => state.autoCheckForUpdates,
+  );
   const [update, setUpdate] = useState<AvailableUpdate | null>(null);
   const [installState, setInstallState] = useState<InstallState>({
     kind: "idle",
   });
+  const [checkState, setCheckState] = useState<CheckState>("idle");
+
+  const checkUpdates = useCallback(async (showResult: boolean) => {
+    if (showResult) setCheckState("checking");
+
+    try {
+      const available = await checkForUpdate();
+      if (available) {
+        setUpdate(available);
+        setCheckState("idle");
+      } else if (showResult) {
+        setCheckState("upToDate");
+      }
+    } catch {
+      // A missing release, offline launch, or development server must not
+      // interrupt normal app startup. Manual checks surface a useful result.
+      if (showResult) setCheckState("error");
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
+    if (autoCheckForUpdates) void checkUpdates(false);
+  }, [autoCheckForUpdates, checkUpdates]);
 
-    void checkForUpdate()
-      .then((available) => {
-        if (!cancelled && available) setUpdate(available);
-      })
-      // A missing release, offline launch, or development server must not
-      // interrupt normal app startup. The updater will try again next launch.
-      .catch(() => undefined);
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  useEffect(
+    () => onUpdateCheckRequested(() => void checkUpdates(true)),
+    [checkUpdates],
+  );
 
   async function install() {
     if (!update) return;
@@ -68,19 +87,37 @@ export function UpdateManager() {
 
   const installing = installState.kind === "installing";
   const progress = installing ? installState.progress : undefined;
+  const dialogOpen = Boolean(update) || checkState !== "idle";
 
   return (
     <Dialog
-      open={Boolean(update)}
+      open={dialogOpen}
       onOpenChange={(open) => {
-        if (!open && !installing) setUpdate(null);
+        if (!open && !installing) {
+          setUpdate(null);
+          setCheckState("idle");
+        }
       }}
     >
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Update available</DialogTitle>
+          <DialogTitle>
+            {update
+              ? "Update available"
+              : checkState === "checking"
+                ? "Checking for updates"
+                : checkState === "upToDate"
+                  ? "You’re up to date"
+                  : "Could not check for updates"}
+          </DialogTitle>
           <DialogDescription>
-            Project Terminal {update?.version} is ready to install.
+            {update
+              ? `Project Terminal ${update.version} is ready to install.`
+              : checkState === "checking"
+                ? "Looking for a newer signed release…"
+                : checkState === "upToDate"
+                  ? "You already have the latest version of Project Terminal."
+                  : "Check your internet connection and try again."}
           </DialogDescription>
         </DialogHeader>
 
@@ -112,16 +149,27 @@ export function UpdateManager() {
         ) : null}
 
         <DialogFooter>
-          <Button
-            variant="outline"
-            disabled={installing}
-            onClick={() => setUpdate(null)}
-          >
-            Later
-          </Button>
-          <Button disabled={installing} onClick={() => void install()}>
-            {installing ? "Installing…" : "Install and restart"}
-          </Button>
+          {update ? (
+            <>
+              <Button
+                variant="outline"
+                disabled={installing}
+                onClick={() => setUpdate(null)}
+              >
+                Later
+              </Button>
+              <Button disabled={installing} onClick={() => void install()}>
+                {installing ? "Installing…" : "Install and restart"}
+              </Button>
+            </>
+          ) : (
+            <Button
+              disabled={checkState === "checking"}
+              onClick={() => setCheckState("idle")}
+            >
+              Close
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -1,7 +1,8 @@
-import { RotateCcw } from "lucide-react";
+import { RefreshCw, RotateCcw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { requestUpdateCheck } from "@/services/updater";
 import {
   DEFAULT_GENERAL_SETTINGS,
   useSettingsStore,
@@ -21,6 +22,9 @@ export function GeneralSettingsPanel() {
   );
   const terminalFontSize = useSettingsStore((state) => state.terminalFontSize);
   const cursorBlink = useSettingsStore((state) => state.cursorBlink);
+  const autoCheckForUpdates = useSettingsStore(
+    (state) => state.autoCheckForUpdates,
+  );
   const update = useSettingsStore((state) => state.updateGeneralSettings);
   const reset = useSettingsStore((state) => state.resetGeneralSettings);
 
@@ -29,7 +33,8 @@ export function GeneralSettingsPanel() {
     confirmCloseTerminal === DEFAULT_GENERAL_SETTINGS.confirmCloseTerminal &&
     showTerminalCount === DEFAULT_GENERAL_SETTINGS.showTerminalCount &&
     terminalFontSize === DEFAULT_GENERAL_SETTINGS.terminalFontSize &&
-    cursorBlink === DEFAULT_GENERAL_SETTINGS.cursorBlink;
+    cursorBlink === DEFAULT_GENERAL_SETTINGS.cursorBlink &&
+    autoCheckForUpdates === DEFAULT_GENERAL_SETTINGS.autoCheckForUpdates;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -120,6 +125,32 @@ export function GeneralSettingsPanel() {
               update({ showTerminalCount: checked })
             }
           />
+        </SettingRow>
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="Updates"
+        description="Keep Project Terminal up to date from signed GitHub Releases."
+      >
+        <SettingRow
+          title="Automatically check for updates"
+          description="Check once whenever the application starts."
+        >
+          <SettingSwitch
+            label="Automatically check for updates"
+            checked={autoCheckForUpdates}
+            onCheckedChange={(checked) =>
+              update({ autoCheckForUpdates: checked })
+            }
+          />
+        </SettingRow>
+        <SettingRow
+          title="Check for updates"
+          description="Check now and install a signed update when one is available."
+        >
+          <Button variant="outline" size="sm" onClick={requestUpdateCheck}>
+            <RefreshCw className="h-4 w-4" /> Check now
+          </Button>
         </SettingRow>
       </SettingsGroup>
 

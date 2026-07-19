@@ -10,6 +10,7 @@ export interface GeneralSettings {
   showTerminalCount: boolean;
   terminalFontSize: number;
   cursorBlink: boolean;
+  autoCheckForUpdates: boolean;
 }
 
 export const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
@@ -18,6 +19,7 @@ export const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   showTerminalCount: true,
   terminalFontSize: 14,
   cursorBlink: true,
+  autoCheckForUpdates: true,
 };
 
 interface SettingsStoreState extends GeneralSettings {
@@ -63,6 +65,7 @@ export const useSettingsStore = create<SettingsStoreState>()(
         showTerminalCount: state.showTerminalCount,
         terminalFontSize: state.terminalFontSize,
         cursorBlink: state.cursorBlink,
+        autoCheckForUpdates: state.autoCheckForUpdates,
         lastProjectId: state.lastProjectId,
       }),
     },

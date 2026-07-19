@@ -19,10 +19,12 @@ describe("settingsStore", () => {
     useSettingsStore.getState().updateGeneralSettings({
       cursorBlink: false,
       terminalFontSize: 18,
+      autoCheckForUpdates: false,
     });
 
     expect(useSettingsStore.getState().cursorBlink).toBe(false);
     expect(useSettingsStore.getState().terminalFontSize).toBe(18);
+    expect(useSettingsStore.getState().autoCheckForUpdates).toBe(false);
 
     useSettingsStore.getState().resetGeneralSettings();
     expect(useSettingsStore.getState()).toMatchObject(DEFAULT_GENERAL_SETTINGS);

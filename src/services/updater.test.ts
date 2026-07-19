@@ -8,7 +8,13 @@ const { check, relaunch } = vi.hoisted(() => ({
 vi.mock("@tauri-apps/plugin-updater", () => ({ check }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch }));
 
-import { checkForUpdate, installUpdate, type AvailableUpdate } from "./updater";
+import {
+  checkForUpdate,
+  installUpdate,
+  onUpdateCheckRequested,
+  requestUpdateCheck,
+  type AvailableUpdate,
+} from "./updater";
 
 describe("updater service", () => {
   it("delegates signed-release checks to the Tauri updater", async () => {
@@ -37,5 +43,15 @@ describe("updater service", () => {
       { downloaded: 100, total: 100 },
     ]);
     expect(relaunch).toHaveBeenCalledOnce();
+  });
+
+  it("notifies the updater when a user requests an update check", () => {
+    const onCheck = vi.fn();
+    const unsubscribe = onUpdateCheckRequested(onCheck);
+
+    requestUpdateCheck();
+
+    expect(onCheck).toHaveBeenCalledOnce();
+    unsubscribe();
   });
 });
