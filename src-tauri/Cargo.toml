@@ -1,6 +1,6 @@
 [package]
 name = "project-terminal"
-version = "0.1.0"
+version = "0.1.2"
 description = "Project Terminal - a Windows desktop terminal organized by projects"
 authors = ["Project Terminal"]
 edition = "2021"
@@ -33,7 +33,7 @@ base64 = "0.22"
 tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.59", features = ["Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "Win32_UI_WindowsAndMessaging"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

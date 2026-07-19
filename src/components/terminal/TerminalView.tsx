@@ -86,8 +86,10 @@ export function TerminalView({
       return;
     }
 
-    void navigator.clipboard
-      .readText()
+    // Read through the native process instead of the Web Clipboard API: the
+    // latter asks the user to allow each paste in the WebView.
+    void terminalService
+      .readClipboardText()
       .then((text) => {
         if (text) term.paste(text);
       })

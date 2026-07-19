@@ -186,6 +186,7 @@ export const sshService = {
 };
 
 export const terminalService = {
+  readClipboardText: () => invokeOrThrow<string>("read_clipboard_text"),
   create: async (
     request: CreateTerminalRequest,
     onOutput: (chunk: TerminalOutputChunk) => void,

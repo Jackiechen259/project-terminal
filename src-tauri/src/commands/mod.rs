@@ -1,5 +1,6 @@
 //! Tauri command modules.
 
+pub mod clipboard;
 pub mod profile;
 pub mod project;
 pub mod ssh;

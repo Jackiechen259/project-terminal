@@ -82,6 +82,8 @@ pub fn run() {
             .manage(state)
             .manage(terminal_state)
             .invoke_handler(tauri::generate_handler![
+                // Clipboard (native read avoids a WebView paste permission prompt)
+                commands::clipboard::read_clipboard_text,
                 // Project CRUD (plan §12.1)
                 commands::project::list_projects,
                 commands::project::validate_project,

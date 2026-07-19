@@ -52,7 +52,6 @@ jobs:
           updaterJsonPreferNsis: true
 
   publish-linux:
-    needs: publish-windows
     runs-on: ubuntu-22.04
 
     steps:
