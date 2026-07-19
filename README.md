@@ -64,6 +64,25 @@ pnpm tauri build
 
 Outputs a Windows MSI and NSIS installer under `src-tauri/target/release/bundle/`.
 
+## GitHub automatic updates
+
+The packaged app checks GitHub Releases once each time it starts. When a newer
+signed version is available, it prompts the user to download, install, and
+restart. The release workflow publishes an NSIS updater bundle and the
+`latest.json` metadata that the application consumes.
+
+Before the first release, add the generated private key in
+`.tauri-updater.key` to the repository secret named
+`TAURI_SIGNING_PRIVATE_KEY` (Settings → Secrets and variables → Actions), then
+move the key to a password manager or other secure backup. Do not commit,
+share, or regenerate this key after users have installed a release: existing
+installations trust the matching public key embedded in `tauri.conf.json`.
+
+To publish an update, set matching semantic versions in `package.json`,
+`src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`, commit the change, and
+push a tag such as `v0.2.0`. GitHub Actions builds, signs, and publishes the
+release automatically. The tag version must match the Tauri app version.
+
 ## Scripts
 
 | Script              | Description                              |

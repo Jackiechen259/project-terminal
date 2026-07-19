@@ -77,6 +77,8 @@ pub fn run() {
         let manager = terminal_state.manager.clone_handle();
         tauri::Builder::default()
             .plugin(tauri_plugin_dialog::init())
+            .plugin(tauri_plugin_process::init())
+            .plugin(tauri_plugin_updater::Builder::new().build())
             .manage(state)
             .manage(terminal_state)
             .invoke_handler(tauri::generate_handler![

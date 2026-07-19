@@ -33,6 +33,7 @@
   "bundle": {
     "active": true,
     "targets": ["msi", "nsis"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -43,5 +44,16 @@
     "category": "Utility",
     "shortDescription": "Project Terminal",
     "longDescription": "A Windows desktop terminal organized by projects with isolated per-project terminal tab groups."
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEEyNDg0QTREMDlBMkMwRDkKUldUWndLSUpUVXBJb2xtVTBsMWwweWxlTDd5alpZNUxkeDkvV3UxaEVKK0hSNXZ6cnE4QnozdEEK",
+      "endpoints": [
+        "https://github.com/Jackiechen259/project-terminal/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

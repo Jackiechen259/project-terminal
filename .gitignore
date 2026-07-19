@@ -32,5 +32,9 @@ npm-debug.log*
 .env.local
 .env.*.local
 
+# Tauri update signing keys must never be committed.
+.tauri-updater.key
+.tauri-updater.key.pub
+
 # Logs
 *.log
