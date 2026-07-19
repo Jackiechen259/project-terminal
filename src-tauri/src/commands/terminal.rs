@@ -20,6 +20,19 @@ use crate::terminal::{resolve_local_shell, SessionSpawn, TerminalManager, Termin
 
 use super::ListResponse;
 
+const MIN_PARALLEL_TERMINAL_LAUNCHES: usize = 2;
+const MAX_PARALLEL_TERMINAL_LAUNCHES: usize = 4;
+
+fn default_terminal_launch_parallelism() -> usize {
+    std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(MIN_PARALLEL_TERMINAL_LAUNCHES)
+        .clamp(
+            MIN_PARALLEL_TERMINAL_LAUNCHES,
+            MAX_PARALLEL_TERMINAL_LAUNCHES,
+        )
+}
+
 /// Create-terminal request payload from the frontend. The frontend never
 /// sends executable paths, cwd, or shell arguments - only ids and
 /// dimensions.
@@ -49,6 +62,7 @@ struct SessionMeta {
 pub struct TerminalState {
     pub manager: TerminalManager,
     meta: parking_lot::Mutex<std::collections::HashMap<String, SessionMeta>>,
+    launch_gate: std::sync::Arc<tokio::sync::Semaphore>,
 }
 
 impl Default for TerminalState {
@@ -59,9 +73,15 @@ impl Default for TerminalState {
 
 impl TerminalState {
     pub fn new() -> Self {
+        Self::with_launch_parallelism(default_terminal_launch_parallelism())
+    }
+
+    fn with_launch_parallelism(parallelism: usize) -> Self {
+        debug_assert!(parallelism > 0);
         Self {
             manager: TerminalManager::new(),
             meta: parking_lot::Mutex::new(std::collections::HashMap::new()),
+            launch_gate: std::sync::Arc::new(tokio::sync::Semaphore::new(parallelism.max(1))),
         }
     }
 
@@ -95,7 +115,11 @@ fn build_session_spawn(
     app: &AppState,
     request: &CreateTerminalRequest,
     session_id: &str,
-) -> AppResult<SessionSpawn> {
+) -> AppResult<(
+    SessionSpawn,
+    crate::project::ProjectType,
+    crate::profile::TerminalProfile,
+)> {
     let project = app.projects.get(&request.project_id)?;
     let profile = app.profiles.get(&request.profile_id)?;
     if profile.project_id != project.id {
@@ -153,15 +177,22 @@ fn build_session_spawn(
         format!("__PROJECT_TERMINAL_READY_{session_id}__"),
     ));
 
-    Ok(SessionSpawn {
-        session_id: session_id.to_string(),
-        program,
-        args,
-        cwd,
-        env,
-        rows: request.rows.max(1),
-        cols: request.cols.max(1),
-    })
+    let project_type = project.project_type;
+    Ok((
+        SessionSpawn {
+            session_id: session_id.to_string(),
+            program,
+            args,
+            cwd,
+            env,
+            readiness_marker: (project.project_type == crate::project::ProjectType::Local)
+                .then(|| format!("__PROJECT_TERMINAL_READY_{session_id}__")),
+            rows: request.rows.max(1),
+            cols: request.cols.max(1),
+        },
+        project_type,
+        profile,
+    ))
 }
 
 /// Prepare the remote working directory inside the OpenSSH remote command.
@@ -215,24 +246,25 @@ fn remote_start_command(
     )))
 }
 
-fn is_ssh_project(app: &AppState, project_id: &str) -> AppResult<bool> {
-    Ok(app.projects.get(project_id)?.project_type == crate::project::ProjectType::Ssh)
-}
-
 fn wait_for_interactive_shell(
-    app: &AppState,
-    terminal: &TerminalState,
-    profile_id: &str,
+    manager: &TerminalManager,
+    profile: &crate::profile::TerminalProfile,
     session_id: &str,
 ) -> AppResult<()> {
-    let profile = app.profiles.get(profile_id)?;
     let marker = format!("__PROJECT_TERMINAL_READY_{session_id}__");
     let command = match profile.shell_type {
         // Keep this command short. A long, generated command makes
         // PSReadLine repaint wrapped fragments into the terminal before the
         // handshake can filter them.
         crate::profile::ShellType::Powershell => {
-            shell_command_line(profile.shell_type, "echo \"[$env:PROJECT_TERMINAL_READY]\"")
+            // Clear the bootstrap prompt after the marker is emitted. Some
+            // PSReadLine versions paint that prompt before the PTY watcher is
+            // armed; clearing here guarantees a new terminal opens with only
+            // the final interactive prompt.
+            shell_command_line(
+                profile.shell_type,
+                "echo \"[$env:PROJECT_TERMINAL_READY]\"; Clear-Host",
+            )
         }
         crate::profile::ShellType::Cmd => {
             let encoded_marker = marker
@@ -260,7 +292,7 @@ fn wait_for_interactive_shell(
         }
     };
 
-    terminal.manager.wait_for_ready(
+    manager.wait_for_ready(
         session_id,
         &marker,
         &command,
@@ -290,13 +322,10 @@ fn normalize_initialization_script(shell_type: crate::profile::ShellType, script
 }
 
 fn execute_startup_commands(
-    app: &AppState,
-    terminal: &TerminalState,
-    profile_id: &str,
+    manager: &TerminalManager,
+    profile: &crate::profile::TerminalProfile,
     session_id: &str,
 ) -> AppResult<()> {
-    let profile = app.profiles.get(profile_id)?;
-
     // Phase 3.6/3.7: Environment activation is evaluated and pushed first.
     // Plan §20.8 / §22: if activation generation fails, we MUST retain the
     // shell so the user can manually inspect or fix it.
@@ -304,8 +333,8 @@ fn execute_startup_commands(
         Ok(activation) => {
             if !activation.is_empty() {
                 let activation = normalize_initialization_script(profile.shell_type, &activation);
-                if let Err(e) = terminal.manager.write(session_id, activation.as_bytes()) {
-                    let _ = terminal.manager.close(session_id);
+                if let Err(e) = manager.write(session_id, activation.as_bytes()) {
+                    let _ = manager.close(session_id);
                     return Err(e);
                 }
             }
@@ -331,7 +360,7 @@ fn execute_startup_commands(
                     format!("echo {escaped}\r\n")
                 }
             };
-            let _ = terminal.manager.write(session_id, display_cmd.as_bytes());
+            let _ = manager.write(session_id, display_cmd.as_bytes());
         }
     }
 
@@ -343,39 +372,92 @@ fn execute_startup_commands(
     // initializations.
     for cmd in &profile.startup_commands {
         let line = shell_command_line(profile.shell_type, cmd);
-        if let Err(e) = terminal.manager.write(session_id, line.as_bytes()) {
-            let _ = terminal.manager.close(session_id);
+        if let Err(e) = manager.write(session_id, line.as_bytes()) {
+            let _ = manager.close(session_id);
             return Err(e);
         }
     }
     Ok(())
 }
 
+/// Create and initialize a terminal on a blocking worker.
+///
+/// PTY allocation, process creation and the readiness handshake all block.
+/// Keeping them together here prevents synchronous Tauri commands from
+/// stalling the WebView event loop when several tabs are opened quickly.
+fn launch_terminal(
+    manager: &TerminalManager,
+    spawn: SessionSpawn,
+    project_type: crate::project::ProjectType,
+    profile: &crate::profile::TerminalProfile,
+    on_output: Channel<TerminalOutput>,
+) -> AppResult<String> {
+    let id = manager.create(spawn, Box::new(on_output))?;
+
+    let initialization = if project_type == crate::project::ProjectType::Ssh {
+        // Authentication and first host-key confirmation are intentionally
+        // handled inside the PTY by OpenSSH. Never inject input while those
+        // prompts may be active.
+        Ok(())
+    } else {
+        wait_for_interactive_shell(manager, profile, &id)
+            .and_then(|()| execute_startup_commands(manager, profile, &id))
+    };
+
+    if let Err(error) = initialization {
+        let _ = manager.close(&id);
+        return Err(error);
+    }
+
+    manager.mark_running(&id)?;
+    Ok(id)
+}
+
+/// Run one terminal launch on Tokio's blocking worker pool.
+///
+/// The owned permit moves into the worker so cancellation of the frontend
+/// invocation cannot release a slot while its PTY is still being initialized.
+/// This provides real parallel startup while keeping rapid bursts bounded.
+async fn run_terminal_launch<T, F>(terminal: &TerminalState, task: F) -> AppResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> AppResult<T> + Send + 'static,
+{
+    let permit = terminal
+        .launch_gate
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| AppError::ShellStartFailed("Terminal launch queue closed".into()))?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let _permit = permit;
+        task()
+    })
+    .await
+    .map_err(|error| {
+        AppError::ShellStartFailed(format!("Terminal launch worker failed: {error}"))
+    })?
+}
+
 #[tauri::command]
-pub fn create_terminal(
+pub async fn create_terminal(
     app: State<'_, AppState>,
     terminal: State<'_, TerminalState>,
     on_output: Channel<TerminalOutput>,
     request: CreateTerminalRequest,
 ) -> AppResult<String> {
     let session_id = new_id("session");
-    let spawn = build_session_spawn(&app, &request, &session_id)?;
-    let id = terminal.manager.create(spawn, Box::new(on_output))?;
+    // Load the project and profile once for the whole launch. Previously the
+    // same JSON files were read and parsed again for project-type detection,
+    // readiness and startup-command injection.
+    let (spawn, project_type, profile) = build_session_spawn(&app, &request, &session_id)?;
+    let manager = terminal.manager.clone_handle();
+    let id = run_terminal_launch(&terminal, move || {
+        launch_terminal(&manager, spawn, project_type, &profile, on_output)
+    })
+    .await?;
 
-    if is_ssh_project(&app, &request.project_id)? {
-        // Authentication and first host-key confirmation are intentionally
-        // handled inside the PTY by OpenSSH. Never inject input while those
-        // prompts may be active.
-        terminal.manager.mark_running(&id)?;
-    } else {
-        if let Err(error) = wait_for_interactive_shell(&app, &terminal, &request.profile_id, &id)
-            .and_then(|()| execute_startup_commands(&app, &terminal, &request.profile_id, &id))
-        {
-            let _ = terminal.manager.close(&id);
-            return Err(error);
-        }
-        terminal.manager.mark_running(&id)?;
-    }
     terminal.remember(&id, &request.project_id, &request.profile_id);
     Ok(id)
 }
@@ -422,7 +504,7 @@ pub fn close_terminal(terminal: State<'_, TerminalState>, session_id: String) ->
 /// Restart closes the existing session and spawns a fresh one with the same
 /// profile. The frontend swaps the channel - we return the new session id.
 #[tauri::command]
-pub fn restart_terminal(
+pub async fn restart_terminal(
     app: State<'_, AppState>,
     terminal: State<'_, TerminalState>,
     on_output: Channel<TerminalOutput>,
@@ -443,20 +525,13 @@ pub fn restart_terminal(
         rows: 24,
         cols: 80,
     };
-    let spawn = build_session_spawn(&app, &request, &new_id)?;
-    let id = terminal.manager.create(spawn, Box::new(on_output))?;
+    let (spawn, project_type, profile) = build_session_spawn(&app, &request, &new_id)?;
+    let manager = terminal.manager.clone_handle();
+    let id = run_terminal_launch(&terminal, move || {
+        launch_terminal(&manager, spawn, project_type, &profile, on_output)
+    })
+    .await?;
 
-    if is_ssh_project(&app, &project_id)? {
-        terminal.manager.mark_running(&id)?;
-    } else {
-        if let Err(error) = wait_for_interactive_shell(&app, &terminal, &profile_id, &id)
-            .and_then(|()| execute_startup_commands(&app, &terminal, &profile_id, &id))
-        {
-            let _ = terminal.manager.close(&id);
-            return Err(error);
-        }
-        terminal.manager.mark_running(&id)?;
-    }
     terminal.remember(&id, &project_id, &profile_id);
     Ok(id)
 }
@@ -489,7 +564,46 @@ mod tests {
     use chrono::Utc;
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+
+    #[test]
+    fn terminal_launch_parallelism_tracks_cpu_with_safe_bounds() {
+        let parallelism = default_terminal_launch_parallelism();
+        assert!(parallelism >= MIN_PARALLEL_TERMINAL_LAUNCHES);
+        assert!(parallelism <= MAX_PARALLEL_TERMINAL_LAUNCHES);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn terminal_launch_workers_run_in_parallel_and_bound_bursts() {
+        let terminal = TerminalState::with_launch_parallelism(2);
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+
+        let task = || {
+            let active = active.clone();
+            let peak = peak.clone();
+            move || {
+                let now_active = active.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(now_active, Ordering::SeqCst);
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                active.fetch_sub(1, Ordering::SeqCst);
+                Ok(())
+            }
+        };
+
+        let (first, second, third) = tokio::join!(
+            run_terminal_launch(&terminal, task()),
+            run_terminal_launch(&terminal, task()),
+            run_terminal_launch(&terminal, task()),
+        );
+        first.unwrap();
+        second.unwrap();
+        third.unwrap();
+
+        assert_eq!(peak.load(Ordering::SeqCst), 2);
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+    }
 
     #[test]
     fn powershell_injected_input_uses_a_single_carriage_return() {
@@ -559,7 +673,7 @@ mod tests {
             rows: 24,
             cols: 80,
         };
-        let spawn = build_session_spawn(&app, &request, "session-1").unwrap();
+        let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
         assert_eq!(spawn.cwd.as_deref(), Some(dir.to_str().unwrap()));
         assert!(spawn.program.ends_with("fake-shell.exe"));
         assert!(spawn
@@ -696,7 +810,10 @@ mod tests {
 
         let terminal = TerminalState::new();
         let session_id = "test-session";
-        let spawn = build_session_spawn(&app, &request, session_id).unwrap();
+        let (mut spawn, _, profile) = build_session_spawn(&app, &request, session_id).unwrap();
+        // This test exercises activation-error injection directly rather than
+        // the readiness handshake used by the public create command.
+        spawn.readiness_marker = None;
 
         struct MpscSink(mpsc::Sender<TerminalOutput>);
         impl crate::terminal::session::OutputSink for MpscSink {
@@ -712,7 +829,7 @@ mod tests {
 
         // The helper should write the error into the shell and NOT return an
         // error, keeping the session alive.
-        execute_startup_commands(&app, &terminal, &request.profile_id, &id).unwrap();
+        execute_startup_commands(&terminal.manager, &profile, &id).unwrap();
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
         let mut out = Vec::new();
@@ -771,7 +888,9 @@ mod tests {
         // We bypass the public create_terminal wrapper (which requires Channel)
         // and drive the internal pieces directly to observe the startup commands.
         let session_id = "test-session";
-        let spawn = build_session_spawn(&app, &request, session_id).unwrap();
+        let (mut spawn, _, profile) = build_session_spawn(&app, &request, session_id).unwrap();
+        // This test intentionally bypasses the public readiness handshake.
+        spawn.readiness_marker = None;
 
         struct MpscSink(mpsc::Sender<TerminalOutput>);
         impl crate::terminal::session::OutputSink for MpscSink {
@@ -786,7 +905,7 @@ mod tests {
             .unwrap();
 
         // Execute startup commands manually (replicating the wrapper).
-        execute_startup_commands(&app, &terminal, &request.profile_id, &id).unwrap();
+        execute_startup_commands(&terminal.manager, &profile, &id).unwrap();
 
         // Read until we see our marker or time out.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);

@@ -4,8 +4,7 @@ export type AppShortcut =
   | { type: "next-tab" }
   | { type: "previous-tab" }
   | { type: "select-tab"; index: number }
-  | { type: "copy-terminal" }
-  | { type: "paste-terminal" };
+  | { type: "copy-terminal" };
 
 /** Maps app shortcuts before WebView2 gets a chance to handle browser ones. */
 export function getAppShortcut(event: KeyboardEvent): AppShortcut | null {
@@ -16,7 +15,6 @@ export function getAppShortcut(event: KeyboardEvent): AppShortcut | null {
   if (event.shiftKey && key === "t") return { type: "new-terminal" };
   if (event.shiftKey && key === "w") return { type: "close-terminal" };
   if (event.shiftKey && key === "c") return { type: "copy-terminal" };
-  if (event.shiftKey && key === "v") return { type: "paste-terminal" };
   if (key === "tab" || key === "pagedown") {
     return event.shiftKey ? { type: "previous-tab" } : { type: "next-tab" };
   }

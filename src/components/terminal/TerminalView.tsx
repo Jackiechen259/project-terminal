@@ -2,11 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { Clipboard, ClipboardPaste, Eraser } from "lucide-react";
+import { Clipboard, Eraser } from "lucide-react";
 
 import { ContextMenu } from "@/components/ui/context-menu";
 import { listenForAppCommands } from "@/lib/appCommands";
 import { terminalService } from "@/services";
+import { useSettingsStore } from "@/stores/settingsStore";
 
 /**
  * Single xterm.js view bound to a backend PTY session.
@@ -72,6 +73,8 @@ export function TerminalView({
   const sessionIdRef = useRef<string | null>(null);
   const reportedExitRef = useRef(false);
   const onTitleChangeRef = useRef(onTitleChange);
+  const terminalFontSize = useSettingsStore((state) => state.terminalFontSize);
+  const cursorBlink = useSettingsStore((state) => state.cursorBlink);
   const [menuPosition, setMenuPosition] = useState<{
     x: number;
     y: number;
@@ -80,12 +83,6 @@ export function TerminalView({
   const copySelection = useCallback(async () => {
     const selection = termRef.current?.getSelection() ?? "";
     if (selection) await navigator.clipboard.writeText(selection);
-    termRef.current?.focus();
-  }, []);
-
-  const pasteClipboard = useCallback(async () => {
-    const text = await navigator.clipboard.readText();
-    if (text) termRef.current?.paste(text);
     termRef.current?.focus();
   }, []);
 
@@ -99,17 +96,16 @@ export function TerminalView({
     return listenForAppCommands((command) => {
       if (!active) return;
       if (command.type === "copy-terminal") void copySelection();
-      if (command.type === "paste-terminal") void pasteClipboard();
     });
-  }, [active, copySelection, pasteClipboard]);
+  }, [active, copySelection]);
 
   useEffect(() => {
     const term = new Terminal({
-      cursorBlink: true,
+      cursorBlink,
       cursorStyle: "block",
       scrollback: 10_000,
       fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, monospace',
-      fontSize: 14,
+      fontSize: terminalFontSize,
       lineHeight: 1.2,
       allowTransparency: false,
       convertEol: false,
@@ -233,6 +229,24 @@ export function TerminalView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pending.projectId, pending.profileId]);
 
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+
+    term.options.fontSize = terminalFontSize;
+    term.options.cursorBlink = cursorBlink;
+    const frame = requestAnimationFrame(() => {
+      try {
+        fitRef.current?.fit();
+        const sid = sessionIdRef.current;
+        if (sid) void terminalService.resize(sid, term.rows, term.cols);
+      } catch {
+        // The terminal may be hidden or closing while preferences update.
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [cursorBlink, terminalFontSize]);
+
   // When this view becomes visible again, re-fit so the terminal reports the
   // correct dimensions after being hidden.
   useEffect(() => {
@@ -277,12 +291,6 @@ export function TerminalView({
               icon: Clipboard,
               disabled: !termRef.current?.hasSelection(),
               onSelect: () => void copySelection(),
-            },
-            {
-              label: "Paste",
-              shortcut: "Ctrl+Shift+V",
-              icon: ClipboardPaste,
-              onSelect: () => void pasteClipboard(),
             },
             {
               label: "Clear terminal",

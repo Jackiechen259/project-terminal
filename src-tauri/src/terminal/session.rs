@@ -52,6 +52,8 @@ pub struct SessionSpawn {
     pub args: Vec<String>,
     pub cwd: Option<String>,
     pub env: Vec<(String, String)>,
+    /// When present, hold startup output until this readiness marker arrives.
+    pub readiness_marker: Option<String>,
     pub rows: u16,
     pub cols: u16,
 }
@@ -199,7 +201,10 @@ impl TerminalSession {
         drop(pair.slave);
 
         let ready_watcher = Arc::new(Mutex::new(ReadyWatcher {
-            marker: None,
+            marker: spawn
+                .readiness_marker
+                .as_ref()
+                .map(|marker| marker.as_bytes().to_vec()),
             sender: None,
             pending: Vec::new(),
         }));
@@ -287,9 +292,10 @@ impl TerminalSession {
         let (sender, receiver) = mpsc::channel();
         {
             let mut watcher = self.ready_watcher.lock();
-            watcher.marker = Some(marker.as_bytes().to_vec());
+            if watcher.marker.is_none() {
+                watcher.marker = Some(marker.as_bytes().to_vec());
+            }
             watcher.sender = Some(sender);
-            watcher.pending.clear();
         }
 
         if let Err(error) = self.write(command.as_bytes()) {
@@ -419,6 +425,7 @@ mod tests {
                 args: args.iter().map(|s| s.to_string()).collect(),
                 cwd: None,
                 env: vec![],
+                readiness_marker: None,
                 rows: 24,
                 cols: 80,
             },
@@ -552,6 +559,7 @@ mod tests {
                 args: vec!["/Q".to_string()],
                 cwd: None,
                 env: vec![],
+                readiness_marker: None,
                 rows: 24,
                 cols: 80,
             },
@@ -602,6 +610,7 @@ mod tests {
                     "PROJECT_TERMINAL_READY".to_string(),
                     "__PROJECT_TERMINAL_READY_powershell__".to_string(),
                 )],
+                readiness_marker: None,
                 rows: 24,
                 cols: 80,
             },
@@ -612,7 +621,7 @@ mod tests {
         session
             .wait_for_ready(
                 marker,
-                "echo \"[$env:PROJECT_TERMINAL_READY]\"\r",
+                "echo \"[$env:PROJECT_TERMINAL_READY]\"; Clear-Host\r",
                 Duration::from_secs(5),
             )
             .expect("PowerShell becomes ready");

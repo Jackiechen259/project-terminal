@@ -125,7 +125,6 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
               id="project-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. SmolVLA"
               autoFocus
             />
           </div>
@@ -154,7 +153,6 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
                   id="project-path"
                   value={localPath}
                   onChange={(e) => setLocalPath(e.target.value)}
-                  placeholder="D:\Projects\SmolVLA"
                 />
                 <Button
                   variant="secondary"
@@ -178,7 +176,7 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
                 </Select>
                 {connections.length === 0 ? <span className="text-xs text-muted-foreground">Create a reusable SSH connection before adding this project.</span> : null}
               </div>
-              <div className="flex flex-col gap-2"><Label htmlFor="remote-path">Remote path</Label><Input id="remote-path" value={remotePath} onChange={(event) => setRemotePath(event.target.value)} placeholder="/home/developer/project" /><span className="text-xs text-muted-foreground">The remote working directory. It is used when interactive SSH terminals are added in Phase 6.</span></div>
+              <div className="flex flex-col gap-2"><Label htmlFor="remote-path">Remote path</Label><Input id="remote-path" value={remotePath} onChange={(event) => setRemotePath(event.target.value)} /><span className="text-xs text-muted-foreground">The remote working directory. It is used when interactive SSH terminals are added in Phase 6.</span></div>
             </div>
           ) : null}
 

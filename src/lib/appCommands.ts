@@ -1,7 +1,6 @@
 export type AppCommand =
   | { type: "new-terminal"; projectId: string }
-  | { type: "copy-terminal" }
-  | { type: "paste-terminal" };
+  | { type: "copy-terminal" };
 
 const APP_COMMAND_EVENT = "project-terminal:command";
 

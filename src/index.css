@@ -98,6 +98,16 @@
   .xterm .xterm-viewport::-webkit-scrollbar-corner {
     background: transparent;
   }
+
+  /* Keep the horizontal tab scrollbar usable without taking over the compact
+     toolbar height. */
+  .terminal-tab-scrollbar::-webkit-scrollbar {
+    height: 4px;
+  }
+
+  .terminal-tab-scrollbar::-webkit-scrollbar-thumb {
+    border-width: 1px;
+  }
 }
 
 /* xterm.js sizing - terminal fills its container. */

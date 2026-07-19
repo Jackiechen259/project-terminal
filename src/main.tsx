@@ -4,6 +4,16 @@ import App from "./App";
 import "@xterm/xterm/css/xterm.css";
 import "./index.css";
 
+// Prevent WebView2 from showing its Edge context menu on any surface. Individual
+// components can still open an application-owned menu from the same event.
+document.addEventListener(
+  "contextmenu",
+  (event) => {
+    event.preventDefault();
+  },
+  { capture: true },
+);
+
 class AppErrorBoundary extends React.Component<
   { children: React.ReactNode },
   { error: Error | null }

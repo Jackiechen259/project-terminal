@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Plus, RotateCcw, Terminal as TerminalIcon, X } from "lucide-react";
 
@@ -7,6 +7,7 @@ import { dispatchAppCommand, listenForAppCommands } from "@/lib/appCommands";
 import { getAppShortcut, isBrowserShortcut } from "@/lib/keyboardShortcuts";
 import { profileService } from "@/services";
 import { useProjectStore } from "@/stores/projectStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { cn } from "@/lib/utils";
 import type { TerminalProfile, TerminalTab } from "@/types";
@@ -34,6 +35,7 @@ export function TerminalWorkspace() {
   const registerTab = useTerminalStore((s) => s.registerTab);
   const updateTab = useTerminalStore((s) => s.updateTab);
   const removeTab = useTerminalStore((s) => s.removeTab);
+  const confirmCloseTerminal = useSettingsStore((s) => s.confirmCloseTerminal);
   const [error, setError] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<TerminalProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState("");
@@ -41,25 +43,38 @@ export function TerminalWorkspace() {
     x: number;
     y: number;
   } | null>(null);
+  const tabListRef = useRef<HTMLDivElement>(null);
 
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const group = activeProjectId ? tabGroups[activeProjectId] : undefined;
   const tabIds = useMemo(() => group?.tabIds ?? [], [group]);
   const activeTabId = group?.activeTabId ?? null;
 
+  useEffect(() => {
+    if (!activeTabId) return;
+    tabListRef.current
+      ?.querySelector<HTMLElement>("[data-active='true']")
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [activeTabId]);
+
   const handleNewTerminal = useCallback(
     async (projectId: string, preferredProfileId?: string) => {
       setError(null);
       try {
-        const profiles = await profileService.list(projectId);
-        if (profiles.length === 0) {
+        // The active project's profiles are already loaded for the selector.
+        // Reuse them so opening a tab does not wait on another IPC + disk read.
+        const availableProfiles =
+          projectId === activeProjectId && profiles.length > 0
+            ? profiles
+            : await profileService.list(projectId);
+        if (availableProfiles.length === 0) {
           setError("This project has no terminal profiles yet.");
           return;
         }
         const profile =
-          profiles.find((p) => p.id === preferredProfileId) ??
-          profiles.find((p) => p.isDefault) ??
-          profiles[0];
+          availableProfiles.find((p) => p.id === preferredProfileId) ??
+          availableProfiles.find((p) => p.isDefault) ??
+          availableProfiles[0];
         // Reserve the tab id. sessionId will be filled in by TerminalView's
         // onSessionId callback once the backend PTY is created.
         const tab: TerminalTab = {
@@ -79,7 +94,7 @@ export function TerminalWorkspace() {
         setError(err.message ?? "Failed to start terminal");
       }
     },
-    [registerTab],
+    [activeProjectId, profiles, registerTab],
   );
 
   useEffect(() => {
@@ -149,11 +164,26 @@ export function TerminalWorkspace() {
 
   const handleCloseTab = useCallback(
     async (tabId: string) => {
+      const tab = tabsById[tabId];
+      const isRunning =
+        tab &&
+        ["starting", "connecting", "initializing", "running"].includes(
+          tab.status,
+        );
+      if (
+        confirmCloseTerminal &&
+        isRunning &&
+        !window.confirm(
+          `Close the running terminal "${tab?.title ?? "Terminal"}"?`,
+        )
+      ) {
+        return;
+      }
       // TerminalView's unmount cleanup closes the backend session, so we only
       // need to remove the tab here.
       removeTab(tabId);
     },
-    [removeTab],
+    [confirmCloseTerminal, removeTab, tabsById],
   );
 
   const selectRelativeTab = useCallback(
@@ -220,9 +250,6 @@ export function TerminalWorkspace() {
         case "copy-terminal":
           dispatchAppCommand({ type: "copy-terminal" });
           break;
-        case "paste-terminal":
-          dispatchAppCommand({ type: "paste-terminal" });
-          break;
       }
     };
 
@@ -251,89 +278,108 @@ export function TerminalWorkspace() {
         setMenuPosition({ x: event.clientX, y: event.clientY });
       }}
     >
-      <div className="flex h-10 items-center gap-1 border-b border-border bg-surface px-2">
-        {tabIds.length === 0 ? (
-          <span className="px-2 text-xs text-muted-foreground">
-            {activeProject ? "No terminals open" : "Select a project"}
-          </span>
-        ) : (
-          tabIds.map((id) => {
-            const tab = tabsById[id];
-            if (!tab) return null;
-            return (
-              <button
-                key={id}
-                type="button"
-                onClick={() =>
-                  activeProjectId && setActiveTab(activeProjectId, id)
-                }
-                className={cn(
-                  "group flex items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-                  id === activeTabId && "bg-accent text-accent-foreground",
-                )}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  if (activeProjectId) setActiveTab(activeProjectId, id);
-                  setMenuPosition({ x: event.clientX, y: event.clientY });
-                }}
-              >
-                <div className="flex flex-col items-start">
-                  <span className="max-w-[160px] truncate">{tab.title}</span>
+      <div className="flex h-11 min-w-0 items-center gap-1 border-b border-border bg-surface px-2">
+        <div
+          ref={tabListRef}
+          role="tablist"
+          aria-label="Terminal tabs"
+          className="app-scrollbar terminal-tab-scrollbar flex h-full min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden"
+          onWheel={(event) => {
+            const tabList = event.currentTarget;
+            if (
+              tabList.scrollWidth > tabList.clientWidth &&
+              Math.abs(event.deltaY) > Math.abs(event.deltaX)
+            ) {
+              tabList.scrollLeft += event.deltaY;
+              event.preventDefault();
+            }
+          }}
+        >
+          {tabIds.length === 0 ? (
+            <span className="shrink-0 px-2 text-xs text-muted-foreground">
+              {activeProject ? "No terminals open" : "Select a project"}
+            </span>
+          ) : (
+            tabIds.map((id) => {
+              const tab = tabsById[id];
+              if (!tab) return null;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  role="tab"
+                  aria-selected={id === activeTabId}
+                  data-active={id === activeTabId}
+                  onClick={() =>
+                    activeProjectId && setActiveTab(activeProjectId, id)
+                  }
+                  className={cn(
+                    "group flex shrink-0 items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                    id === activeTabId && "bg-accent text-accent-foreground",
+                  )}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (activeProjectId) setActiveTab(activeProjectId, id);
+                    setMenuPosition({ x: event.clientX, y: event.clientY });
+                  }}
+                >
+                  <div className="flex flex-col items-start">
+                    <span className="max-w-[160px] truncate">{tab.title}</span>
+                    {tab.status === "exited" || tab.status === "error" ? (
+                      <span className="text-[10px] text-danger">
+                        {tab.status === "error"
+                          ? "Connection error"
+                          : `Exited (${tab.exitCode ?? "?"})`}
+                      </span>
+                    ) : null}
+                  </div>
                   {tab.status === "exited" || tab.status === "error" ? (
-                    <span className="text-[10px] text-danger">
-                      {tab.status === "error"
-                        ? "Connection error"
-                        : `Exited (${tab.exitCode ?? "?"})`}
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleRestart(id);
+                      }}
+                      className="opacity-50 hover:opacity-100"
+                      aria-label={
+                        projects.find((project) => project.id === tab.projectId)
+                          ?.type === "ssh"
+                          ? "Reconnect SSH terminal"
+                          : "Restart tab"
+                      }
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
                     </span>
                   ) : null}
-                </div>
-                {tab.status === "exited" || tab.status === "error" ? (
                   <span
                     role="button"
                     tabIndex={0}
                     onClick={(e) => {
                       e.stopPropagation();
-                      void handleRestart(id);
+                      void handleCloseTab(id);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.stopPropagation();
+                        void handleCloseTab(id);
+                      }
                     }}
                     className="opacity-50 hover:opacity-100"
-                    aria-label={
-                      projects.find((project) => project.id === tab.projectId)
-                        ?.type === "ssh"
-                        ? "Reconnect SSH terminal"
-                        : "Restart tab"
-                    }
+                    aria-label="Close tab"
                   >
-                    <RotateCcw className="h-3.5 w-3.5" />
+                    <X className="h-3.5 w-3.5" />
                   </span>
-                ) : null}
-                <span
-                  role="button"
-                  tabIndex={0}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void handleCloseTab(id);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.stopPropagation();
-                      void handleCloseTab(id);
-                    }
-                  }}
-                  className="opacity-50 hover:opacity-100"
-                  aria-label="Close tab"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </span>
-              </button>
-            );
-          })
-        )}
-        <div className="flex-1" />
+                </button>
+              );
+            })
+          )}
+        </div>
         {activeProject && profiles.length > 1 ? (
           <select
             aria-label="Terminal profile"
-            className="h-7 max-w-44 rounded border border-border bg-background px-2 text-xs"
+            className="h-7 max-w-44 shrink-0 rounded border border-border bg-background px-2 text-xs"
             value={selectedProfileId}
             onChange={(event) => setSelectedProfileId(event.target.value)}
           >

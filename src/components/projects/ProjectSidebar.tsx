@@ -3,6 +3,7 @@ import { Folder, Plus, Server, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useProjectStore } from "@/stores/projectStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { projectService, sshService, terminalService } from "@/services";
 import { cn } from "@/lib/utils";
@@ -28,11 +29,39 @@ export function ProjectSidebar() {
   const tabsById = useTerminalStore((s) => s.tabsById);
   const loadProjects = useProjectStore((s) => s.loadProjects);
   const setActiveProject = useTerminalStore((s) => s.setActiveProject);
+  const restoreLastProject = useSettingsStore((s) => s.restoreLastProject);
+  const lastProjectId = useSettingsStore((s) => s.lastProjectId);
+  const rememberProject = useSettingsStore((s) => s.rememberProject);
+  const showTerminalCount = useSettingsStore((s) => s.showTerminalCount);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     void loadProjects();
   }, [loadProjects]);
+
+  useEffect(() => {
+    if (
+      loading ||
+      !restoreLastProject ||
+      activeProjectId ||
+      projects.length === 0
+    ) {
+      return;
+    }
+    const projectId =
+      projects.find((project) => project.id === lastProjectId)?.id ??
+      projects[0].id;
+    setActiveProject(projectId);
+    rememberProject(projectId);
+  }, [
+    activeProjectId,
+    lastProjectId,
+    loading,
+    projects,
+    rememberProject,
+    restoreLastProject,
+    setActiveProject,
+  ]);
 
   return (
     <aside
@@ -74,6 +103,7 @@ export function ProjectSidebar() {
                   .map((id) => tabsById[id])
                   .filter(Boolean) ?? []
               }
+              showTerminalCount={showTerminalCount}
               onTestSsh={async () => {
                 if (project.type !== "ssh" || !project.ssh?.connectionId)
                   return;
@@ -86,7 +116,10 @@ export function ProjectSidebar() {
                   );
                 }
               }}
-              onSelect={() => setActiveProject(project.id)}
+              onSelect={() => {
+                setActiveProject(project.id);
+                rememberProject(project.id);
+              }}
             />
           ))
         )}
@@ -128,6 +161,7 @@ function ProjectRow({
   tabs,
   onTestSsh,
   onSelect,
+  showTerminalCount,
 }: {
   project: Project;
   active: boolean;
@@ -142,6 +176,7 @@ function ProjectRow({
   }>;
   onTestSsh: () => void;
   onSelect: () => void;
+  showTerminalCount: boolean;
 }) {
   const Icon = project.type === "local" ? Folder : Server;
   const running = tabs.filter((tab) =>
@@ -205,7 +240,7 @@ function ProjectRow({
       >
         <Icon className="h-4 w-4 shrink-0" />
         <span className="flex-1 truncate">{project.name}</span>
-        {running ? (
+        {showTerminalCount && running ? (
           <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-400">
             {running}
           </span>
