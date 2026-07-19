@@ -1,10 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { Clipboard, Eraser } from "lucide-react";
 
-import { ContextMenu } from "@/components/ui/context-menu";
 import { listenForAppCommands } from "@/lib/appCommands";
 import { terminalService } from "@/services";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -69,16 +67,32 @@ export function TerminalView({
   const onTitleChangeRef = useRef(onTitleChange);
   const terminalFontSize = useSettingsStore((state) => state.terminalFontSize);
   const cursorBlink = useSettingsStore((state) => state.cursorBlink);
-  const [menuPosition, setMenuPosition] = useState<{
-    x: number;
-    y: number;
-  } | null>(null);
 
   const copySelection = useCallback(async () => {
     const selection = termRef.current?.getSelection() ?? "";
     if (selection) await navigator.clipboard.writeText(selection);
     termRef.current?.focus();
   }, []);
+
+  const handleContextMenu = useCallback((event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const term = termRef.current;
+    if (!term) return;
+
+    if (term.hasSelection()) {
+      void copySelection().finally(() => term.clearSelection());
+      return;
+    }
+
+    void navigator.clipboard
+      .readText()
+      .then((text) => {
+        if (text) term.paste(text);
+      })
+      .finally(() => term.focus());
+  }, [copySelection]);
 
   // The terminal is intentionally not recreated when a parent callback gets
   // a new identity. Keep the latest callback available to its xterm listener.
@@ -263,40 +277,13 @@ export function TerminalView({
   return (
     <div
       className="h-full w-full p-2"
-      onContextMenu={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        setMenuPosition({ x: event.clientX, y: event.clientY });
-      }}
+      onContextMenuCapture={handleContextMenu}
     >
       <div
         ref={containerRef}
         className="h-full w-full"
         style={{ display: active ? "block" : "none" }}
       />
-      {menuPosition ? (
-        <ContextMenu
-          position={menuPosition}
-          onClose={() => setMenuPosition(null)}
-          items={[
-            {
-              label: "Copy selection",
-              shortcut: "Ctrl+Shift+C",
-              icon: Clipboard,
-              disabled: !termRef.current?.hasSelection(),
-              onSelect: () => void copySelection(),
-            },
-            {
-              label: "Clear terminal",
-              icon: Eraser,
-              onSelect: () => {
-                termRef.current?.clear();
-                termRef.current?.focus();
-              },
-            },
-          ]}
-        />
-      ) : null}
     </div>
   );
 }
