@@ -8,6 +8,7 @@ import { ContextMenu } from "@/components/ui/context-menu";
 import { listenForAppCommands } from "@/lib/appCommands";
 import { terminalService } from "@/services";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { resolveTerminalTabTitle } from "./terminalTitle";
 
 /**
  * Single xterm.js view bound to a backend PTY session.
@@ -37,16 +38,6 @@ interface PendingSession {
 }
 
 /**
- * OSC window-title sequences are emitted by shells and interactive agents.
- * Keep the tab strip readable and avoid accepting terminal control characters
- * as visible UI text.
- */
-function normaliseTerminalTitle(value: string): string | null {
-  const title = value.replace(/\p{Cc}/gu, "").trim();
-  return title ? title.slice(0, 160) : null;
-}
-
-/**
  * Mount an xterm.js terminal and create a backend PTY for the given project
  * + profile. Output bytes flow from the PTY through a Tauri Channel into the
  * Terminal. Input bytes flow from the Terminal through terminalService.write.
@@ -54,12 +45,15 @@ function normaliseTerminalTitle(value: string): string | null {
 export function TerminalView({
   pending,
   active,
+  defaultTitle,
   onSessionId,
   onExit,
   onTitleChange,
 }: {
   pending: PendingSession;
   active: boolean;
+  /** Profile label to restore after a shell emits its executable path. */
+  defaultTitle: string;
   onSessionId?: (sessionId: string) => void;
   onExit?: (code: number | null, status?: "exited" | "error") => void;
   /** Called when the terminal emits OSC 0/2 to update its window title. */
@@ -138,7 +132,7 @@ export function TerminalView({
       if (sid) void terminalService.write(sid, data);
     });
     const titleDisposable = term.onTitleChange((nextTitle) => {
-      const title = normaliseTerminalTitle(nextTitle);
+      const title = resolveTerminalTabTitle(nextTitle, defaultTitle);
       if (title) onTitleChangeRef.current?.(title);
     });
 

@@ -138,6 +138,8 @@ export interface TerminalTab {
   projectId: string;
   profileId: string;
 
+  /** Stable profile label used when a program emits a transient window title. */
+  defaultTitle: string;
   title: string;
   cwd: string;
 

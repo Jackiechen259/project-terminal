@@ -82,6 +82,7 @@ export function TerminalWorkspace() {
           sessionId: "",
           projectId,
           profileId: profile.id,
+          defaultTitle: profile.name,
           title: profile.name,
           cwd: "",
           status: "starting",
@@ -152,6 +153,7 @@ export function TerminalWorkspace() {
       sessionId: "",
       projectId: oldTab.projectId,
       profileId: oldTab.profileId,
+      defaultTitle: oldTab.defaultTitle,
       title: oldTab.title,
       cwd: oldTab.cwd,
       status: "starting",
@@ -436,6 +438,7 @@ export function TerminalWorkspace() {
                       profileId: tab.profileId,
                     }}
                     active={visible}
+                    defaultTitle={tab.defaultTitle}
                     onSessionId={(sessionId) =>
                       handleSessionId(tab.id, sessionId)
                     }

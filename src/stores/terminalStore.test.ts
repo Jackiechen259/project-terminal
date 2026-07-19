@@ -9,6 +9,7 @@ function makeTab(id: string, projectId: string, title = id): TerminalTab {
     sessionId: `session-${id}`,
     projectId,
     profileId: `profile-${projectId}`,
+    defaultTitle: title,
     title,
     cwd: "/",
     status: "running",
