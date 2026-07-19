@@ -84,7 +84,14 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
     const input: ProjectInput = {
       name: name.trim(),
       type,
-      ...(type === "local" ? { local: { path: localPath.trim() } } : { ssh: { connectionId: sshConnectionId, remotePath: remotePath.trim() } }),
+      ...(type === "local"
+        ? { local: { path: localPath.trim() } }
+        : {
+            ssh: {
+              connectionId: sshConnectionId,
+              remotePath: remotePath.trim(),
+            },
+          }),
     };
     setSubmitting(true);
     setError(null);
@@ -169,14 +176,60 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
           {type === "ssh" ? (
             <div className="flex flex-col gap-4">
               <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-between gap-3"><Label htmlFor="ssh-connection">SSH connection</Label><SshConnectionDialog onClosed={() => void loadConnections()} trigger={<Button type="button" variant="link" className="h-auto p-0 text-xs">Manage connections</Button>} /></div>
-                <Select value={sshConnectionId} onValueChange={setSshConnectionId}>
-                  <SelectTrigger id="ssh-connection"><SelectValue placeholder={connections.length ? "Choose a connection" : "No saved connections"} /></SelectTrigger>
-                  <SelectContent>{connections.map((connection) => <SelectItem key={connection.id} value={connection.id}>{connection.name} — {connection.host}</SelectItem>)}</SelectContent>
+                <div className="flex items-center justify-between gap-3">
+                  <Label htmlFor="ssh-connection">SSH connection</Label>
+                  <SshConnectionDialog
+                    onClosed={() => void loadConnections()}
+                    trigger={
+                      <Button
+                        type="button"
+                        variant="link"
+                        className="h-auto p-0 text-xs"
+                      >
+                        Manage connections
+                      </Button>
+                    }
+                  />
+                </div>
+                <Select
+                  value={sshConnectionId}
+                  onValueChange={setSshConnectionId}
+                >
+                  <SelectTrigger id="ssh-connection">
+                    <SelectValue
+                      placeholder={
+                        connections.length
+                          ? "Choose a connection"
+                          : "No saved connections"
+                      }
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {connections.map((connection) => (
+                      <SelectItem key={connection.id} value={connection.id}>
+                        {connection.name} — {connection.host}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
                 </Select>
-                {connections.length === 0 ? <span className="text-xs text-muted-foreground">Create a reusable SSH connection before adding this project.</span> : null}
+                {connections.length === 0 ? (
+                  <span className="text-xs text-muted-foreground">
+                    Create a reusable SSH connection before adding this project.
+                  </span>
+                ) : null}
               </div>
-              <div className="flex flex-col gap-2"><Label htmlFor="remote-path">Remote path</Label><Input id="remote-path" value={remotePath} onChange={(event) => setRemotePath(event.target.value)} /><span className="text-xs text-muted-foreground">The remote working directory. It is used when interactive SSH terminals are added in Phase 6.</span></div>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="remote-path">Remote path</Label>
+                <Input
+                  id="remote-path"
+                  value={remotePath}
+                  onChange={(event) => setRemotePath(event.target.value)}
+                />
+                <span className="text-xs text-muted-foreground">
+                  The remote working directory. It is used when interactive SSH
+                  terminals are added in Phase 6.
+                </span>
+              </div>
             </div>
           ) : null}
 

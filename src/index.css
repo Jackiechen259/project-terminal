@@ -159,7 +159,9 @@
   border: 0;
   color: hsl(var(--muted-foreground));
   background: transparent;
-  transition: background-color 120ms ease, color 120ms ease;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
 }
 
 .window-control:hover {

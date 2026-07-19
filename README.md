@@ -1,12 +1,12 @@
 # Project Terminal
 
-> Status: Phases 1–8 complete. The app shell renders; project/profile/SSH-connection models persist atomically; the PTY terminal backend spawns real local shells (PowerShell, CMD, Git Bash, and WSL) and interactive system-OpenSSH sessions via portable-pty. SSH password, keyboard-interactive, and key-passphrase prompts remain inside the terminal, while first host keys require an explicit OpenSSH confirmation. Per-project terminal views stay mounted across project switches (no PTY teardown). Local and remote profiles support per-session environment variables, startup commands, Conda, venv, Poetry, uv, and custom activation. Remote initialization occurs after the target directory is entered; an initialization error is shown but leaves the remote shell usable. The app never runs `poetry shell`, `uv sync`, or `conda init`.
+> Status: Version 0.1.2 released. All implementation phases complete. The app shell renders; project/profile/SSH-connection models persist atomically; the PTY terminal backend spawns real local shells (PowerShell, CMD, Git Bash, and WSL) and interactive system-OpenSSH sessions via portable-pty. SSH password, keyboard-interactive, and key-passphrase prompts remain inside the terminal, while first host keys require an explicit OpenSSH confirmation. Per-project terminal views stay mounted across project switches (no PTY teardown). Local and remote profiles support per-session environment variables, startup commands, Conda, venv, Poetry, uv, and custom activation. Remote initialization occurs after the target directory is entered; an initialization error is shown but leaves the remote shell usable. The app never runs `poetry shell`, `uv sync`, or `conda init`.
 
 ## About
 
 Project Terminal is a Windows-first desktop terminal workspace built for developers who work across local and remote projects every day. It organizes terminals by project, keeps each project's tabs and sessions isolated, and combines local shells with interactive SSH terminals in one app shell.
 
-## Features (planned)
+## Features
 
 - Local folder projects and SSH remote projects.
 - Per-project terminal tab groups with independent PTY/shell/environment.
@@ -204,4 +204,4 @@ This project is licensed under the Apache License 2.0. See [LICENSE](./LICENSE) 
 
 ## Roadmap
 
-See `project-terminal-agent-plan.md` §37 for the phase breakdown. Current phases: **Phases 1–8 complete: skeleton; persistent project/profile configuration; local PTY terminals and environments; project-scoped tab groups; SSH connection configuration; interactive SSH terminals; remote environment initialization; sidebar/interaction refinement; and stability/test hardening. Windows packaging is next (Phase 9).**
+See `project-terminal-agent-plan.md` §37 for the phase breakdown. Current status: **All phases (1–9) complete: skeleton; persistent project/profile configuration; local PTY terminals and environments; project-scoped tab groups; SSH connection configuration; interactive SSH terminals; remote environment initialization; sidebar/interaction refinement; stability/test hardening; and Windows/Linux packaging/release.**

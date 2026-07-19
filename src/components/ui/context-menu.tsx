@@ -64,7 +64,8 @@ export function ContextMenu({ position, items, onClose }: ContextMenuProps) {
             disabled={item.disabled}
             className={cn(
               "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none hover:bg-accent focus:bg-accent disabled:pointer-events-none disabled:opacity-50",
-              item.destructive && "text-destructive hover:bg-destructive/10 focus:bg-destructive/10",
+              item.destructive &&
+                "text-destructive hover:bg-destructive/10 focus:bg-destructive/10",
             )}
             onClick={() => {
               onClose();

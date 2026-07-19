@@ -74,27 +74,30 @@ export function TerminalView({
     termRef.current?.focus();
   }, []);
 
-  const handleContextMenu = useCallback((event: React.MouseEvent) => {
-    event.preventDefault();
-    event.stopPropagation();
+  const handleContextMenu = useCallback(
+    (event: React.MouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
 
-    const term = termRef.current;
-    if (!term) return;
+      const term = termRef.current;
+      if (!term) return;
 
-    if (term.hasSelection()) {
-      void copySelection().finally(() => term.clearSelection());
-      return;
-    }
+      if (term.hasSelection()) {
+        void copySelection().finally(() => term.clearSelection());
+        return;
+      }
 
-    // Read through the native process instead of the Web Clipboard API: the
-    // latter asks the user to allow each paste in the WebView.
-    void terminalService
-      .readClipboardText()
-      .then((text) => {
-        if (text) term.paste(text);
-      })
-      .finally(() => term.focus());
-  }, [copySelection]);
+      // Read through the native process instead of the Web Clipboard API: the
+      // latter asks the user to allow each paste in the WebView.
+      void terminalService
+        .readClipboardText()
+        .then((text) => {
+          if (text) term.paste(text);
+        })
+        .finally(() => term.focus());
+    },
+    [copySelection],
+  );
 
   // The terminal is intentionally not recreated when a parent callback gets
   // a new identity. Keep the latest callback available to its xterm listener.
@@ -277,10 +280,7 @@ export function TerminalView({
   }, [active]);
 
   return (
-    <div
-      className="h-full w-full p-2"
-      onContextMenuCapture={handleContextMenu}
-    >
+    <div className="h-full w-full p-2" onContextMenuCapture={handleContextMenu}>
       <div
         ref={containerRef}
         className="h-full w-full"
