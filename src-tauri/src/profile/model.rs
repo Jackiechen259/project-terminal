@@ -11,6 +11,13 @@ pub enum ShellType {
     Cmd,
     GitBash,
     Wsl,
+    /// Local POSIX shells. Offered on Linux/macOS hosts; on Windows they are
+    /// hidden from the shell picker but still deserialize from saved profiles
+    /// so a profile created on one platform remains loadable on another.
+    Bash,
+    Zsh,
+    Fish,
+    Sh,
     RemoteDefault,
     RemoteBash,
     RemoteZsh,

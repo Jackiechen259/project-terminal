@@ -11,12 +11,12 @@ pub mod manager;
 pub mod session;
 pub mod wsl;
 
+use crate::error::{AppError, AppResult};
+use crate::profile::{EnvironmentType, ShellType, TerminalProfile};
 pub use initializer::{build_activation_script, build_remote_initialization_commands};
 pub use manager::TerminalManager;
 pub use session::{SessionSpawn, SessionStatus, TerminalOutput, TerminalSession};
 pub use wsl::{detect_wsl_distributions, DetectedWslDistribution};
-use crate::error::{AppError, AppResult};
-use crate::profile::{EnvironmentType, ShellType, TerminalProfile};
 
 /// Resolve the shell executable + args for a local profile.
 ///
@@ -86,6 +86,27 @@ pub fn resolve_local_shell(profile: &TerminalProfile) -> AppResult<(String, Vec<
             }
             args.extend(profile.shell_args.clone());
             Ok(("wsl.exe".to_string(), args))
+        }
+        ShellType::Bash | ShellType::Zsh | ShellType::Fish | ShellType::Sh => {
+            // POSIX shells available on Linux/macOS hosts (and on Windows only
+            // when explicitly installed). Resolve through PATH so a user-owned
+            // shell wins over a system one.
+            let name = match profile.shell_type {
+                ShellType::Bash => "bash",
+                ShellType::Zsh => "zsh",
+                ShellType::Fish => "fish",
+                ShellType::Sh => "sh",
+                // Unreachable: covered by the match arm above.
+                _ => unreachable!("posix shell arm reached for non-posix type"),
+            };
+            let exe = which(name)
+                .ok_or_else(|| AppError::ShellNotFound(format!("{name} was not found on PATH")))?;
+            // Interactive login shells source the user's profile so PATH and
+            // prompt match a normal terminal launched from the desktop.
+            let mut args = Vec::new();
+            args.push("-l".into());
+            args.extend(profile.shell_args.clone());
+            Ok((exe, args))
         }
         ShellType::Custom => Err(AppError::ShellNotFound(
             "custom shell requires shellExecutable to be set".into(),

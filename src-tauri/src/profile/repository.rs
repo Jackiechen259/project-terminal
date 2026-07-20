@@ -135,6 +135,46 @@ pub fn default_powershell_profile(id: String, project_id: String) -> TerminalPro
     }
 }
 
+/// Pick the default local profile for the current host: PowerShell on
+/// Windows, Bash on Linux/macOS. Other shells are available in the picker,
+/// but the default must be a shell that almost always exists on the host so a
+/// freshly created project opens without manual configuration.
+pub fn default_local_profile(id: String, project_id: String) -> TerminalProfile {
+    let shell = crate::platform::PlatformInfo::current().default_local_shell;
+    let name = match shell {
+        ShellType::Powershell => "PowerShell",
+        ShellType::Bash => "Bash",
+        ShellType::Zsh => "Zsh",
+        ShellType::Fish => "Fish",
+        ShellType::Sh => "sh",
+        ShellType::Cmd => "Command Prompt",
+        ShellType::GitBash => "Git Bash",
+        ShellType::Wsl => "WSL",
+        _ => "Shell",
+    };
+    let now = Utc::now();
+    TerminalProfile {
+        id,
+        project_id,
+        name: name.into(),
+        shell_type: shell,
+        shell_executable: None,
+        shell_args: vec![],
+        environment_type: EnvironmentType::None,
+        environment_name: None,
+        environment_path: None,
+        conda: None,
+        activation_command: None,
+        startup_commands: vec![],
+        environment_variables: None,
+        wsl_distribution: None,
+        wsl_working_directory: None,
+        remote_shell_command: None,
+        is_default: true,
+        created_at: now,
+        updated_at: now,
+    }
+}
 /// Default profile for an SSH project. Its shell runs on the remote host, not
 /// on the Windows machine that launches `ssh.exe`.
 pub fn default_remote_profile(id: String, project_id: String) -> TerminalProfile {

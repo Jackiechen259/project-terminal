@@ -19,10 +19,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::commands::ListResponse;
 use crate::error::{AppError, AppResult};
-use crate::profile::{
-    default_powershell_profile, default_remote_profile, default_wsl_profile,
+use crate::profile::{default_local_profile, default_remote_profile, default_wsl_profile};
+use crate::project::{
+    LocalProjectConfig, Project, ProjectType, SshProjectConfig, WslProjectConfig,
 };
-use crate::project::{LocalProjectConfig, Project, ProjectType, SshProjectConfig, WslProjectConfig};
 use crate::state::{new_id, AppState};
 
 /// Payload for creating/updating a project. The frontend fills this in; the
@@ -144,7 +144,7 @@ pub fn create_project_inner(state: &AppState, input: ProjectInput) -> AppResult<
     // Every project gets an immediately usable, target-appropriate profile.
     let profile_id = new_id("profile");
     let profile = match project.project_type {
-        ProjectType::Local => default_powershell_profile(profile_id, project.id.clone()),
+        ProjectType::Local => default_local_profile(profile_id, project.id.clone()),
         ProjectType::Ssh => default_remote_profile(profile_id, project.id.clone()),
         ProjectType::Wsl => {
             let wsl = project.wsl.clone().ok_or_else(|| {

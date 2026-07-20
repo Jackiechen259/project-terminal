@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/select";
 import { useProjectStore } from "@/stores/projectStore";
 import { useSshStore } from "@/stores/sshStore";
+import { usePlatformStore } from "@/stores/platformStore";
 import { environmentService } from "@/services";
 import type { Project } from "@/types";
 
@@ -52,7 +53,9 @@ export function ProjectEditDialog({
   const connections = useSshStore((state) => state.connections);
   const loadConnections = useSshStore((state) => state.loadConnections);
   const updateProject = useProjectStore((state) => state.updateProject);
-
+  const wslSupported = usePlatformStore((state) =>
+    state.info ? state.info.wslSupported : false,
+  );
   useEffect(() => {
     if (!openState) return;
     setName(project.name);
@@ -61,17 +64,16 @@ export function ProjectEditDialog({
     setRemotePath(project.ssh?.remotePath ?? "");
     setWslDistribution(project.wsl?.distribution ?? "");
     setWslWorkingDirectory(project.wsl?.workingDirectory ?? "");
-    setError(null);
-    if (project.type === "ssh") void loadConnections();
-    if (project.type === "wsl") {
+    if (project.type === "wsl" && wslSupported) {
       // Best-effort detection: if it fails, the existing distribution stays
-      // as a free-text value the user can edit directly.
+      // as a free-text value the user can edit directly. On hosts without
+      // WSL (Linux/macOS) we skip the probe entirely.
       environmentService
         .detectWslDistributions()
         .then((found) => setDistributions(found.map((d) => d.name)))
         .catch(() => setDistributions([]));
     }
-  }, [openState, project, loadConnections]);
+  }, [openState, project, loadConnections, wslSupported]);
 
   async function chooseFolder() {
     const selected = await open({ directory: true, multiple: false });
@@ -155,9 +157,7 @@ export function ProjectEditDialog({
           ) : project.type === "wsl" ? (
             <>
               <div className="flex flex-col gap-2">
-                <Label htmlFor="edit-wsl-distribution">
-                  WSL distribution
-                </Label>
+                <Label htmlFor="edit-wsl-distribution">WSL distribution</Label>
                 {distributions.length > 0 ? (
                   <Select
                     value={wslDistribution}
@@ -186,9 +186,7 @@ export function ProjectEditDialog({
                   <Input
                     id="edit-wsl-distribution"
                     value={wslDistribution}
-                    onChange={(event) =>
-                      setWslDistribution(event.target.value)
-                    }
+                    onChange={(event) => setWslDistribution(event.target.value)}
                     placeholder="e.g. Ubuntu"
                   />
                 )}

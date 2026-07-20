@@ -178,7 +178,12 @@ function ProjectRow({
   onSelect: () => void;
   showTerminalCount: boolean;
 }) {
-  const Icon = project.type === "local" ? Folder : project.type === "wsl" ? Terminal : Server;
+  const Icon =
+    project.type === "local"
+      ? Folder
+      : project.type === "wsl"
+        ? Terminal
+        : Server;
   const running = tabs.filter((tab) =>
     ["starting", "connecting", "initializing", "running"].includes(tab.status),
   ).length;

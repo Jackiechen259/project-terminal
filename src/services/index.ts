@@ -6,7 +6,12 @@
 
 import { Channel, invoke as tauriInvoke } from "@tauri-apps/api/core";
 
-import type { Project, SshConnection, TerminalProfile } from "@/types";
+import type {
+  PlatformInfo,
+  Project,
+  SshConnection,
+  TerminalProfile,
+} from "@/types";
 
 /** Backend serializes AppError as `{ code, message }`. */
 export interface FrontendError {
@@ -242,4 +247,8 @@ export const environmentService = {
     }),
   detectWslDistributions: () =>
     invokeOrThrow<DetectedWslDistribution[]>("detect_wsl_distributions"),
+};
+
+export const platformService = {
+  getPlatformInfo: () => invokeOrThrow<PlatformInfo>("get_platform_info"),
 };

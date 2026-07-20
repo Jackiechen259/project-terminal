@@ -207,7 +207,12 @@ fn build_conda_activation(shell: ShellType, config: &CondaEnvironmentConfig) -> 
                         "& {escaped_hook}\r\nconda activate {escaped_target}\r\n"
                     ))
                 }
-                ShellType::GitBash | ShellType::Wsl => {
+                ShellType::GitBash
+                | ShellType::Wsl
+                | ShellType::Bash
+                | ShellType::Zsh
+                | ShellType::Fish
+                | ShellType::Sh => {
                     // Requires the root to be mapped correctly (e.g. /c/ or /mnt/c/).
                     // For now we assume the frontend sends the valid mapped path.
                     let hook = format!("{root}/etc/profile.d/conda.sh");
@@ -275,6 +280,10 @@ fn build_poetry_activation(profile: &TerminalProfile) -> AppResult<String> {
             "pt_poetry_env=\"$(poetry env info --path)\" && source \"$pt_poetry_env/bin/activate\"\r\n"
                 .into(),
         ),
+        ShellType::Bash | ShellType::Zsh | ShellType::Fish | ShellType::Sh => Ok(
+            "pt_poetry_env=\"$(poetry env info --path)\" && source \"$pt_poetry_env/bin/activate\"\r\n"
+                .into(),
+        ),
         _ => Err(AppError::Configuration(format!(
             "Poetry activation not supported for {:?}",
             profile.shell_type
@@ -307,7 +316,9 @@ fn build_venv_activation(profile: &TerminalProfile) -> AppResult<String> {
             let escaped = escape_bash_argument(&script);
             Ok(format!("source {escaped}\r\n"))
         }
-        ShellType::Wsl => {
+        ShellType::Wsl | ShellType::Bash | ShellType::Zsh | ShellType::Fish | ShellType::Sh => {
+            // Local POSIX shells (and WSL) use the venv's Unix activate script.
+            // `path` may be relative to the project cwd.
             let path_fwd = path.replace('\\', "/");
             let script = format!("{path_fwd}/bin/activate");
             let escaped = escape_bash_argument(&script);

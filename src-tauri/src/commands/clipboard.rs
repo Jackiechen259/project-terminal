@@ -7,9 +7,7 @@
 use std::slice;
 
 #[cfg(windows)]
-use windows_sys::Win32::System::DataExchange::{
-    CloseClipboard, GetClipboardData, OpenClipboard,
-};
+use windows_sys::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
 #[cfg(windows)]
 use windows_sys::Win32::System::Memory::{GlobalLock, GlobalUnlock};
 #[cfg(windows)]

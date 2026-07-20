@@ -138,9 +138,8 @@ export function TerminalView({
     // bottom as a side effect). Detect that precise case and ask xterm to
     // perform the missing logical scroll. This only runs at the visible end,
     // so it does not disturb users reading earlier output.
-    const viewport = containerRef.current?.querySelector<HTMLElement>(
-      ".xterm-viewport",
-    );
+    const viewport =
+      containerRef.current?.querySelector<HTMLElement>(".xterm-viewport");
     let viewportSyncFrame: number | null = null;
     const syncBottomAtNativeViewportEnd = () => {
       if (!viewport || viewportSyncFrame !== null) return;

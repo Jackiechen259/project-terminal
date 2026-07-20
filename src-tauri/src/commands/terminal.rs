@@ -313,7 +313,12 @@ fn wait_for_interactive_shell(
                 .collect::<String>();
             format!("echo [{encoded_marker}]\r\n")
         }
-        crate::profile::ShellType::GitBash | crate::profile::ShellType::Wsl => {
+        crate::profile::ShellType::GitBash
+        | crate::profile::ShellType::Wsl
+        | crate::profile::ShellType::Bash
+        | crate::profile::ShellType::Zsh
+        | crate::profile::ShellType::Fish
+        | crate::profile::ShellType::Sh => {
             let encoded_marker = marker
                 .bytes()
                 .map(|byte| format!("\\x{byte:02x}"))
@@ -782,13 +787,14 @@ mod tests {
             updated_at: Utc::now(),
         };
         app.projects.upsert(project).unwrap();
-        app.profiles.upsert(default_wsl_profile(
-            "wsl-profile".into(),
-            "wsl-project".into(),
-            "Ubuntu".into(),
-            None,
-        ))
-        .unwrap();
+        app.profiles
+            .upsert(default_wsl_profile(
+                "wsl-profile".into(),
+                "wsl-project".into(),
+                "Ubuntu".into(),
+                None,
+            ))
+            .unwrap();
 
         let request = CreateTerminalRequest {
             project_id: "wsl-project".into(),

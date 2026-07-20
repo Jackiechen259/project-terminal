@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FolderOpen } from "lucide-react";
 
@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/select";
 import { useProjectStore } from "@/stores/projectStore";
 import { useSshStore } from "@/stores/sshStore";
+import { usePlatformStore } from "@/stores/platformStore";
 import { environmentService, type ProjectInput } from "@/services";
 import { SshConnectionDialog } from "@/components/ssh/SshConnectionDialog";
 
@@ -52,13 +53,32 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
   const createProject = useProjectStore((s) => s.createProject);
   const connections = useSshStore((s) => s.connections);
   const loadConnections = useSshStore((s) => s.loadConnections);
+  const platformInfo = usePlatformStore((s) => s.info);
+  const wslSupported = platformInfo?.wslSupported ?? false;
+  const availableProjectTypes = useMemo<readonly ProjectType[]>(
+    () => platformInfo?.availableProjectTypes ?? ["local", "wsl", "ssh"],
+    [platformInfo],
+  );
+
+  // If the platform snapshot loads after the dialog opens and the current
+  // type is no longer offered (e.g. WSL on Linux), fall back to local so the
+  // user is never stuck on an unsupported type.
+  useEffect(() => {
+    if (
+      openState &&
+      type &&
+      !availableProjectTypes.includes(type) &&
+      availableProjectTypes.length > 0
+    ) {
+      setType(availableProjectTypes[0] as ProjectType);
+    }
+  }, [openState, type, availableProjectTypes]);
 
   useEffect(() => {
     if (openState) void loadConnections();
   }, [openState, loadConnections]);
-
   useEffect(() => {
-    if (!openState || type !== "wsl") return;
+    if (!openState || type !== "wsl" || !wslSupported) return;
     // Defer detection until the user picks the WSL type so a first-run dialog
     // does not block on `wsl.exe` when only local projects are wanted.
     let cancelled = false;
@@ -87,7 +107,7 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
     // Only re-run when the dialog opens for the WSL type; we intentionally do
     // not re-detect on every keystroke of the working-directory field.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openState, type]);
+  }, [openState, type, wslSupported]);
 
   function reset() {
     setName("");
@@ -201,9 +221,15 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="local">Local folder</SelectItem>
-                <SelectItem value="wsl">WSL distribution</SelectItem>
-                <SelectItem value="ssh">SSH remote</SelectItem>
+                {availableProjectTypes.includes("local") ? (
+                  <SelectItem value="local">Local folder</SelectItem>
+                ) : null}
+                {availableProjectTypes.includes("wsl") ? (
+                  <SelectItem value="wsl">WSL distribution</SelectItem>
+                ) : null}
+                {availableProjectTypes.includes("ssh") ? (
+                  <SelectItem value="ssh">SSH remote</SelectItem>
+                ) : null}
               </SelectContent>
             </Select>
           </div>
@@ -333,8 +359,7 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
                 </Select>
                 {connections.length === 0 ? (
                   <span className="text-xs text-muted-foreground">
-                    Create a reusable SSH connection before adding this
-                    project.
+                    Create a reusable SSH connection before adding this project.
                   </span>
                 ) : null}
               </div>
@@ -376,4 +401,3 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
     </Dialog>
   );
 }
-

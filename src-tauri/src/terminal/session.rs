@@ -149,9 +149,7 @@ impl ReadyWatcher {
         let code = exit_code
             .map(|code| format!(" with exit code {code}"))
             .unwrap_or_default();
-        let mut message = format!(
-            "The shell process exited{code} before it became interactive"
-        );
+        let mut message = format!("The shell process exited{code} before it became interactive");
 
         // WSL writes useful errors (unknown distro, invalid --cd path) to the
         // PTY. Those bytes are normally held back while waiting for the
@@ -373,11 +371,11 @@ impl TerminalSession {
                     "Timed out waiting for the interactive shell".into(),
                 ))
             }
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(
-                AppError::EnvironmentInitializationFailed(
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err(AppError::EnvironmentInitializationFailed(
                     "The interactive-shell readiness channel closed unexpectedly".into(),
-                ),
-            ),
+                ))
+            }
         }
     }
 

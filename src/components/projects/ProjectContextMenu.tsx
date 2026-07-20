@@ -2,7 +2,7 @@ import { FolderOpen, Pencil, Plus, ShieldCheck, Trash2 } from "lucide-react";
 
 import { ContextMenu } from "@/components/ui/context-menu";
 import { dispatchAppCommand } from "@/lib/appCommands";
-
+import { usePlatformStore } from "@/stores/platformStore";
 interface ProjectContextMenuProps {
   project: { id: string; name: string; type: "local" | "ssh" | "wsl" };
   position: { x: number; y: number };
@@ -25,6 +25,7 @@ export function ProjectContextMenu({
   onOpenExplorer,
   onClose,
 }: ProjectContextMenuProps) {
+  const isWindows = usePlatformStore((state) => state.info?.os) === "windows";
   return (
     <ContextMenu
       position={position}
@@ -48,7 +49,7 @@ export function ProjectContextMenu({
             ]
           : []),
         { label: "Edit project", icon: Pencil, onSelect: onEdit },
-        ...(project.type !== "ssh" && onOpenExplorer
+        ...(project.type !== "ssh" && onOpenExplorer && isWindows
           ? [
               {
                 label: "Open in File Explorer",

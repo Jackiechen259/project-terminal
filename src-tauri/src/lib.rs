@@ -10,6 +10,7 @@
 mod commands;
 mod config_dirs;
 mod error;
+mod platform;
 mod profile;
 mod project;
 mod ssh;
@@ -80,8 +81,9 @@ pub fn run() {
             .plugin(tauri_plugin_process::init())
             .plugin(tauri_plugin_updater::Builder::new().build())
             .manage(state)
-            .manage(terminal_state)
             .invoke_handler(tauri::generate_handler![
+                // Platform capabilities (host OS + available project types/shells)
+                commands::platform::get_platform_info,
                 // Clipboard (native read avoids a WebView paste permission prompt)
                 commands::clipboard::read_clipboard_text,
                 // Project CRUD (plan §12.1)

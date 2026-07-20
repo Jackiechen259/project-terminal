@@ -44,6 +44,10 @@ export type ShellType =
   | "cmd"
   | "git-bash"
   | "wsl"
+  | "bash"
+  | "zsh"
+  | "fish"
+  | "sh"
   | "remote-default"
   | "remote-bash"
   | "remote-zsh"
@@ -162,4 +166,23 @@ export interface ProjectTabGroup {
   projectId: string;
   tabIds: string[];
   activeTabId: string | null;
+}
+
+/**
+ * Host platform capability snapshot. Returned once per session by the
+ * `get_platform_info` Tauri command. Components MUST consume this instead of
+ * hardcoding `navigator.platform` checks so saved profiles remain portable.
+ */
+export type HostOs = "windows" | "linux" | "macos" | "other";
+
+export interface PlatformInfo {
+  os: HostOs;
+  /** True only on Windows. Gates the WSL project type, shell, and picker. */
+  wslSupported: boolean;
+  /** Project types the picker should offer. WSL is omitted on non-Windows. */
+  availableProjectTypes: ProjectType[];
+  /** Local shell variants the picker should offer for this host. */
+  availableLocalShells: ShellType[];
+  /** Shell to seed a new local project's default profile with. */
+  defaultLocalShell: ShellType;
 }

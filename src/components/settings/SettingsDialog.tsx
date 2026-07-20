@@ -29,6 +29,7 @@ import { cn } from "@/lib/utils";
 import type { ProfileInput } from "@/services";
 import { useProfileStore } from "@/stores/profileStore";
 import { useProjectStore } from "@/stores/projectStore";
+import { usePlatformStore } from "@/stores/platformStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import type { EnvironmentType, ShellType, TerminalProfile } from "@/types";
 
@@ -57,15 +58,31 @@ type ProfileDraft = {
   remoteShellCommand: string;
   isDefault: boolean;
 };
-
 const LOCAL_SHELLS: Array<{ value: ShellType; label: string }> = [
   { value: "powershell", label: "PowerShell" },
   { value: "cmd", label: "Command Prompt" },
   { value: "git-bash", label: "Git Bash" },
   { value: "wsl", label: "WSL" },
+  { value: "bash", label: "Bash" },
+  { value: "zsh", label: "Zsh" },
+  { value: "fish", label: "Fish" },
+  { value: "sh", label: "sh" },
   { value: "custom", label: "Custom executable" },
 ];
 
+/** Filter the local shell list down to what the current host offers. Falls
+ * back to the Windows set when the platform snapshot has not loaded yet so
+ * the picker is never empty during the brief initial render. */
+function localShellsForPlatform(
+  available: ShellType[] | undefined,
+): Array<{ value: ShellType; label: string }> {
+  if (!available || available.length === 0) {
+    return LOCAL_SHELLS.filter((shell) =>
+      ["powershell", "cmd", "git-bash", "wsl", "custom"].includes(shell.value),
+    );
+  }
+  return LOCAL_SHELLS.filter((shell) => available.includes(shell.value));
+}
 const REMOTE_SHELLS: Array<{ value: ShellType; label: string }> = [
   { value: "remote-default", label: "Remote default shell" },
   { value: "remote-bash", label: "Bash" },
@@ -483,11 +500,15 @@ function ProfileForm({
   onSave: () => void;
   onDelete?: () => void;
 }) {
+  const platformInfo = usePlatformStore((state) => state.info);
   const update = <K extends keyof ProfileDraft>(
     key: K,
     value: ProfileDraft[K],
   ) => onChange({ ...draft, [key]: value });
-  const shells = projectType === "ssh" ? REMOTE_SHELLS : LOCAL_SHELLS;
+  const shells =
+    projectType === "ssh"
+      ? REMOTE_SHELLS
+      : localShellsForPlatform(platformInfo?.availableLocalShells);
   const environmentNeedsPath =
     draft.environmentType !== "none" &&
     draft.environmentType !== "conda" &&
