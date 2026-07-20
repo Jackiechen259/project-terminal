@@ -130,6 +130,42 @@ export function TerminalView({
     termRef.current = term;
     fitRef.current = fit;
 
+    // xterm keeps its scroll bar virtual: the native viewport's scroll range
+    // is translated back into a buffer row. In WebView2 that range can
+    // occasionally lag behind the buffer after a terminal was hidden and
+    // receives output. Reaching the native end then leaves a few buffer rows
+    // inaccessible until xterm processes keyboard input (which scrolls to the
+    // bottom as a side effect). Detect that precise case and ask xterm to
+    // perform the missing logical scroll. This only runs at the visible end,
+    // so it does not disturb users reading earlier output.
+    const viewport = containerRef.current?.querySelector<HTMLElement>(
+      ".xterm-viewport",
+    );
+    let viewportSyncFrame: number | null = null;
+    const syncBottomAtNativeViewportEnd = () => {
+      if (!viewport || viewportSyncFrame !== null) return;
+      viewportSyncFrame = window.requestAnimationFrame(() => {
+        viewportSyncFrame = null;
+        const buffer = term.buffer.active;
+        const isAtNativeBottom =
+          viewport.scrollTop + viewport.clientHeight >=
+          viewport.scrollHeight - 1;
+        if (isAtNativeBottom && buffer.viewportY < buffer.baseY) {
+          term.scrollToBottom();
+        }
+      });
+    };
+    const handleViewportScroll = () => syncBottomAtNativeViewportEnd();
+    const handleTerminalWheel = (event: WheelEvent) => {
+      if (event.deltaY > 0) syncBottomAtNativeViewportEnd();
+    };
+    viewport?.addEventListener("scroll", handleViewportScroll);
+    // A wheel event at an already-clamped native scroll position does not
+    // emit another `scroll` event, so listen for it as well.
+    term.element?.addEventListener("wheel", handleTerminalWheel, {
+      passive: true,
+    });
+
     const fitAndResize = () => {
       const container = containerRef.current;
       if (!container || !container.clientWidth || !container.clientHeight) {
@@ -229,6 +265,11 @@ export function TerminalView({
       ro.disconnect();
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
       if (statusTimerRef.current) window.clearInterval(statusTimerRef.current);
+      if (viewportSyncFrame !== null) {
+        window.cancelAnimationFrame(viewportSyncFrame);
+      }
+      viewport?.removeEventListener("scroll", handleViewportScroll);
+      term.element?.removeEventListener("wheel", handleTerminalWheel);
       const sid = sessionIdRef.current;
       if (sid) void terminalService.close(sid);
       term.dispose();

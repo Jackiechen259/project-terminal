@@ -1,5 +1,6 @@
+import { useEffect, useState } from "react";
 import type { MouseEvent } from "react";
-import { Minus, Square, Terminal, X } from "lucide-react";
+import { Copy, Minus, Square, Terminal, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 /**
@@ -8,6 +9,23 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
  * than Windows' light title bar.
  */
 export function WindowTitleBar() {
+  const [isMaximized, setIsMaximized] = useState(false);
+
+  useEffect(() => {
+    const win = getCurrentWindow();
+    const syncMaximized = () => {
+      void win
+        .isMaximized()
+        .then(setIsMaximized)
+        .catch(() => {});
+    };
+    syncMaximized();
+    const promise = win.onResized(syncMaximized);
+    return () => {
+      void promise.then((unlisten) => unlisten());
+    };
+  }, []);
+
   function startDragging(event: MouseEvent<HTMLElement>) {
     if (event.button === 0) {
       void getCurrentWindow().startDragging();
@@ -48,8 +66,11 @@ export function WindowTitleBar() {
         >
           <Minus />
         </WindowControl>
-        <WindowControl label="Maximize or restore" onClick={toggleMaximize}>
-          <Square />
+        <WindowControl
+          label={isMaximized ? "Restore" : "Maximize"}
+          onClick={toggleMaximize}
+        >
+          {isMaximized ? <Copy /> : <Square />}
         </WindowControl>
         <WindowControl
           label="Close"
