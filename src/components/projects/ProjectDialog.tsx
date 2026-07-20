@@ -23,20 +23,29 @@ import {
 } from "@/components/ui/select";
 import { useProjectStore } from "@/stores/projectStore";
 import { useSshStore } from "@/stores/sshStore";
-import type { ProjectInput } from "@/services";
+import { environmentService, type ProjectInput } from "@/services";
 import { SshConnectionDialog } from "@/components/ssh/SshConnectionDialog";
 
+type ProjectType = "local" | "ssh" | "wsl";
+
 /**
- * Add a local folder or an SSH remote project. SSH connections are reusable:
- * projects store only the selected connection id and their remote path.
+ * Add a local folder, a WSL distribution, or an SSH remote project. SSH
+ * connections are reusable: projects store only the selected connection id and
+ * their remote path. WSL projects store the distribution name and an optional
+ * Linux working directory; the distribution list is detected from the host's
+ * `wsl.exe` when the dialog opens.
  */
 export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
   const [openState, setOpenState] = useState(false);
   const [name, setName] = useState("");
-  const [type, setType] = useState<"local" | "ssh">("local");
+  const [type, setType] = useState<ProjectType>("local");
   const [localPath, setLocalPath] = useState("");
   const [sshConnectionId, setSshConnectionId] = useState("");
   const [remotePath, setRemotePath] = useState("~");
+  const [wslDistribution, setWslDistribution] = useState("");
+  const [wslWorkingDirectory, setWslWorkingDirectory] = useState("");
+  const [distributions, setDistributions] = useState<string[]>([]);
+  const [distributionsLoading, setDistributionsLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,12 +57,47 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
     if (openState) void loadConnections();
   }, [openState, loadConnections]);
 
+  useEffect(() => {
+    if (!openState || type !== "wsl") return;
+    // Defer detection until the user picks the WSL type so a first-run dialog
+    // does not block on `wsl.exe` when only local projects are wanted.
+    let cancelled = false;
+    setDistributionsLoading(true);
+    environmentService
+      .detectWslDistributions()
+      .then((found) => {
+        if (cancelled) return;
+        const names = found.map((d) => d.name);
+        setDistributions(names);
+        // Auto-select the first detected distribution when the field is empty
+        // so the user can create the project without an extra click.
+        if (!wslDistribution && names.length > 0) {
+          setWslDistribution(names[0]);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setDistributions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setDistributionsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Only re-run when the dialog opens for the WSL type; we intentionally do
+    // not re-detect on every keystroke of the working-directory field.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openState, type]);
+
   function reset() {
     setName("");
     setType("local");
     setLocalPath("");
     setSshConnectionId("");
     setRemotePath("~");
+    setWslDistribution("");
+    setWslWorkingDirectory("");
+    setDistributions([]);
     setError(null);
   }
 
@@ -81,17 +125,28 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
       setError("Remote path is required");
       return;
     }
+    if (type === "wsl" && !wslDistribution.trim()) {
+      setError("Select a WSL distribution");
+      return;
+    }
     const input: ProjectInput = {
       name: name.trim(),
       type,
       ...(type === "local"
         ? { local: { path: localPath.trim() } }
-        : {
-            ssh: {
-              connectionId: sshConnectionId,
-              remotePath: remotePath.trim(),
-            },
-          }),
+        : type === "wsl"
+          ? {
+              wsl: {
+                distribution: wslDistribution.trim(),
+                workingDirectory: wslWorkingDirectory.trim() || undefined,
+              },
+            }
+          : {
+              ssh: {
+                connectionId: sshConnectionId,
+                remotePath: remotePath.trim(),
+              },
+            }),
     };
     setSubmitting(true);
     setError(null);
@@ -120,8 +175,8 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
         <DialogHeader>
           <DialogTitle>Add project</DialogTitle>
           <DialogDescription>
-            Create a local or SSH remote project. Each project gets its own
-            terminal tab group.
+            Create a local, WSL, or SSH remote project. Each project gets its
+            own terminal tab group.
           </DialogDescription>
         </DialogHeader>
 
@@ -140,13 +195,14 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
             <Label htmlFor="project-type">Type</Label>
             <Select
               value={type}
-              onValueChange={(v) => setType(v as "local" | "ssh")}
+              onValueChange={(v) => setType(v as ProjectType)}
             >
               <SelectTrigger id="project-type">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="local">Local folder</SelectItem>
+                <SelectItem value="wsl">WSL distribution</SelectItem>
                 <SelectItem value="ssh">SSH remote</SelectItem>
               </SelectContent>
             </Select>
@@ -169,6 +225,69 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
                 >
                   <FolderOpen className="h-4 w-4" />
                 </Button>
+              </div>
+            </div>
+          ) : null}
+
+          {type === "wsl" ? (
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="wsl-distribution">WSL distribution</Label>
+                {distributions.length > 0 ? (
+                  <Select
+                    value={wslDistribution}
+                    onValueChange={setWslDistribution}
+                  >
+                    <SelectTrigger id="wsl-distribution">
+                      <SelectValue
+                        placeholder={
+                          distributionsLoading
+                            ? "Detecting distributions..."
+                            : "Choose a distribution"
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {distributions.map((distro) => (
+                        <SelectItem key={distro} value={distro}>
+                          {distro}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    id="wsl-distribution"
+                    value={wslDistribution}
+                    onChange={(e) => setWslDistribution(e.target.value)}
+                    placeholder={
+                      distributionsLoading
+                        ? "Detecting distributions..."
+                        : "e.g. Ubuntu"
+                    }
+                  />
+                )}
+                {distributions.length === 0 && !distributionsLoading ? (
+                  <span className="text-xs text-muted-foreground">
+                    No distributions detected. Type a name manually or install
+                    WSL via `wsl --install`.
+                  </span>
+                ) : null}
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="wsl-working-directory">
+                  Working directory (optional)
+                </Label>
+                <Input
+                  id="wsl-working-directory"
+                  value={wslWorkingDirectory}
+                  onChange={(e) => setWslWorkingDirectory(e.target.value)}
+                  placeholder="e.g. /home/user/project"
+                />
+                <span className="text-xs text-muted-foreground">
+                  Linux path inside the distribution. Leave blank to start in
+                  the WSL user&apos;s home directory.
+                </span>
               </div>
             </div>
           ) : null}
@@ -207,14 +326,15 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
                   <SelectContent>
                     {connections.map((connection) => (
                       <SelectItem key={connection.id} value={connection.id}>
-                        {connection.name} — {connection.host}
+                        {connection.name} - {connection.host}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
                 {connections.length === 0 ? (
                   <span className="text-xs text-muted-foreground">
-                    Create a reusable SSH connection before adding this project.
+                    Create a reusable SSH connection before adding this
+                    project.
                   </span>
                 ) : null}
               </div>
@@ -256,3 +376,4 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
     </Dialog>
   );
 }
+

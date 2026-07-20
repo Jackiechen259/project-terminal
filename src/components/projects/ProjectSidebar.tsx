@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Folder, Plus, Server, Trash2 } from "lucide-react";
+import { Folder, Plus, Server, Terminal, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useProjectStore } from "@/stores/projectStore";
@@ -178,7 +178,7 @@ function ProjectRow({
   onSelect: () => void;
   showTerminalCount: boolean;
 }) {
-  const Icon = project.type === "local" ? Folder : Server;
+  const Icon = project.type === "local" ? Folder : project.type === "wsl" ? Terminal : Server;
   const running = tabs.filter((tab) =>
     ["starting", "connecting", "initializing", "running"].includes(tab.status),
   ).length;

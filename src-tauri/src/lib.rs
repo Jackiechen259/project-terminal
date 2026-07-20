@@ -117,6 +117,7 @@ pub fn run() {
                 // Environment detection (plan §12.4)
                 commands::terminal::detect_conda_installations,
                 commands::terminal::list_conda_environments,
+                commands::terminal::detect_wsl_distributions,
             ])
             .on_window_event(move |_window, event| {
                 if let tauri::WindowEvent::CloseRequested { .. } = event {

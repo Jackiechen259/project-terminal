@@ -162,6 +162,43 @@ pub fn default_remote_profile(id: String, project_id: String) -> TerminalProfile
     }
 }
 
+/// Default profile for a WSL project. `wsl.exe` is launched with
+/// `--distribution <distro>` and (when provided) `--cd <working_directory>`.
+/// Leaving `wsl_distribution` empty here would cause `wsl.exe` to start the
+/// default distribution, which may not match the project's saved distro - so
+/// the default profile is seeded with the project's distribution.
+pub fn default_wsl_profile(
+    id: String,
+    project_id: String,
+    distribution: String,
+    working_directory: Option<String>,
+) -> TerminalProfile {
+    let now = Utc::now();
+    TerminalProfile {
+        id,
+        project_id,
+        name: "WSL".into(),
+        shell_type: ShellType::Wsl,
+        shell_executable: None,
+        shell_args: vec![],
+        environment_type: EnvironmentType::None,
+        environment_name: None,
+        environment_path: None,
+        conda: None,
+        activation_command: None,
+        startup_commands: vec![],
+        environment_variables: None,
+        wsl_distribution: Some(distribution),
+        wsl_working_directory: working_directory
+            .map(|wd| wd.trim().to_string())
+            .filter(|wd| !wd.is_empty()),
+        remote_shell_command: None,
+        is_default: true,
+        created_at: now,
+        updated_at: now,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

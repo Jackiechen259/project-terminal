@@ -97,8 +97,11 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 struct ReadyWatcher {
     marker: Option<Vec<u8>>,
-    sender: Option<mpsc::Sender<()>>,
+    sender: Option<mpsc::Sender<Result<(), String>>>,
     pending: Vec<u8>,
+    /// Stored so a process that exits before `wait_for_ready` starts can
+    /// still surface its failure immediately instead of forcing a timeout.
+    exit_error: Option<String>,
 }
 
 impl ReadyWatcher {
@@ -122,7 +125,7 @@ impl ReadyWatcher {
             let output = self.pending[output_start..].to_vec();
 
             if let Some(sender) = self.sender.take() {
-                let _ = sender.send(());
+                let _ = sender.send(Ok(()));
             }
             self.marker = None;
             self.pending.clear();
@@ -133,6 +136,43 @@ impl ReadyWatcher {
         // injected command, and forwarding partial output would expose that
         // protocol text above the actual terminal prompt.
         Vec::new()
+    }
+
+    fn process_exited(&mut self, exit_code: Option<i32>) {
+        // Once the readiness marker has been seen, a later shell exit is a
+        // normal terminal lifecycle event rather than an initialization
+        // failure.
+        if self.marker.is_none() {
+            return;
+        }
+
+        let code = exit_code
+            .map(|code| format!(" with exit code {code}"))
+            .unwrap_or_default();
+        let mut message = format!(
+            "The shell process exited{code} before it became interactive"
+        );
+
+        // WSL writes useful errors (unknown distro, invalid --cd path) to the
+        // PTY. Those bytes are normally held back while waiting for the
+        // marker, so include a compact copy in the returned error.
+        let diagnostic = String::from_utf8_lossy(&self.pending)
+            .replace('\0', "")
+            .trim()
+            .to_string();
+        if !diagnostic.is_empty() {
+            const MAX_DIAGNOSTIC_CHARS: usize = 600;
+            let diagnostic: String = diagnostic.chars().take(MAX_DIAGNOSTIC_CHARS).collect();
+            message.push_str(": ");
+            message.push_str(&diagnostic);
+        }
+
+        self.exit_error = Some(message.clone());
+        self.marker = None;
+        self.pending.clear();
+        if let Some(sender) = self.sender.take() {
+            let _ = sender.send(Err(message));
+        }
     }
 }
 
@@ -207,6 +247,7 @@ impl TerminalSession {
                 .map(|marker| marker.as_bytes().to_vec()),
             sender: None,
             pending: Vec::new(),
+            exit_error: None,
         }));
         let session_id = spawn.session_id.clone();
 
@@ -255,6 +296,7 @@ impl TerminalSession {
         // Wait thread: block on the child so we can capture the exit code and
         // flip status.
         let inner_for_wait = inner.clone();
+        let watcher_for_wait = ready_watcher.clone();
         let mut child_for_wait = child;
         thread::spawn(move || match child_for_wait.wait() {
             Ok(status) => {
@@ -262,10 +304,20 @@ impl TerminalSession {
                 let mut guard = inner_for_wait.lock();
                 guard.exit_code = Some(code);
                 guard.status = SessionStatus::Exited;
+                let closing = guard.closing;
+                drop(guard);
+                if !closing {
+                    watcher_for_wait.lock().process_exited(Some(code));
+                }
             }
             Err(_) => {
                 let mut guard = inner_for_wait.lock();
                 guard.status = SessionStatus::Error;
+                let closing = guard.closing;
+                drop(guard);
+                if !closing {
+                    watcher_for_wait.lock().process_exited(None);
+                }
             }
         });
 
@@ -292,6 +344,9 @@ impl TerminalSession {
         let (sender, receiver) = mpsc::channel();
         {
             let mut watcher = self.ready_watcher.lock();
+            if let Some(error) = watcher.exit_error.take() {
+                return Err(AppError::EnvironmentInitializationFailed(error));
+            }
             if watcher.marker.is_none() {
                 watcher.marker = Some(marker.as_bytes().to_vec());
             }
@@ -306,15 +361,24 @@ impl TerminalSession {
             return Err(error);
         }
 
-        receiver.recv_timeout(timeout).map_err(|_| {
-            let mut watcher = self.ready_watcher.lock();
-            watcher.marker = None;
-            watcher.sender = None;
-            watcher.pending.clear();
-            AppError::EnvironmentInitializationFailed(
-                "Timed out waiting for the interactive shell".into(),
-            )
-        })
+        match receiver.recv_timeout(timeout) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => Err(AppError::EnvironmentInitializationFailed(error)),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let mut watcher = self.ready_watcher.lock();
+                watcher.marker = None;
+                watcher.sender = None;
+                watcher.pending.clear();
+                Err(AppError::EnvironmentInitializationFailed(
+                    "Timed out waiting for the interactive shell".into(),
+                ))
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(
+                AppError::EnvironmentInitializationFailed(
+                    "The interactive-shell readiness channel closed unexpectedly".into(),
+                ),
+            ),
+        }
     }
 
     pub fn mark_running(&self) {
@@ -538,15 +602,37 @@ mod tests {
             marker: Some(marker.to_vec()),
             sender: Some(sender),
             pending: Vec::new(),
+            exit_error: None,
         };
 
         assert!(watcher
             .process(b"echo [$env:PROJECT_TERMINAL_READY]\r\n\r\n[abcde")
             .is_empty());
         assert_eq!(watcher.process(b"f]\r\nPS C:\\> "), b"PS C:\\> ");
-        receiver
+        let _ = receiver
             .recv_timeout(Duration::from_millis(10))
             .expect("split marker not detected");
+    }
+
+    #[test]
+    fn ready_watcher_reports_early_process_exit_with_buffered_diagnostics() {
+        let (sender, receiver) = mpsc::channel();
+        let mut watcher = ReadyWatcher {
+            marker: Some(b"__READY__".to_vec()),
+            sender: Some(sender),
+            pending: b"WSL: invalid working directory".to_vec(),
+            exit_error: None,
+        };
+
+        watcher.process_exited(Some(1));
+
+        let error = receiver
+            .recv_timeout(Duration::from_millis(10))
+            .expect("early exit was not reported")
+            .expect_err("early exit must report an error");
+        assert!(error.contains("exit code 1"));
+        assert!(error.contains("invalid working directory"));
+        assert_eq!(watcher.exit_error.as_deref(), Some(error.as_str()));
     }
 
     #[test]

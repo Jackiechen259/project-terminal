@@ -46,9 +46,10 @@ const SSH_CMD = {
 export interface ProjectInput {
   id?: string;
   name: string;
-  type: "local" | "ssh";
+  type: "local" | "ssh" | "wsl";
   local?: { path: string };
   ssh?: { connectionId: string; remotePath: string };
+  wsl?: { distribution: string; workingDirectory?: string };
   defaultProfileId?: string;
 }
 
@@ -229,10 +230,16 @@ export interface DetectedCondaEnvironment {
   isBase: boolean;
 }
 
+export interface DetectedWslDistribution {
+  name: string;
+}
+
 export const environmentService = {
   detectConda: () => invokeOrThrow<string[]>("detect_conda_installations"),
   listConda: (condaExecutable: string) =>
     invokeOrThrow<DetectedCondaEnvironment[]>("list_conda_environments", {
       condaExecutable,
     }),
+  detectWslDistributions: () =>
+    invokeOrThrow<DetectedWslDistribution[]>("detect_wsl_distributions"),
 };

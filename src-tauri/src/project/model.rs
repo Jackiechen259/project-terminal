@@ -3,7 +3,7 @@
 //! Serialization contract: all structs use `#[serde(rename_all = "camelCase")]`
 //! so the on-disk JSON matches the TypeScript `Project` shape exactly. The
 //! `ProjectType` enum stays `kebab-case` because the frontend uses
-//! `"local" | "ssh"` string literals.
+//! `"local" | "ssh" | "wsl"` string literals.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 pub enum ProjectType {
     Local,
     Ssh,
+    Wsl,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,6 +29,17 @@ pub struct SshProjectConfig {
     pub remote_path: String,
 }
 
+/// WSL project config. `distribution` is required (e.g. "Ubuntu"); the
+/// working directory is a Linux path inside that distribution and may be
+/// empty to start in the WSL user's home.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WslProjectConfig {
+    pub distribution: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_directory: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
@@ -40,6 +52,8 @@ pub struct Project {
     pub local: Option<LocalProjectConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ssh: Option<SshProjectConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wsl: Option<WslProjectConfig>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_profile_id: Option<String>,
@@ -87,6 +101,18 @@ impl Project {
                     ));
                 }
             }
+            ProjectType::Wsl => {
+                let wsl = self.wsl.as_ref().ok_or_else(|| {
+                    crate::error::AppError::Configuration(
+                        "WSL project is missing its wsl config".to_string(),
+                    )
+                })?;
+                if wsl.distribution.trim().is_empty() {
+                    return Err(crate::error::AppError::Configuration(
+                        "WSL project must reference a distribution".to_string(),
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -110,6 +136,7 @@ mod tests {
                 path: "D:\\Demo".into(),
             }),
             ssh: None,
+            wsl: None,
             default_profile_id: None,
             created_at: utc_now(),
             updated_at: utc_now(),
@@ -120,6 +147,7 @@ mod tests {
         assert!(json.contains("\"createdAt\""));
         assert!(json.contains("\"updatedAt\""));
         assert!(!json.contains("ssh"));
+        assert!(!json.contains("wsl"));
         assert!(!json.contains("defaultProfileId"));
     }
 
@@ -134,6 +162,7 @@ mod tests {
                 connection_id: "conn-1".into(),
                 remote_path: "/home/user/proj".into(),
             }),
+            wsl: None,
             default_profile_id: None,
             created_at: utc_now(),
             updated_at: utc_now(),
@@ -144,6 +173,52 @@ mod tests {
         assert!(json.contains("\"remotePath\":\"/home/user/proj\""));
         assert!(json.contains("\"createdAt\""));
         assert!(!json.contains("local"));
+        assert!(!json.contains("wsl"));
+    }
+
+    #[test]
+    fn wsl_project_serializes_camel_case_fields() {
+        let project = Project {
+            id: "p4".into(),
+            name: "Ubuntu project".into(),
+            project_type: ProjectType::Wsl,
+            local: None,
+            ssh: None,
+            wsl: Some(WslProjectConfig {
+                distribution: "Ubuntu".into(),
+                working_directory: Some("/home/user/proj".into()),
+            }),
+            default_profile_id: None,
+            created_at: utc_now(),
+            updated_at: utc_now(),
+        };
+        let json = serde_json::to_string(&project).unwrap();
+        assert!(json.contains("\"type\":\"wsl\""));
+        assert!(json.contains("\"distribution\":\"Ubuntu\""));
+        assert!(json.contains("\"workingDirectory\":\"/home/user/proj\""));
+        assert!(!json.contains("local"));
+        assert!(!json.contains("ssh"));
+    }
+
+    #[test]
+    fn wsl_project_omits_working_directory_when_none() {
+        let project = Project {
+            id: "p5".into(),
+            name: "Default home".into(),
+            project_type: ProjectType::Wsl,
+            local: None,
+            ssh: None,
+            wsl: Some(WslProjectConfig {
+                distribution: "Debian".into(),
+                working_directory: None,
+            }),
+            default_profile_id: None,
+            created_at: utc_now(),
+            updated_at: utc_now(),
+        };
+        let json = serde_json::to_string(&project).unwrap();
+        assert!(json.contains("\"distribution\":\"Debian\""));
+        assert!(!json.contains("workingDirectory"));
     }
 
     #[test]
@@ -156,6 +231,7 @@ mod tests {
                 path: "D:\\Demo".into(),
             }),
             ssh: None,
+            wsl: None,
             default_profile_id: Some("profile-1".into()),
             created_at: utc_now(),
             updated_at: utc_now(),
@@ -174,6 +250,7 @@ mod tests {
                 path: "D:\\Demo".into(),
             }),
             ssh: None,
+            wsl: None,
             default_profile_id: None,
             created_at: utc_now(),
             updated_at: utc_now(),
@@ -199,6 +276,7 @@ mod tests {
                 connection_id: "c1".into(),
                 remote_path: "/srv".into(),
             }),
+            wsl: None,
             default_profile_id: None,
             created_at: utc_now(),
             updated_at: utc_now(),
@@ -219,6 +297,34 @@ mod tests {
     }
 
     #[test]
+    fn wsl_project_validates_distribution_required() {
+        let mut project = Project {
+            id: "p".into(),
+            name: "Ubuntu".into(),
+            project_type: ProjectType::Wsl,
+            local: None,
+            ssh: None,
+            wsl: Some(WslProjectConfig {
+                distribution: "Ubuntu".into(),
+                working_directory: None,
+            }),
+            default_profile_id: None,
+            created_at: utc_now(),
+            updated_at: utc_now(),
+        };
+        assert!(project.validate().is_ok());
+
+        project.wsl = Some(WslProjectConfig {
+            distribution: "  ".into(),
+            working_directory: None,
+        });
+        assert!(project.validate().is_err());
+
+        project.wsl = None;
+        assert!(project.validate().is_err());
+    }
+
+    #[test]
     fn empty_local_config_is_rejected() {
         let project = Project {
             id: "p".into(),
@@ -226,6 +332,7 @@ mod tests {
             project_type: ProjectType::Local,
             local: None,
             ssh: None,
+            wsl: None,
             default_profile_id: None,
             created_at: utc_now(),
             updated_at: utc_now(),
@@ -245,6 +352,7 @@ mod tests {
                 connection_id: "c".into(),
                 remote_path: "/x".into(),
             }),
+            wsl: None,
             default_profile_id: Some("profile-1".into()),
             created_at: utc_now(),
             updated_at: utc_now(),
@@ -255,6 +363,30 @@ mod tests {
         assert_eq!(parsed.project_type, ProjectType::Ssh);
         assert_eq!(parsed.ssh.unwrap().connection_id, "c");
         assert_eq!(parsed.default_profile_id, Some("profile-1".into()));
+    }
+
+    #[test]
+    fn wsl_project_json_round_trip_preserves_fields() {
+        let project = Project {
+            id: "p6".into(),
+            name: "Roundtrip WSL".into(),
+            project_type: ProjectType::Wsl,
+            local: None,
+            ssh: None,
+            wsl: Some(WslProjectConfig {
+                distribution: "Ubuntu".into(),
+                working_directory: Some("/srv".into()),
+            }),
+            default_profile_id: Some("profile-1".into()),
+            created_at: utc_now(),
+            updated_at: utc_now(),
+        };
+        let json = serde_json::to_string(&project).unwrap();
+        let parsed: Project = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.project_type, ProjectType::Wsl);
+        let wsl = parsed.wsl.unwrap();
+        assert_eq!(wsl.distribution, "Ubuntu");
+        assert_eq!(wsl.working_directory.as_deref(), Some("/srv"));
     }
 
     #[test]
@@ -274,5 +406,22 @@ mod tests {
         assert_eq!(parsed.project_type, ProjectType::Local);
         assert_eq!(parsed.local.unwrap().path, "D:\\Projects\\Demo");
         assert_eq!(parsed.default_profile_id, Some("profile-1".into()));
+    }
+
+    #[test]
+    fn frontend_shape_wsl_json_deserializes() {
+        let json = r#"{
+            "id": "p-wsl-frontend",
+            "name": "WSL Frontend",
+            "type": "wsl",
+            "wsl": { "distribution": "Ubuntu", "workingDirectory": "/home/user/proj" },
+            "createdAt": "2026-07-18T00:00:00Z",
+            "updatedAt": "2026-07-18T00:00:00Z"
+        }"#;
+        let parsed: Project = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.project_type, ProjectType::Wsl);
+        let wsl = parsed.wsl.unwrap();
+        assert_eq!(wsl.distribution, "Ubuntu");
+        assert_eq!(wsl.working_directory.as_deref(), Some("/home/user/proj"));
     }
 }

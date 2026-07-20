@@ -78,6 +78,33 @@ pub fn new_local_project(id: String, name: String, path: String) -> Project {
         project_type: ProjectType::Local,
         local: Some(super::model::LocalProjectConfig { path }),
         ssh: None,
+        wsl: None,
+        default_profile_id: None,
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+/// Build a new WSL project. `working_directory` is an optional Linux path
+/// inside the distribution; when `None` the WSL shell starts in the user's
+/// home directory.
+pub fn new_wsl_project(
+    id: String,
+    name: String,
+    distribution: String,
+    working_directory: Option<String>,
+) -> Project {
+    let now = Utc::now();
+    Project {
+        id,
+        name,
+        project_type: ProjectType::Wsl,
+        local: None,
+        ssh: None,
+        wsl: Some(super::model::WslProjectConfig {
+            distribution,
+            working_directory,
+        }),
         default_profile_id: None,
         created_at: now,
         updated_at: now,

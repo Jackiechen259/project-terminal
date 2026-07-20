@@ -9,11 +9,12 @@ pub mod escaping;
 pub mod initializer;
 pub mod manager;
 pub mod session;
+pub mod wsl;
 
 pub use initializer::{build_activation_script, build_remote_initialization_commands};
 pub use manager::TerminalManager;
 pub use session::{SessionSpawn, SessionStatus, TerminalOutput, TerminalSession};
-
+pub use wsl::{detect_wsl_distributions, DetectedWslDistribution};
 use crate::error::{AppError, AppResult};
 use crate::profile::{EnvironmentType, ShellType, TerminalProfile};
 

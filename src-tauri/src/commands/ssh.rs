@@ -369,6 +369,7 @@ mod tests {
                 connection_id: conn.id.clone(),
                 remote_path: "/srv".into(),
             }),
+            wsl: None,
             default_profile_id: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),

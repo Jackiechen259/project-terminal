@@ -144,6 +144,42 @@ fn build_session_spawn(
             };
             (program, args, cwd)
         }
+        crate::project::ProjectType::Wsl => {
+            let wsl_project = project.wsl.as_ref().ok_or_else(|| {
+                AppError::Configuration("WSL project is missing its wsl configuration".into())
+            })?;
+            // The project's distribution + working directory are the source of
+            // truth; the default WSL profile we seed on project creation copies
+            // them, but a user-edited profile may override either field. Fall
+            // back to the project's values when the profile leaves them blank.
+            let mut profile_with_wsl = profile.clone();
+            if profile_with_wsl
+                .wsl_distribution
+                .as_deref()
+                .map(str::trim)
+                .map(str::is_empty)
+                .unwrap_or(true)
+            {
+                profile_with_wsl.wsl_distribution = Some(wsl_project.distribution.clone());
+            }
+            if profile_with_wsl
+                .wsl_working_directory
+                .as_deref()
+                .map(str::trim)
+                .map(str::is_empty)
+                .unwrap_or(true)
+            {
+                profile_with_wsl.wsl_working_directory = wsl_project
+                    .working_directory
+                    .clone()
+                    .filter(|wd| !wd.trim().is_empty());
+            }
+            let (program, args) = resolve_local_shell(&profile_with_wsl)?;
+            // Do NOT set a Windows cwd: the `--cd` argument already directs the
+            // WSL shell to the right Linux path, and a Windows cwd would be
+            // translated to a `/mnt/c/...` path inside WSL before `--cd` runs.
+            (program, args, None)
+        }
         crate::project::ProjectType::Ssh => {
             let ssh_project = project.ssh.as_ref().ok_or_else(|| {
                 AppError::Configuration("SSH project is missing SSH configuration".into())
@@ -185,6 +221,10 @@ fn build_session_spawn(
             args,
             cwd,
             env,
+            // `wsl.exe` does not reliably round-trip an injected readiness
+            // command through every Windows PTY implementation. Let WSL
+            // stream its prompt directly instead of hiding all output while
+            // waiting for a marker that may never arrive.
             readiness_marker: (project.project_type == crate::project::ProjectType::Local)
                 .then(|| format!("__PROJECT_TERMINAL_READY_{session_id}__")),
             rows: request.rows.max(1),
@@ -298,6 +338,30 @@ fn wait_for_interactive_shell(
         &command,
         std::time::Duration::from_secs(10),
     )
+    .map_err(|error| {
+        if profile.shell_type != crate::profile::ShellType::Wsl {
+            return error;
+        }
+
+        let AppError::EnvironmentInitializationFailed(message) = error else {
+            return error;
+        };
+
+        let distribution = profile
+            .wsl_distribution
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("<not configured>");
+        let directory = profile
+            .wsl_working_directory
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("<WSL home directory>");
+        AppError::EnvironmentInitializationFailed(format!(
+            "{message}. WSL distribution: `{distribution}`; working directory: `{directory}`. \
+             Verify them with `wsl -d \"{distribution}\"` and use a Linux path such as `/home/user/project`."
+        ))
+    })
 }
 
 fn shell_command_line(shell_type: crate::profile::ShellType, command: &str) -> String {
@@ -394,14 +458,20 @@ fn launch_terminal(
 ) -> AppResult<String> {
     let id = manager.create(spawn, Box::new(on_output))?;
 
-    let initialization = if project_type == crate::project::ProjectType::Ssh {
-        // Authentication and first host-key confirmation are intentionally
-        // handled inside the PTY by OpenSSH. Never inject input while those
-        // prompts may be active.
-        Ok(())
-    } else {
-        wait_for_interactive_shell(manager, profile, &id)
-            .and_then(|()| execute_startup_commands(manager, profile, &id))
+    let initialization = match project_type {
+        crate::project::ProjectType::Ssh => {
+            // Authentication and first host-key confirmation are intentionally
+            // handled inside the PTY by OpenSSH. Never inject input while those
+            // prompts may be active.
+            Ok(())
+        }
+        crate::project::ProjectType::Wsl => {
+            // See `readiness_marker` above. The PTY buffers these writes until
+            // the Linux shell accepts input, while leaving the prompt visible.
+            execute_startup_commands(manager, profile, &id)
+        }
+        crate::project::ProjectType::Local => wait_for_interactive_shell(manager, profile, &id)
+            .and_then(|()| execute_startup_commands(manager, profile, &id)),
     };
 
     if let Err(error) = initialization {
@@ -542,6 +612,11 @@ pub fn detect_conda_installations() -> Vec<String> {
 }
 
 #[tauri::command]
+pub fn detect_wsl_distributions() -> Vec<crate::terminal::DetectedWslDistribution> {
+    crate::terminal::detect_wsl_distributions()
+}
+
+#[tauri::command]
 pub fn list_conda_environments(
     conda_executable: String,
 ) -> AppResult<Vec<crate::terminal::conda::DetectedCondaEnvironment>> {
@@ -557,9 +632,12 @@ mod tests {
     use super::*;
     use crate::config_dirs::ConfigDirs;
     use crate::profile::{
-        default_powershell_profile, EnvironmentType, ProfileRepository, ShellType,
+        default_powershell_profile, default_wsl_profile, EnvironmentType, ProfileRepository,
+        ShellType,
     };
-    use crate::project::{LocalProjectConfig, Project, ProjectRepository, ProjectType};
+    use crate::project::{
+        LocalProjectConfig, Project, ProjectRepository, ProjectType, WslProjectConfig,
+    };
     use crate::ssh::SshConnectionRepository;
     use chrono::Utc;
     use std::fs;
@@ -644,6 +722,7 @@ mod tests {
                 path: dir.to_string_lossy().into_owned(),
             }),
             ssh: None,
+            wsl: None,
             default_profile_id: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -686,6 +765,45 @@ mod tests {
     }
 
     #[test]
+    fn build_session_spawn_does_not_wait_for_a_wsl_readiness_marker() {
+        let app = test_state();
+        let project = Project {
+            id: "wsl-project".into(),
+            name: "Ubuntu".into(),
+            project_type: ProjectType::Wsl,
+            local: None,
+            ssh: None,
+            wsl: Some(WslProjectConfig {
+                distribution: "Ubuntu".into(),
+                working_directory: None,
+            }),
+            default_profile_id: Some("wsl-profile".into()),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        app.projects.upsert(project).unwrap();
+        app.profiles.upsert(default_wsl_profile(
+            "wsl-profile".into(),
+            "wsl-project".into(),
+            "Ubuntu".into(),
+            None,
+        ))
+        .unwrap();
+
+        let request = CreateTerminalRequest {
+            project_id: "wsl-project".into(),
+            profile_id: "wsl-profile".into(),
+            rows: 24,
+            cols: 80,
+        };
+        let (spawn, project_type, _) = build_session_spawn(&app, &request, "session-1").unwrap();
+
+        assert_eq!(project_type, ProjectType::Wsl);
+        assert_eq!(spawn.program, "wsl.exe");
+        assert!(spawn.readiness_marker.is_none());
+    }
+
+    #[test]
     fn build_session_spawn_rejects_profile_from_other_project() {
         let app = test_state();
         seed_project(&app, "p1");
@@ -714,6 +832,7 @@ mod tests {
                 path: "D:\\does\\not\\exist\\here".into(),
             }),
             ssh: None,
+            wsl: None,
             default_profile_id: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),

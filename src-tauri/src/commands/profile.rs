@@ -258,6 +258,7 @@ mod tests {
                 path: dir.to_string_lossy().into_owned(),
             }),
             ssh: None,
+            wsl: None,
             default_profile_id: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),

@@ -19,8 +19,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::commands::ListResponse;
 use crate::error::{AppError, AppResult};
-use crate::profile::{default_powershell_profile, default_remote_profile};
-use crate::project::{LocalProjectConfig, Project, ProjectType, SshProjectConfig};
+use crate::profile::{
+    default_powershell_profile, default_remote_profile, default_wsl_profile,
+};
+use crate::project::{LocalProjectConfig, Project, ProjectType, SshProjectConfig, WslProjectConfig};
 use crate::state::{new_id, AppState};
 
 /// Payload for creating/updating a project. The frontend fills this in; the
@@ -38,11 +40,12 @@ pub struct ProjectInput {
     pub local: Option<LocalProjectConfig>,
     #[serde(default)]
     pub ssh: Option<SshProjectConfig>,
+    #[serde(default)]
+    pub wsl: Option<WslProjectConfig>,
 
     #[serde(default)]
     pub default_profile_id: Option<String>,
 }
-
 /// Validate a local path: must exist and be a directory.
 fn validate_local_path(path: &str) -> AppResult<()> {
     let p = Path::new(path);
@@ -71,6 +74,7 @@ fn build_project_from_input(input: ProjectInput, id: String) -> AppResult<Projec
                 project_type: ProjectType::Local,
                 local: Some(local),
                 ssh: None,
+                wsl: None,
                 default_profile_id: input.default_profile_id,
                 created_at: now,
                 updated_at: now,
@@ -86,6 +90,33 @@ fn build_project_from_input(input: ProjectInput, id: String) -> AppResult<Projec
                 project_type: ProjectType::Ssh,
                 local: None,
                 ssh: Some(ssh),
+                wsl: None,
+                default_profile_id: input.default_profile_id,
+                created_at: now,
+                updated_at: now,
+            }
+        }
+        ProjectType::Wsl => {
+            let wsl = input.wsl.ok_or_else(|| {
+                AppError::Configuration("WSL project requires a wsl config".into())
+            })?;
+            // Normalize the working directory: empty strings become None so
+            // the serialized JSON stays consistent and `resolve_local_shell`
+            // does not push a `--cd ""` argument.
+            let working_directory = wsl
+                .working_directory
+                .map(|wd| wd.trim().to_string())
+                .filter(|wd| !wd.is_empty());
+            Project {
+                id,
+                name: input.name,
+                project_type: ProjectType::Wsl,
+                local: None,
+                ssh: None,
+                wsl: Some(WslProjectConfig {
+                    distribution: wsl.distribution,
+                    working_directory,
+                }),
                 default_profile_id: input.default_profile_id,
                 created_at: now,
                 updated_at: now,
@@ -115,6 +146,17 @@ pub fn create_project_inner(state: &AppState, input: ProjectInput) -> AppResult<
     let profile = match project.project_type {
         ProjectType::Local => default_powershell_profile(profile_id, project.id.clone()),
         ProjectType::Ssh => default_remote_profile(profile_id, project.id.clone()),
+        ProjectType::Wsl => {
+            let wsl = project.wsl.clone().ok_or_else(|| {
+                AppError::Configuration("WSL project requires a wsl config".into())
+            })?;
+            default_wsl_profile(
+                profile_id,
+                project.id.clone(),
+                wsl.distribution,
+                wsl.working_directory,
+            )
+        }
     };
     state.profiles.upsert(profile)?;
     Ok(project)
@@ -132,6 +174,7 @@ pub fn update_project_inner(state: &AppState, input: ProjectInput) -> AppResult<
         project_type: input.project_type,
         local: input.local,
         ssh: input.ssh,
+        wsl: input.wsl,
         default_profile_id: input.default_profile_id,
         created_at: existing.created_at,
         updated_at: Utc::now(),
@@ -149,34 +192,73 @@ pub fn delete_project_inner(state: &AppState, id: &str) -> AppResult<()> {
     Ok(())
 }
 
-/// Open a saved local project in Windows Explorer. The frontend submits only
-/// a project id; the persisted path is revalidated here, so this is not a
+/// Open a saved project's working directory in Windows Explorer.
+///
+/// Local projects open their Windows path directly. WSL projects open the
+/// matching `\\wsl.localhost\<distro>\<linux path>` folder so the user can
+/// browse the Linux filesystem from Windows. The frontend submits only a
+/// project id; the persisted path is revalidated here, so this is not a
 /// general-purpose process execution endpoint.
 pub fn open_project_in_explorer_inner(state: &AppState, id: &str) -> AppResult<()> {
     let project = state.projects.get(id)?;
-    if project.project_type != ProjectType::Local {
-        return Err(AppError::Configuration(
-            "Only local projects can be opened in File Explorer".into(),
-        ));
+    let target = match project.project_type {
+        ProjectType::Local => project
+            .local
+            .as_ref()
+            .map(|local| local.path.clone())
+            .ok_or_else(|| {
+                AppError::Configuration("Local project is missing its path configuration".into())
+            })?,
+        ProjectType::Wsl => {
+            let wsl = project.wsl.as_ref().ok_or_else(|| {
+                AppError::Configuration("WSL project is missing its wsl configuration".into())
+            })?;
+            wsl_explorer_path(&wsl.distribution, wsl.working_directory.as_deref())
+        }
+        ProjectType::Ssh => {
+            return Err(AppError::Configuration(
+                "SSH projects cannot be opened in File Explorer".into(),
+            ));
+        }
+    };
+    match project.project_type {
+        ProjectType::Local => validate_local_path(&target)?,
+        // WSL paths are not checked on the Windows side: the `\\wsl.localhost`
+        // share only materializes while WSL is running, and a missing folder
+        // surfaces as an Explorer error that the user can act on.
+        _ => {}
     }
-    let local = project.local.ok_or_else(|| {
-        AppError::Configuration("Local project is missing its path configuration".into())
-    })?;
-    validate_local_path(&local.path)?;
     #[cfg(windows)]
     {
         std::process::Command::new("explorer.exe")
-            .arg(&local.path)
+            .arg(&target)
             .spawn()
-            .map_err(|error| AppError::Io(error))?;
+            .map_err(AppError::Io)?;
         Ok(())
     }
     #[cfg(not(windows))]
     {
-        let _ = local;
+        let _ = target;
         Err(AppError::Configuration(
             "Opening File Explorer is only supported on Windows".into(),
         ))
+    }
+}
+
+/// Translate a WSL distribution + Linux path into the Windows UNC path that
+/// Explorer accepts: `\\wsl.localhost\<distro>\<path>`. `\\wsl$` is the
+/// legacy alias; `\\wsl.localhost` is preferred on Windows 11+.
+fn wsl_explorer_path(distribution: &str, working_directory: Option<&str>) -> String {
+    let distro = distribution.trim().trim_matches('\\');
+    let path = working_directory
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(|p| p.trim_start_matches('/').replace('/', "\\"))
+        .unwrap_or_default();
+    if path.is_empty() {
+        format!("\\\\wsl.localhost\\{distro}")
+    } else {
+        format!("\\\\wsl.localhost\\{distro}\\{path}")
     }
 }
 
@@ -252,6 +334,22 @@ mod tests {
             project_type: ProjectType::Local,
             local: Some(LocalProjectConfig { path: path.into() }),
             ssh: None,
+            wsl: None,
+            default_profile_id: None,
+        }
+    }
+
+    fn wsl_input(name: &str, distribution: &str, working_directory: Option<&str>) -> ProjectInput {
+        ProjectInput {
+            id: None,
+            name: name.into(),
+            project_type: ProjectType::Wsl,
+            local: None,
+            ssh: None,
+            wsl: Some(WslProjectConfig {
+                distribution: distribution.into(),
+                working_directory: working_directory.map(str::to_string),
+            }),
             default_profile_id: None,
         }
     }
@@ -294,6 +392,7 @@ mod tests {
                 path: dir2.to_string_lossy().into_owned(),
             }),
             ssh: None,
+            wsl: None,
             default_profile_id: None,
         };
         let updated = update_project_inner(&state, update_input).unwrap();
@@ -346,6 +445,7 @@ mod tests {
                 connection_id: "c1".into(),
                 remote_path: "/srv".into(),
             }),
+            wsl: None,
             default_profile_id: None,
         };
         let project = create_project_inner(&state, input).unwrap();
@@ -356,6 +456,55 @@ mod tests {
             profiles[0].shell_type,
             crate::profile::ShellType::RemoteDefault
         );
+    }
+
+    #[test]
+    fn create_wsl_project_seeds_a_wsl_profile_with_distribution() {
+        let state = test_state();
+        let input = wsl_input("Ubuntu project", "Ubuntu", Some("/home/user/proj"));
+        let project = create_project_inner(&state, input).unwrap();
+        assert_eq!(project.project_type, ProjectType::Wsl);
+        let wsl = project.wsl.unwrap();
+        assert_eq!(wsl.distribution, "Ubuntu");
+        assert_eq!(wsl.working_directory.as_deref(), Some("/home/user/proj"));
+
+        let profiles = state.profiles.list_for_project(&project.id).unwrap();
+        assert_eq!(profiles.len(), 1);
+        let profile = &profiles[0];
+        assert!(profile.is_default);
+        assert_eq!(profile.shell_type, crate::profile::ShellType::Wsl);
+        assert_eq!(profile.wsl_distribution.as_deref(), Some("Ubuntu"));
+        assert_eq!(
+            profile.wsl_working_directory.as_deref(),
+            Some("/home/user/proj")
+        );
+    }
+
+    #[test]
+    fn create_wsl_project_normalizes_blank_working_directory() {
+        let state = test_state();
+        let input = wsl_input("Blank wd", "Ubuntu", Some("   "));
+        let project = create_project_inner(&state, input).unwrap();
+        let wsl = project.wsl.unwrap();
+        assert_eq!(wsl.distribution, "Ubuntu");
+        assert!(wsl.working_directory.is_none());
+
+        let profile = state
+            .profiles
+            .list_for_project(&project.id)
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        assert!(profile.wsl_working_directory.is_none());
+    }
+
+    #[test]
+    fn create_wsl_project_requires_distribution() {
+        let state = test_state();
+        let input = wsl_input("Bad", "  ", None);
+        let err = create_project_inner(&state, input).unwrap_err();
+        assert!(matches!(err, AppError::Configuration(_)));
     }
 
     #[test]
@@ -370,9 +519,32 @@ mod tests {
                 connection_id: "c1".into(),
                 remote_path: "/srv".into(),
             }),
+            wsl: None,
             default_profile_id: None,
         };
         let project = create_project_inner(&state, input).unwrap();
         assert!(open_project_in_explorer_inner(&state, &project.id).is_err());
+    }
+
+    #[test]
+    fn wsl_explorer_path_translates_linux_path_to_unc() {
+        assert_eq!(
+            wsl_explorer_path("Ubuntu", Some("/home/user/proj")),
+            "\\\\wsl.localhost\\Ubuntu\\home\\user\\proj"
+        );
+        assert_eq!(
+            wsl_explorer_path("Debian", None),
+            "\\\\wsl.localhost\\Debian"
+        );
+        // Empty working directory falls back to the distro root.
+        assert_eq!(
+            wsl_explorer_path("Ubuntu", Some("")),
+            "\\\\wsl.localhost\\Ubuntu"
+        );
+        // Leading slashes are stripped so we don't double up backslashes.
+        assert_eq!(
+            wsl_explorer_path("Ubuntu", Some("/srv/app")),
+            "\\\\wsl.localhost\\Ubuntu\\srv\\app"
+        );
     }
 }

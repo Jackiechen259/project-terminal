@@ -4,7 +4,7 @@ import { ContextMenu } from "@/components/ui/context-menu";
 import { dispatchAppCommand } from "@/lib/appCommands";
 
 interface ProjectContextMenuProps {
-  project: { id: string; name: string; type: "local" | "ssh" };
+  project: { id: string; name: string; type: "local" | "ssh" | "wsl" };
   position: { x: number; y: number };
   onOpen: () => void;
   onRemove: () => void;
@@ -48,7 +48,7 @@ export function ProjectContextMenu({
             ]
           : []),
         { label: "Edit project", icon: Pencil, onSelect: onEdit },
-        ...(project.type === "local" && onOpenExplorer
+        ...(project.type !== "ssh" && onOpenExplorer
           ? [
               {
                 label: "Open in File Explorer",

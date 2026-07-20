@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/select";
 import { useProjectStore } from "@/stores/projectStore";
 import { useSshStore } from "@/stores/sshStore";
+import { environmentService } from "@/services";
 import type { Project } from "@/types";
 
 export function ProjectEditDialog({
@@ -39,6 +40,13 @@ export function ProjectEditDialog({
     project.ssh?.connectionId ?? "",
   );
   const [remotePath, setRemotePath] = useState(project.ssh?.remotePath ?? "");
+  const [wslDistribution, setWslDistribution] = useState(
+    project.wsl?.distribution ?? "",
+  );
+  const [wslWorkingDirectory, setWslWorkingDirectory] = useState(
+    project.wsl?.workingDirectory ?? "",
+  );
+  const [distributions, setDistributions] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const connections = useSshStore((state) => state.connections);
@@ -51,8 +59,18 @@ export function ProjectEditDialog({
     setLocalPath(project.local?.path ?? "");
     setConnectionId(project.ssh?.connectionId ?? "");
     setRemotePath(project.ssh?.remotePath ?? "");
+    setWslDistribution(project.wsl?.distribution ?? "");
+    setWslWorkingDirectory(project.wsl?.workingDirectory ?? "");
     setError(null);
     if (project.type === "ssh") void loadConnections();
+    if (project.type === "wsl") {
+      // Best-effort detection: if it fails, the existing distribution stays
+      // as a free-text value the user can edit directly.
+      environmentService
+        .detectWslDistributions()
+        .then((found) => setDistributions(found.map((d) => d.name)))
+        .catch(() => setDistributions([]));
+    }
   }, [openState, project, loadConnections]);
 
   async function chooseFolder() {
@@ -66,6 +84,8 @@ export function ProjectEditDialog({
       return setError("Local path is required.");
     if (project.type === "ssh" && (!connectionId || !remotePath.trim()))
       return setError("SSH connection and remote path are required.");
+    if (project.type === "wsl" && !wslDistribution.trim())
+      return setError("WSL distribution is required.");
     setSaving(true);
     setError(null);
     try {
@@ -75,7 +95,14 @@ export function ProjectEditDialog({
         type: project.type,
         ...(project.type === "local"
           ? { local: { path: localPath.trim() } }
-          : { ssh: { connectionId, remotePath: remotePath.trim() } }),
+          : project.type === "wsl"
+            ? {
+                wsl: {
+                  distribution: wslDistribution.trim(),
+                  workingDirectory: wslWorkingDirectory.trim() || undefined,
+                },
+              }
+            : { ssh: { connectionId, remotePath: remotePath.trim() } }),
         defaultProfileId: project.defaultProfileId,
       });
       onOpenChange(false);
@@ -125,6 +152,61 @@ export function ProjectEditDialog({
                 </Button>
               </div>
             </div>
+          ) : project.type === "wsl" ? (
+            <>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="edit-wsl-distribution">
+                  WSL distribution
+                </Label>
+                {distributions.length > 0 ? (
+                  <Select
+                    value={wslDistribution}
+                    onValueChange={setWslDistribution}
+                  >
+                    <SelectTrigger id="edit-wsl-distribution">
+                      <SelectValue placeholder="Choose a distribution" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {distributions.map((distro) => (
+                        <SelectItem key={distro} value={distro}>
+                          {distro}
+                        </SelectItem>
+                      ))}
+                      {/* Preserve the saved distribution even when wsl.exe no
+                          longer lists it (e.g. distro shut down). */}
+                      {wslDistribution &&
+                      !distributions.includes(wslDistribution) ? (
+                        <SelectItem value={wslDistribution}>
+                          {wslDistribution}
+                        </SelectItem>
+                      ) : null}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    id="edit-wsl-distribution"
+                    value={wslDistribution}
+                    onChange={(event) =>
+                      setWslDistribution(event.target.value)
+                    }
+                    placeholder="e.g. Ubuntu"
+                  />
+                )}
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="edit-wsl-working-directory">
+                  Working directory (optional)
+                </Label>
+                <Input
+                  id="edit-wsl-working-directory"
+                  value={wslWorkingDirectory}
+                  onChange={(event) =>
+                    setWslWorkingDirectory(event.target.value)
+                  }
+                  placeholder="e.g. /home/user/project"
+                />
+              </div>
+            </>
           ) : (
             <>
               <div className="flex flex-col gap-2">
@@ -136,7 +218,7 @@ export function ProjectEditDialog({
                   <SelectContent>
                     {connections.map((connection) => (
                       <SelectItem key={connection.id} value={connection.id}>
-                        {connection.name} — {connection.host}
+                        {connection.name} - {connection.host}
                       </SelectItem>
                     ))}
                   </SelectContent>

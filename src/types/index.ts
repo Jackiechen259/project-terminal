@@ -6,7 +6,7 @@
  * representations - they are deserialized from JSON the backend writes.
  */
 
-export type ProjectType = "local" | "ssh";
+export type ProjectType = "local" | "ssh" | "wsl";
 
 export interface LocalProjectConfig {
   path: string;
@@ -17,6 +17,13 @@ export interface SshProjectConfig {
   remotePath: string;
 }
 
+/** WSL project config. `distribution` is required (e.g. "Ubuntu");
+ * `workingDirectory` is an optional Linux path inside the distribution. */
+export interface WslProjectConfig {
+  distribution: string;
+  workingDirectory?: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -24,6 +31,7 @@ export interface Project {
 
   local?: LocalProjectConfig;
   ssh?: SshProjectConfig;
+  wsl?: WslProjectConfig;
 
   defaultProfileId?: string;
 

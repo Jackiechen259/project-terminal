@@ -88,7 +88,7 @@ const ENVIRONMENTS: Array<{ value: EnvironmentType; label: string }> = [
 // continuously think the snapshot changed, which can blank the app at startup.
 const EMPTY_PROFILES: TerminalProfile[] = [];
 
-function blankDraft(projectType: "local" | "ssh"): ProfileDraft {
+function blankDraft(projectType: "local" | "ssh" | "wsl"): ProfileDraft {
   return {
     name: "",
     shellType: projectType === "ssh" ? "remote-default" : "powershell",
@@ -475,7 +475,7 @@ function ProfileForm({
   onDelete,
 }: {
   draft: ProfileDraft;
-  projectType: "local" | "ssh";
+  projectType: "local" | "ssh" | "wsl";
   saving: boolean;
   error: string | null;
   onChange: (draft: ProfileDraft) => void;
