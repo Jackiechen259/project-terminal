@@ -1,207 +1,370 @@
+<div align="center">
+
 # Project Terminal
 
-> Status: Version 0.1.2 released. All implementation phases complete. The app shell renders; project/profile/SSH-connection models persist atomically; the PTY terminal backend spawns real local shells (PowerShell, CMD, Git Bash, and WSL) and interactive system-OpenSSH sessions via portable-pty. SSH password, keyboard-interactive, and key-passphrase prompts remain inside the terminal, while first host keys require an explicit OpenSSH confirmation. Per-project terminal views stay mounted across project switches (no PTY teardown). Local and remote profiles support per-session environment variables, startup commands, Conda, venv, Poetry, uv, and custom activation. Remote initialization occurs after the target directory is entered; an initialization error is shown but leaves the remote shell usable. The app never runs `poetry shell`, `uv sync`, or `conda init`.
+**A project-oriented desktop terminal for local, WSL, and remote development.**
 
-## About
+Keep every project's terminal tabs, shell profiles, environments, and SSH sessions together in one workspace.
 
-Project Terminal is a Windows-first desktop terminal workspace built for developers who work across local and remote projects every day. It organizes terminals by project, keeps each project's tabs and sessions isolated, and combines local shells with interactive SSH terminals in one app shell.
+[![Release](https://img.shields.io/github/v/release/Jackiechen259/project-terminal?display_name=tag&sort=semver)](https://github.com/Jackiechen259/project-terminal/releases/latest)
+[![License](https://img.shields.io/github/license/Jackiechen259/project-terminal)](./LICENSE)
+[![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app/)
+[![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+[![Rust](https://img.shields.io/badge/Rust-stable-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+
+[Download](#download) · [Features](#features) · [Development](#development) · [Architecture](#architecture) · [Security](#security)
+
+</div>
+
+## Overview
+
+Project Terminal is a Windows-first desktop terminal workspace for developers who regularly move between different codebases, shells, virtual environments, WSL distributions, and remote servers.
+
+Instead of keeping unrelated sessions in one global tab bar, Project Terminal organizes terminals by **project**. Each project owns its own tab group and terminal profiles. Switching projects changes the visible workspace without destroying running PTY sessions.
+
+The current release is **v0.1.4**.
 
 ## Features
 
-- Local folder projects and SSH remote projects.
-- Per-project terminal tab groups with independent PTY/shell/environment.
-- Shells: PowerShell, CMD, Git Bash, WSL, custom.
-- Environments: none, Conda, Python venv, Poetry, uv, custom.
-- Saved terminal profiles, SSH connection configs, and UI preferences.
-- SSH remote terminals via the system OpenSSH client (`ssh.exe`) running inside a local PTY.
-- JSON config persistence under `%APPDATA%\ProjectTerminal\`.
+- **Project-scoped workspaces** — each project has an independent terminal tab group.
+- **Local projects** — open a terminal directly in a Windows folder.
+- **WSL projects** — select a distribution and start in a Linux working directory.
+- **SSH projects** — connect to remote machines and enter the configured remote path.
+- **Persistent sessions while switching projects** — hidden terminal views remain mounted and active.
+- **Reusable terminal profiles** — save shell, environment, startup command, arguments, and environment-variable settings.
+- **Multiple shell types** — PowerShell, CMD, Git Bash, WSL, remote Bash/Zsh/Fish, and custom executables.
+- **Development environment activation** — Conda, Python venv, Poetry, uv, or a custom activation command.
+- **Interactive SSH authentication** — password, keyboard-interactive, and private-key passphrase prompts stay inside the terminal.
+- **Safe local persistence** — project settings are stored as atomic JSON files instead of requiring a database.
+- **Signed update support** — packaged builds can check GitHub Releases for newer versions.
 
-See [`project-terminal-agent-plan.md`](./project-terminal-agent-plan.md) for the full design.
+## Project types
+
+| Type | Purpose | Working directory |
+| --- | --- | --- |
+| **Local** | Native Windows development | A Windows folder such as `D:\Projects\app` |
+| **WSL** | Development inside a WSL distribution | A Linux path such as `/home/user/app` |
+| **SSH** | Development on a remote server | A remote path such as `/srv/app` |
+
+Each project can contain multiple terminal profiles. For example, one local project can have separate profiles for PowerShell, Git Bash, a Conda environment, and a custom toolchain.
+
+## Supported shells and environments
+
+### Shells
+
+- PowerShell
+- Command Prompt
+- Git Bash
+- WSL
+- Remote default shell
+- Remote Bash
+- Remote Zsh
+- Remote Fish
+- Custom shell executable
+
+### Environments
+
+- None
+- Conda
+- Python virtual environment
+- Poetry
+- uv
+- Custom activation command
+
+Environment initialization is scoped to the terminal session. Project Terminal does not run `conda init`, `poetry shell`, or `uv sync`, and it does not modify the user's global shell configuration.
+
+## Download
+
+Download the latest installers and packages from the [GitHub Releases page](https://github.com/Jackiechen259/project-terminal/releases/latest).
+
+Release builds currently include:
+
+- Windows NSIS installer
+- Windows MSI installer
+- Linux AppImage
+- Linux `.deb` package
+- Linux `.rpm` package
+
+> Project Terminal is developed primarily for Windows. Linux packages are published by the release workflow, but Windows remains the main supported desktop environment.
+
+### Windows runtime requirements
+
+- Windows 10 or Windows 11 x64
+- Microsoft Edge WebView2 Runtime
+- Windows OpenSSH Client for SSH projects
+- WSL installed and configured for WSL projects
+
+To verify OpenSSH and WSL:
+
+```powershell
+where.exe ssh.exe
+wsl.exe --list --verbose
+```
+
+## Getting started
+
+1. Install and launch Project Terminal.
+2. Create a **Local**, **WSL**, or **SSH** project.
+3. Add or edit a terminal profile for that project.
+4. Choose the shell and optional development environment.
+5. Open a terminal tab.
+6. Switch between projects from the sidebar; existing sessions remain active.
+
+### SSH projects
+
+Project Terminal uses the system OpenSSH client instead of implementing a separate SSH protocol stack.
+
+Before creating an SSH project, confirm that the target is reachable from a normal terminal:
+
+```powershell
+ssh user@example.com
+```
+
+For key-based authentication, using `ssh-agent` is recommended. Project Terminal stores private-key **paths**, never private-key contents or SSH passwords.
+
+## Configuration
+
+Application data is stored under:
+
+```text
+%APPDATA%\ProjectTerminal\
+```
+
+Files include:
+
+```text
+projects.json         Saved local, WSL, and SSH projects
+profiles.json         Terminal profiles and environment settings
+ssh-connections.json  SSH connection definitions
+settings.json         Application preferences
+```
+
+Writes are atomic: data is serialized to a temporary file, flushed, and then renamed. When a corrupt configuration file is detected, it is backed up with a timestamp rather than silently overwritten.
+
+## Architecture
+
+```text
+React / TypeScript UI
+        │
+        │ Tauri commands and channels
+        ▼
+Rust application backend
+        │
+        ├── Project, profile, SSH, and settings repositories
+        ├── Shell and environment resolution
+        ├── Terminal session manager
+        └── portable-pty
+                │
+                ├── PowerShell / CMD / Git Bash
+                ├── WSL
+                └── system OpenSSH client
+```
+
+### Terminal sessions
+
+Every terminal tab owns an independent PTY created by Rust through `portable-pty`. The frontend sends input bytes to the backend and receives terminal output through a Tauri channel associated with the session ID.
+
+### Project tab groups
+
+Tabs are grouped by project. Switching projects changes which group is visible, but terminal components remain mounted, so background processes and remote sessions continue running.
+
+### Terminal profiles
+
+Profiles are stored as first-class project resources. The Rust backend resolves the executable, arguments, working directory, environment activation, startup commands, and environment variables from saved configuration.
+
+### Remote initialization
+
+For an SSH project, Project Terminal first establishes the interactive SSH session, enters the configured remote directory, and then runs the selected remote initialization commands. If initialization fails, the error is shown while leaving the remote shell usable.
+
+## Security
+
+- SSH connections use the system `ssh` executable.
+- Host-key verification is enabled by default.
+- Unknown host keys require explicit confirmation.
+- Changed host keys block the connection instead of being silently accepted.
+- Passwords and passphrases are entered directly into the PTY and are not persisted or logged.
+- Private-key contents are never stored by the application.
+- Shell and SSH arguments are passed as argument arrays, not concatenated command strings.
+- Terminal input is forwarded byte-for-byte and is not parsed or recorded.
+- Tauri capabilities are restricted to the functionality required by the application.
+- Configuration writes are atomic and corrupt files are preserved for recovery.
 
 ## Tech stack
 
-- **Desktop:** Tauri 2, Rust, Windows-first.
-- **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui, Zustand, Lucide.
-- **Terminal:** `@xterm/xterm` + `@xterm/addon-fit` in the frontend; Rust `portable-pty` for the PTY backend.
-- **Data:** JSON files (no database in MVP).
-- **SSH:** System `ssh.exe` (Windows OpenSSH), never an in-app SSH protocol stack.
-
-## Prerequisites
-
-- Windows 10/11 x64.
-- [Node.js](https://nodejs.org/) 20+ (LTS recommended).
-- [pnpm](https://pnpm.io/) 9+ (`npm i -g pnpm`).
-- [Rust](https://www.rust-lang.org/tools/install) stable (1.77+).
-- Windows OpenSSH client (`ssh.exe`) — default on Windows 10 1809+ at `%WINDIR%\System32\OpenSSH\ssh.exe`. Verify with `where ssh.exe`.
-- WebView2 runtime (preinstalled on Windows 11; install via the Microsoft Edge WebView2 installer on Windows 10).
-- Microsoft C++ Build Tools (for the Rust toolchain — bundled with "Desktop development with C++" in Visual Studio Build Tools).
-
-## Install dependencies
-
-```powershell
-pnpm install
-```
+| Layer | Technology |
+| --- | --- |
+| Desktop shell | Tauri 2 |
+| Backend | Rust |
+| Frontend | React 18, TypeScript, Vite |
+| UI | Tailwind CSS, Radix UI, shadcn/ui, Lucide |
+| State management | Zustand |
+| Terminal renderer | xterm.js |
+| PTY backend | portable-pty |
+| Persistence | JSON files |
+| SSH | System OpenSSH client |
+| Testing | Vitest and Rust tests |
 
 ## Development
 
-Run the Vite dev server and the Tauri shell together:
+### Prerequisites
+
+- Node.js 20 or newer
+- pnpm 9 or newer
+- Rust stable toolchain
+- Microsoft C++ Build Tools with **Desktop development with C++** on Windows
+- WebView2 Runtime on Windows
+- Windows OpenSSH Client for testing SSH projects
+- WSL for testing WSL projects
+
+### Install dependencies
 
 ```powershell
-pnpm tauri dev
+git clone https://github.com/Jackiechen259/project-terminal.git
+cd project-terminal
+pnpm install
 ```
 
-Frontend-only dev server (faster iteration, no Rust rebuild):
+### Run the desktop application
+
+```powershell
+pnpm tauri:dev
+```
+
+### Run only the frontend
 
 ```powershell
 pnpm dev
 ```
 
-## Build / package
+Frontend-only mode is useful for UI development, but PTY, filesystem persistence, SSH, and other native Tauri features require the desktop application.
+
+### Build installers
 
 ```powershell
-pnpm tauri build
+pnpm tauri:build
 ```
 
-Outputs a Windows MSI and NSIS installer under `src-tauri/target/release/bundle/`.
+Windows bundles are generated under:
 
-## GitHub automatic updates
+```text
+src-tauri/target/release/bundle/
+```
 
-The packaged app checks GitHub Releases once each time it starts. When a newer
-signed version is available, it prompts the user to download, install, and
-restart. The release workflow publishes an NSIS updater bundle and the
-`latest.json` metadata that the application consumes.
+## Available scripts
 
-Before the first release, add the generated private key in
-`.tauri-updater.key` to the repository secret named
-`TAURI_SIGNING_PRIVATE_KEY` (Settings → Secrets and variables → Actions), then
-move the key to a password manager or other secure backup. Do not commit,
-share, or regenerate this key after users have installed a release: existing
-installations trust the matching public key embedded in `tauri.conf.json`.
+| Command | Description |
+| --- | --- |
+| `pnpm dev` | Start the Vite development server |
+| `pnpm build` | Type-check and build the frontend |
+| `pnpm tauri:dev` | Start the Tauri desktop app in development mode |
+| `pnpm tauri:build` | Build the desktop application and installers |
+| `pnpm test` | Run frontend unit tests |
+| `pnpm test:watch` | Run Vitest in watch mode |
+| `pnpm lint` | Run ESLint |
+| `pnpm format` | Format frontend files with Prettier |
+| `pnpm format:check` | Check frontend formatting |
 
-To publish an update, set matching semantic versions in `package.json`,
-`src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`, commit the change, and
-push a tag such as `v0.2.0`. GitHub Actions builds, signs, and publishes the
-release automatically. The tag version must match the Tauri app version.
-
-## Scripts
-
-| Script              | Description                              |
-| ------------------- | ---------------------------------------- |
-| `pnpm dev`          | Vite dev server only                     |
-| `pnpm build`        | TypeScript check + Vite production build |
-| `pnpm tauri:dev`    | Tauri dev shell (Vite + Rust)            |
-| `pnpm tauri:build`  | Tauri production build + installers      |
-| `pnpm test`         | Run Vitest unit tests                    |
-| `pnpm test:watch`   | Watch Vitest                             |
-| `pnpm lint`         | ESLint flat config                       |
-| `pnpm format`       | Prettier write                           |
-| `pnpm format:check` | Prettier check                           |
-
-For Rust:
+Rust checks:
 
 ```powershell
-cargo fmt   --manifest-path src-tauri/Cargo.toml
+cargo fmt --manifest-path src-tauri/Cargo.toml --check
 cargo check --manifest-path src-tauri/Cargo.toml
-cargo test  --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-## Directory structure
+## Repository structure
 
 ```text
 project-terminal/
-├─ src/                       # React + TypeScript frontend
-│  ├─ components/
-│  │  ├─ layout/              # AppLayout, TitleBar
-│  │  ├─ projects/            # Sidebar, project dialogs
-│  │  ├─ profiles/            # Terminal profile dialogs
-│  │  ├─ ssh/                 # SSH connection dialogs
-│  │  ├─ terminal/            # Tabs, terminal view, workspace
-│  │  └─ common/              # ErrorBanner, ConfirmDialog, LoadingState
-│  ├─ stores/                 # Zustand stores
-│  ├─ services/               # Tauri command bindings
-│  ├─ types/                  # Domain types
-│  ├─ lib/                    # Shared utilities
-│  ├─ App.tsx
-│  └─ main.tsx
-├─ src-tauri/
-│  ├─ src/
-│  │  ├─ commands/            # Tauri command modules
-│  │  ├─ project/             # Project model + JSON repository
-│  │  ├─ profile/             # Terminal profile model + repository
-│  │  ├─ ssh/                 # SSH model, command builder, host key
-│  │  ├─ terminal/            # TerminalManager, session, initializer
-│  │  ├─ environment/         # Conda, venv, poetry, uv resolvers
-│  │  ├─ error.rs
-│  │  ├─ state.rs
-│  │  ├─ lib.rs
-│  │  └─ main.rs
-│  ├─ capabilities/default.json
-│  ├─ Cargo.toml
-│  └─ tauri.conf.json
-├─ package.json
-└─ README.md
+├── src/                         React and TypeScript frontend
+│   ├── components/
+│   │   ├── common/              Shared feedback and dialog components
+│   │   ├── layout/              Main layout and custom title bar
+│   │   ├── profiles/            Terminal profile UI
+│   │   ├── projects/            Project sidebar and project dialogs
+│   │   ├── ssh/                 SSH connection UI
+│   │   └── terminal/            Terminal tabs, views, and workspace
+│   ├── services/                Tauri command bindings
+│   ├── stores/                  Zustand stores
+│   ├── types/                   Frontend domain types
+│   └── lib/                     Shared utilities
+├── src-tauri/
+│   ├── src/
+│   │   ├── commands/            Tauri command handlers
+│   │   ├── environment/         Environment activation and resolution
+│   │   ├── profile/             Terminal profile model and persistence
+│   │   ├── project/             Project model and persistence
+│   │   ├── ssh/                 SSH configuration and command building
+│   │   └── terminal/            PTY sessions and terminal management
+│   ├── capabilities/            Tauri permission configuration
+│   ├── Cargo.toml
+│   └── tauri.conf.json
+├── .github/workflows/release.yml
+├── package.json
+└── README.md
 ```
 
-## Architecture (summary)
+## Release process
 
-### PTY
+The GitHub Actions release workflow runs when a tag beginning with `v` is pushed.
 
-Each terminal tab owns an independent PTY allocated by Rust `portable-pty`. The frontend never receives or sends raw shell commands; it only forwards bytes through `write_terminal` and receives output bytes through a Tauri `Channel` keyed by `sessionId`.
+Before publishing a release, keep these versions identical:
 
-### Project tab group
+- `package.json`
+- `src-tauri/Cargo.toml`
+- `src-tauri/tauri.conf.json`
 
-Tabs are stored as `tabsById: Record<id, TerminalTab>` plus `tabGroupsByProjectId: Record<projectId, ProjectTabGroup>`. Switching projects only changes visibility — `TerminalView` components stay mounted and PTY readers keep running.
+Then create and push the matching tag:
 
-### Terminal profile
-
-Profiles are first-class models belonging to a project. The backend resolves the shell executable, environment activation, startup commands, and environment variables from the saved profile; the frontend only submits `projectId` and `profileId` when creating a terminal.
-
-### Conda initialization
-
-Conda is activated per-session via the appropriate shell hook (`conda-hook.ps1` for PowerShell, `conda.bat` for CMD, `etc/profile.d/conda.sh` for bash/zsh). The application never calls `conda init` or modifies the global environment — every activation is scoped to a single PTY session.
-
-### SSH security
-
-- Uses the system `ssh.exe` inside a local PTY.
-- Host key verification is **on by default**. Unknown or changed host keys block the connection; the user must explicitly confirm a new fingerprint.
-- Passwords are never persisted — they are typed into the PTY at the `ssh.exe` prompt and not intercepted or logged.
-- Private key file paths are stored, not key contents.
-- The system `ssh-agent` is the recommended authentication method.
-- ProxyJump (`-J`) is supported for a single jump host.
-
-## Configuration files
-
-Stored under `%APPDATA%\ProjectTerminal\`:
-
-```text
-projects.json        # Saved projects
-profiles.json        # Saved terminal profiles
-ssh-connections.json # Saved SSH connection configs
-settings.json        # UI preferences
+```powershell
+git tag v0.1.4
+git push origin v0.1.4
 ```
 
-Writes are atomic: serialize → temp file → flush → rename. Corrupt files are backed up with a timestamp, not overwritten.
+The workflow builds Windows and Linux packages, signs updater artifacts, creates the GitHub Release, and publishes update metadata.
 
-## Security model
+The repository must contain the Actions secret `TAURI_SIGNING_PRIVATE_KEY`. The private signing key must never be committed. Keep a secure backup because installed applications trust the matching public key embedded in the Tauri configuration.
 
-- No arbitrary command execution API. The only terminal-creation inputs are `projectId` and `profileId`.
-- Shell executable, working directory, environment variables, and SSH arguments are resolved on the Rust side from saved, validated configuration.
-- Shell and SSH arguments are passed as arrays — never concatenated strings.
-- SSH host key checking cannot be silently disabled.
-- Terminal input is forwarded byte-for-byte; it is never parsed or logged.
-- Tauri capabilities are limited to the minimum required (no shell plugin, no filesystem plugin, no arbitrary process spawn).
+## Known limitations
 
-## Known limitations (MVP)
-
-- No AI command suggestions, split panes, cloud sync, file manager, built-in editor, SFTP UI, port-forwarding UI, Git GUI, multi-window, or plugin system.
-- Running sessions are not restored across application restarts.
-- Terminal output is not persisted.
-- The application does not auto-accept unknown SSH host keys.
-
-## License
-
-This project is licensed under the Apache License 2.0. See [LICENSE](./LICENSE) for details.
+- Running terminal sessions are not restored after restarting the application.
+- Terminal output history is not persisted to disk.
+- Unknown SSH host keys are never accepted automatically.
+- Split panes are not currently available.
+- There is no built-in file manager, editor, SFTP browser, Git GUI, or port-forwarding UI.
+- There is no cloud synchronization or multi-device profile synchronization.
+- The application currently uses a single main window.
 
 ## Roadmap
 
-See `project-terminal-agent-plan.md` §37 for the phase breakdown. Current status: **All phases (1–9) complete: skeleton; persistent project/profile configuration; local PTY terminals and environments; project-scoped tab groups; SSH connection configuration; interactive SSH terminals; remote environment initialization; sidebar/interaction refinement; stability/test hardening; and Windows/Linux packaging/release.**
+Potential future work includes:
+
+- Session restoration
+- Split terminal panes
+- Searchable terminal history
+- Port-forwarding management
+- SFTP and remote file browsing
+- Project import and export
+- Optional synchronized configuration
+- Additional terminal customization
+
+The detailed original implementation plan is available in [`project-terminal-agent-plan.md`](./project-terminal-agent-plan.md).
+
+## Contributing
+
+Issues and pull requests are welcome. For substantial changes, open an issue first to discuss the proposed behavior and its impact on the project, terminal, and security models.
+
+Before submitting a pull request, run:
+
+```powershell
+pnpm lint
+pnpm format:check
+pnpm test
+pnpm build
+cargo fmt --manifest-path src-tauri/Cargo.toml --check
+cargo test --manifest-path src-tauri/Cargo.toml
+```
+
+## License
+
+Licensed under the [Apache License 2.0](./LICENSE).
