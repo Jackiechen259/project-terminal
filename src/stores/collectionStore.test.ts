@@ -161,6 +161,18 @@ describe("collectionStore", () => {
         "p2",
       ]);
     });
+
+    it("keeps untracked projects in their visible order", () => {
+      useCollectionStore
+        .getState()
+        .reorderUngroupedProject("p3", "p2", ["p1", "p2", "p3"]);
+
+      expect(useCollectionStore.getState().ungroupedProjectIds).toEqual([
+        "p1",
+        "p3",
+        "p2",
+      ]);
+    });
   });
 
   describe("collapsed state", () => {

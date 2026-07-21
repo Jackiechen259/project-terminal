@@ -183,6 +183,7 @@ describe("ProjectSidebar collections", () => {
     await waitFor(() => {
       expect(useCollectionStore.getState().ungroupedProjectIds).toEqual([
         "p2",
+        "p1",
       ]);
     });
     const projectRows = screen
@@ -190,6 +191,31 @@ describe("ProjectSidebar collections", () => {
       .filter((element) => element.dataset.projectDropTarget === "project");
     expect(projectRows[0]).toHaveTextContent("Beta");
     expect(projectRows[1]).toHaveTextContent("Alpha");
+  });
+
+  it("cancels the drag when the pointer leaves the sidebar before release", async () => {
+    useCollectionStore.getState().createCollection("Work");
+
+    render(<ProjectSidebar />);
+
+    const projectRow = screen.getByText("Alpha").closest("[role='button']")!;
+    const collectionGroup = screen
+      .getByText("Work")
+      .closest("[data-project-drop-target='collection']")!;
+    const aside = screen.getByLabelText("Projects");
+
+    fireEvent.pointerDown(projectRow, { button: 0, pointerId: 1 });
+    fireEvent.pointerEnter(collectionGroup);
+    // Pointer exits the sidebar before releasing - the drag must cancel
+    // instead of dropping on the last hovered target inside the sidebar.
+    fireEvent.pointerLeave(aside);
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      expect(
+        useCollectionStore.getState().collections[0].projectIds,
+      ).not.toContain("p1");
+    });
   });
 
   it("does not use native draggable elements", () => {

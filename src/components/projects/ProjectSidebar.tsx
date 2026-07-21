@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import {
   ChevronDown,
   ChevronRight,
@@ -163,6 +164,14 @@ export function ProjectSidebar() {
     ) {
       return;
     }
+    // Touch and pen inputs get implicit pointer capture on `pointerdown`,
+    // which redirects every subsequent pointer event to the source row.
+    // That stops `pointerenter` from firing on drop targets, so the drag
+    // goes nowhere. Release the capture so hit-testing behaves like mouse.
+    const dragSource = event.currentTarget;
+    if (dragSource.hasPointerCapture?.(event.pointerId)) {
+      dragSource.releasePointerCapture?.(event.pointerId);
+    }
     draggedProjectRef.current = projectId;
     dropTargetRef.current = null;
     setDraggedProjectId(projectId);
@@ -172,7 +181,12 @@ export function ProjectSidebar() {
   function setPointerDropTarget(target: DropTarget) {
     if (!draggedProjectRef.current) return;
     dropTargetRef.current = target;
-    setDropTarget(target);
+    // `pointerenter` runs at ContinuousEventPriority, so React defers the
+    // re-render. The ref above is read synchronously by the `pointerup`
+    // handler; without flushing, the drop indicator (blue bar) lags behind
+    // the actual drop target on fast drags - the user sees one target
+    // highlighted while the project lands on another.
+    flushSync(() => setDropTarget(target));
   }
 
   function isProjectDrag(event: React.DragEvent<HTMLElement>) {
@@ -199,11 +213,19 @@ export function ProjectSidebar() {
       }
       moveProjectToCollection(id, target.collectionId, target.projectId);
       if (target.collectionId === null) {
-        reorderUngroupedProject(id, target.projectId);
+        reorderUngroupedProject(
+          id,
+          target.projectId,
+          ungroupedProjects.map((project) => project.id),
+        );
       }
     } else {
       moveProjectToCollection(id, null);
-      reorderUngroupedProject(id);
+      reorderUngroupedProject(
+        id,
+        null,
+        ungroupedProjects.map((project) => project.id),
+      );
     }
     clearDrag();
   }, [
@@ -211,6 +233,7 @@ export function ProjectSidebar() {
     moveProjectToCollection,
     projectCollectionId,
     reorderUngroupedProject,
+    ungroupedProjects,
   ]);
 
   useEffect(() => {
@@ -283,6 +306,15 @@ export function ProjectSidebar() {
         setDraggedProjectId(null);
         setDropTarget(null);
         draggedProjectRef.current = null;
+      }}
+      onPointerLeave={() => {
+        // When the pointer exits the sidebar mid-drag, clear the drop
+        // target so releasing outside (or over the header/footer) cancels
+        // the drag instead of dropping on the last hovered row.
+        if (draggedProjectRef.current) {
+          dropTargetRef.current = null;
+          setDropTarget(null);
+        }
       }}
     >
       <header className="flex h-11 items-center justify-between border-b border-border px-3">
@@ -391,7 +423,11 @@ export function ProjectSidebar() {
                   const id = draggedProjectRef.current;
                   if (id) {
                     moveProjectToCollection(id, null);
-                    reorderUngroupedProject(id);
+                    reorderUngroupedProject(
+                      id,
+                      null,
+                      ungroupedProjects.map((project) => project.id),
+                    );
                     clearDrag();
                   }
                 }}

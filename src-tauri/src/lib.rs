@@ -81,6 +81,7 @@ pub fn run() {
             .plugin(tauri_plugin_process::init())
             .plugin(tauri_plugin_updater::Builder::new().build())
             .manage(state)
+            .manage(terminal_state)
             .invoke_handler(tauri::generate_handler![
                 // Platform capabilities (host OS + available project types/shells)
                 commands::platform::get_platform_info,

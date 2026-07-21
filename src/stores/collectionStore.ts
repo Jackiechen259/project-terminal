@@ -49,6 +49,7 @@ export interface CollectionStoreState {
   reorderUngroupedProject: (
     projectId: string,
     insertBeforeProjectId?: string | null,
+    currentProjectIds?: string[],
   ) => void;
   setCollapsed: (id: string, collapsed: boolean) => void;
   toggleCollapsed: (id: string) => void;
@@ -156,8 +157,16 @@ export const useCollectionStore = create<CollectionStoreState>()(
         set({ collections: list });
       },
 
-      reorderUngroupedProject: (projectId, insertBeforeProjectId = null) => {
-        const next = get().ungroupedProjectIds.filter((id) => id !== projectId);
+      reorderUngroupedProject: (
+        projectId,
+        insertBeforeProjectId = null,
+        currentProjectIds,
+      ) => {
+        // `ungroupedProjectIds` only contains projects the user has ordered
+        // before. Start from the current visible list when provided so a
+        // first-time reorder keeps every other project in its real position.
+        const base = currentProjectIds ?? get().ungroupedProjectIds;
+        const next = base.filter((id) => id !== projectId);
         const insertIndex =
           insertBeforeProjectId && next.includes(insertBeforeProjectId)
             ? next.indexOf(insertBeforeProjectId)
