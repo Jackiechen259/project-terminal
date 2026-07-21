@@ -335,35 +335,6 @@ The repository must contain the Actions secret `TAURI_SIGNING_PRIVATE_KEY`. The 
 - There is no cloud synchronization or multi-device profile synchronization.
 - The application currently uses a single main window.
 
-## Roadmap
-
-Potential future work includes:
-
-- Session restoration
-- Split terminal panes
-- Searchable terminal history
-- Port-forwarding management
-- SFTP and remote file browsing
-- Project import and export
-- Optional synchronized configuration
-- Additional terminal customization
-
-
-## Contributing
-
-Issues and pull requests are welcome. For substantial changes, open an issue first to discuss the proposed behavior and its impact on the project, terminal, and security models.
-
-Before submitting a pull request, run:
-
-```powershell
-pnpm lint
-pnpm format:check
-pnpm test
-pnpm build
-cargo fmt --manifest-path src-tauri/Cargo.toml --check
-cargo test --manifest-path src-tauri/Cargo.toml
-```
-
 ## License
 
 Licensed under the [Apache License 2.0](./LICENSE).
