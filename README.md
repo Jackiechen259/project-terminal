@@ -22,7 +22,7 @@ Project Terminal is a Windows-first desktop terminal workspace for developers wh
 
 Instead of keeping unrelated sessions in one global tab bar, Project Terminal organizes terminals by **project**. Each project owns its own tab group and terminal profiles. Switching projects changes the visible workspace without destroying running PTY sessions.
 
-The current release is **v0.1.4**.
+The current release is **v0.2.0**.
 
 ## Features
 
@@ -317,8 +317,8 @@ Before publishing a release, keep these versions identical:
 Then create and push the matching tag:
 
 ```powershell
-git tag v0.1.4
-git push origin v0.1.4
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 The workflow builds Windows and Linux packages, signs updater artifacts, creates the GitHub Release, and publishes update metadata.

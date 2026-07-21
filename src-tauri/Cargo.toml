@@ -1,6 +1,6 @@
 [package]
 name = "project-terminal"
-version = "0.1.4"
+version = "0.2.0"
 description = "Project Terminal - a Windows desktop terminal organized by projects"
 authors = ["Project Terminal"]
 edition = "2021"
