@@ -348,7 +348,6 @@ Potential future work includes:
 - Optional synchronized configuration
 - Additional terminal customization
 
-The detailed original implementation plan is available in [`project-terminal-agent-plan.md`](./project-terminal-agent-plan.md).
 
 ## Contributing
 
