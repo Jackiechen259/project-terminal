@@ -2,12 +2,15 @@
 
 use std::path::PathBuf;
 
+#[cfg(test)]
 use chrono::Utc;
 
 use crate::error::{AppError, AppResult};
 use crate::storage;
 
-use super::model::{Project, ProjectType};
+use super::model::Project;
+#[cfg(test)]
+use super::model::ProjectType;
 
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct ProjectCollection {
@@ -68,6 +71,7 @@ impl ProjectRepository {
     }
 }
 
+#[cfg(test)]
 /// Build a new local project with a fresh id and timestamps. The caller is
 /// expected to have already validated `path` exists (see commands/project.rs).
 pub fn new_local_project(id: String, name: String, path: String) -> Project {
@@ -79,32 +83,6 @@ pub fn new_local_project(id: String, name: String, path: String) -> Project {
         local: Some(super::model::LocalProjectConfig { path }),
         ssh: None,
         wsl: None,
-        default_profile_id: None,
-        created_at: now,
-        updated_at: now,
-    }
-}
-
-/// Build a new WSL project. `working_directory` is an optional Linux path
-/// inside the distribution; when `None` the WSL shell starts in the user's
-/// home directory.
-pub fn new_wsl_project(
-    id: String,
-    name: String,
-    distribution: String,
-    working_directory: Option<String>,
-) -> Project {
-    let now = Utc::now();
-    Project {
-        id,
-        name,
-        project_type: ProjectType::Wsl,
-        local: None,
-        ssh: None,
-        wsl: Some(super::model::WslProjectConfig {
-            distribution,
-            working_directory,
-        }),
         default_profile_id: None,
         created_at: now,
         updated_at: now,

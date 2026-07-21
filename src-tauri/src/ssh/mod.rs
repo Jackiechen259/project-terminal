@@ -6,9 +6,7 @@ pub mod command_builder;
 pub mod model;
 pub mod repository;
 
-pub use client::{detect_ssh_client, resolve_ssh_keygen, SshClient};
-pub use command_builder::{
-    build_ssh_argv, build_ssh_argv_with_remote_command, build_ssh_test_argv, SshCommand,
-};
+pub use client::{detect_ssh_client, resolve_ssh_keygen};
+pub use command_builder::{build_ssh_argv_with_remote_command, build_ssh_test_argv};
 pub use model::{SshAuthenticationType, SshConnection, SshJumpHost};
-pub use repository::{new_ssh_connection, SshConnectionCollection, SshConnectionRepository};
+pub use repository::SshConnectionRepository;

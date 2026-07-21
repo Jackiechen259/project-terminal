@@ -33,6 +33,7 @@ impl ConfigDirs {
         Self { root }
     }
 
+    #[cfg(test)]
     pub fn root(&self) -> &std::path::Path {
         &self.root
     }
@@ -51,6 +52,7 @@ impl ConfigDirs {
     pub fn ssh_connections_path(&self) -> PathBuf {
         self.root.join("ssh-connections.json")
     }
+    #[cfg(test)]
     pub fn settings_path(&self) -> PathBuf {
         self.root.join("settings.json")
     }

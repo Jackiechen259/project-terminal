@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+#[cfg(test)]
 use chrono::Utc;
 
 use crate::error::{AppError, AppResult};
@@ -72,6 +73,7 @@ impl SshConnectionRepository {
     }
 }
 
+#[cfg(test)]
 /// Construct a new SSH connection with sensible defaults and fresh timestamps.
 #[allow(clippy::too_many_arguments)]
 pub fn new_ssh_connection(

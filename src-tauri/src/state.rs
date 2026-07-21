@@ -13,7 +13,6 @@ use crate::ssh::SshConnectionRepository;
 /// call to avoid holding a lock across awaits.
 #[derive(Clone)]
 pub struct AppState {
-    pub dirs: Arc<ConfigDirs>,
     pub projects: Arc<ProjectRepository>,
     pub profiles: Arc<ProfileRepository>,
     pub ssh: Arc<SshConnectionRepository>,
@@ -30,7 +29,6 @@ impl AppState {
             projects: Arc::new(ProjectRepository::new(dirs.projects_path())),
             profiles: Arc::new(ProfileRepository::new(dirs.profiles_path())),
             ssh: Arc::new(SshConnectionRepository::new(dirs.ssh_connections_path())),
-            dirs: Arc::new(dirs),
         })
     }
 }

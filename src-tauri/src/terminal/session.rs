@@ -85,6 +85,7 @@ fn find_ready_marker(output: &[u8], marker: &[u8]) -> Option<usize> {
     find_subslice(output, marker)
 }
 
+#[cfg(test)]
 fn ready_output_contains_marker(output: &[u8], marker: &[u8]) -> bool {
     find_ready_marker(output, marker).is_some()
 }

@@ -5,7 +5,7 @@
 //! configuration. No executable path is persisted here.
 
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SshClient {
@@ -75,7 +75,7 @@ mod tests {
     #[test]
     fn discovery_never_returns_a_non_file() {
         if let Some(client) = detect_ssh_client() {
-            assert!(Path::new(&client.executable).is_file());
+            assert!(client.executable.is_file());
         }
     }
 }

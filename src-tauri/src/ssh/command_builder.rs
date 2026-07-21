@@ -10,6 +10,7 @@ pub struct SshCommand {
     pub args: Vec<String>,
 }
 
+#[cfg(test)]
 /// Build the arguments used by a future interactive SSH terminal.
 pub fn build_ssh_argv(connection: &SshConnection) -> SshCommand {
     build_ssh_argv_with_remote_command(connection, None)

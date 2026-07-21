@@ -12,10 +12,12 @@ pub mod session;
 pub mod wsl;
 
 use crate::error::{AppError, AppResult};
-use crate::profile::{EnvironmentType, ShellType, TerminalProfile};
+use crate::profile::{ShellType, TerminalProfile};
+#[cfg(test)]
+use crate::profile::EnvironmentType;
 pub use initializer::{build_activation_script, build_remote_initialization_commands};
 pub use manager::TerminalManager;
-pub use session::{SessionSpawn, SessionStatus, TerminalOutput, TerminalSession};
+pub use session::{SessionSpawn, SessionStatus, TerminalOutput};
 pub use wsl::{detect_wsl_distributions, DetectedWslDistribution};
 
 /// Resolve the shell executable + args for a local profile.
@@ -119,6 +121,7 @@ pub fn resolve_local_shell(profile: &TerminalProfile) -> AppResult<(String, Vec<
     }
 }
 
+#[cfg(test)]
 /// True when the profile's environment is anything other than `none`.
 pub fn profile_needs_environment(profile: &TerminalProfile) -> bool {
     profile.environment_type != EnvironmentType::None

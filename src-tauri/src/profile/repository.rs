@@ -41,6 +41,7 @@ impl ProfileRepository {
             .collect())
     }
 
+    #[cfg(test)]
     pub fn list_all(&self) -> AppResult<Vec<TerminalProfile>> {
         Ok(self.load()?.profiles)
     }
@@ -91,6 +92,7 @@ impl ProfileRepository {
         self.save(&collection)
     }
 
+    #[cfg(test)]
     /// Return the default profile for a project, falling back to the first
     /// profile if none is marked default. Errors if the project has no
     /// profiles - callers may treat that as "create a default".
@@ -108,8 +110,9 @@ impl ProfileRepository {
     }
 }
 
-/// Build a default PowerShell profile for a project. Phase 3.5 uses this to
-/// seed a new project with a working profile.
+#[cfg(test)]
+/// Build a default PowerShell profile. Used as a test fixture for commands
+/// that need a profile with sensible defaults.
 pub fn default_powershell_profile(id: String, project_id: String) -> TerminalProfile {
     let now = Utc::now();
     TerminalProfile {

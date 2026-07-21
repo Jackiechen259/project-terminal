@@ -11,6 +11,7 @@ pub enum AppError {
     #[error("Project path does not exist: {0}")]
     ProjectPathNotFound(String),
 
+    #[allow(dead_code)]
     #[error("Remote project path is invalid: {0}")]
     RemotePathInvalid(String),
 
@@ -32,6 +33,7 @@ pub enum AppError {
     #[error("SSH host key verification failed: {0}")]
     SshHostKeyFailed(String),
 
+    #[allow(dead_code)]
     #[error("SSH authentication failed: {0}")]
     SshAuthenticationFailed(String),
 

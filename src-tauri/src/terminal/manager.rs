@@ -11,11 +11,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
-use tauri::ipc::Channel;
 
 use crate::error::{AppError, AppResult};
 
-use super::session::{SessionSpawn, SessionStatus, TerminalOutput, TerminalSession};
+use super::session::{SessionSpawn, SessionStatus, TerminalSession};
 
 pub struct TerminalManager {
     sessions: Arc<Mutex<HashMap<String, Arc<TerminalSession>>>>,

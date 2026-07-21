@@ -200,7 +200,6 @@ pub fn test_terminal_profile(state: tauri::State<'_, AppState>, id: String) -> A
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config_dirs::ConfigDirs;
     use crate::profile::{EnvironmentType, ProfileRepository};
     use crate::project::{LocalProjectConfig, Project, ProjectRepository, ProjectType};
     use crate::ssh::SshConnectionRepository;
@@ -211,9 +210,7 @@ mod tests {
     fn test_state() -> AppState {
         let root = std::env::temp_dir().join(format!("pt-prof-cmd-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        let dirs = ConfigDirs::from_root(root.clone());
         AppState {
-            dirs: Arc::new(dirs),
             projects: Arc::new(ProjectRepository::new(root.join("projects.json"))),
             profiles: Arc::new(ProfileRepository::new(root.join("profiles.json"))),
             ssh: Arc::new(SshConnectionRepository::new(root.join("ssh.json"))),
