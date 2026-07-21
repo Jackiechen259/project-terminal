@@ -31,10 +31,55 @@ import { CollectionDialog } from "./CollectionDialog";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { SshConnectionDialog } from "@/components/ssh/SshConnectionDialog";
 
+type DropPosition = "before" | "after";
+
 type DropTarget =
   | { kind: "collection"; collectionId: string }
-  | { kind: "project"; projectId: string; collectionId: string | null }
+  | {
+      kind: "project";
+      projectId: string;
+      collectionId: string | null;
+      position: DropPosition;
+    }
   | { kind: "ungrouped" };
+
+/**
+ * Decide whether a pointer/drag position over a row should insert the dragged
+ * project before or after that row. The top half of the row means "before",
+ * the bottom half means "after" - so dropping on the bottom half of the last
+ * row places the project at the very end of the list. When the row has no
+ * layout height (jsdom / unmounted), default to "before" to preserve the
+ * historical insert-above behaviour.
+ */
+function computeDropPosition(
+  clientY: number,
+  rect: DOMRect,
+): DropPosition {
+  if (rect.height === 0) return "before";
+  return clientY - rect.top <= rect.height / 2 ? "before" : "after";
+}
+
+/**
+ * Structural equality for drop targets. Used to skip the (flushSync) re-render
+ * when `pointermove` fires over the same half of the same row - and to ignore
+ * the row being dragged itself, so the drop indicator never shows on the
+ * source row.
+ */
+function sameDropTarget(a: DropTarget | null, b: DropTarget): boolean {
+  if (!a) return false;
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "collection" && b.kind === "collection") {
+    return a.collectionId === b.collectionId;
+  }
+  if (a.kind === "project" && b.kind === "project") {
+    return (
+      a.projectId === b.projectId &&
+      a.collectionId === b.collectionId &&
+      a.position === b.position
+    );
+  }
+  return true;
+}
 
 /**
  * Sidebar listing saved projects, optionally grouped into collections.
@@ -180,6 +225,18 @@ export function ProjectSidebar() {
 
   function setPointerDropTarget(target: DropTarget) {
     if (!draggedProjectRef.current) return;
+    // Never mark the row being dragged as a drop target - otherwise dragging
+    // a project over its own row would light up the drop indicator on it.
+    if (
+      target.kind === "project" &&
+      target.projectId === draggedProjectRef.current
+    ) {
+      return;
+    }
+    // `pointermove` fires very frequently while the pointer travels across a
+    // row; bail out when nothing actually changed so we skip the flushSync
+    // re-render on every pixel of motion within the same half of the row.
+    if (sameDropTarget(dropTargetRef.current, target)) return;
     dropTargetRef.current = target;
     // `pointerenter` runs at ContinuousEventPriority, so React defers the
     // re-render. The ref above is read synchronously by the `pointerup`
@@ -211,12 +268,18 @@ export function ProjectSidebar() {
         clearDrag();
         return;
       }
-      moveProjectToCollection(id, target.collectionId, target.projectId);
+      moveProjectToCollection(
+        id,
+        target.collectionId,
+        target.projectId,
+        target.position,
+      );
       if (target.collectionId === null) {
         reorderUngroupedProject(
           id,
           target.projectId,
           ungroupedProjects.map((project) => project.id),
+          target.position,
         );
       }
     } else {
@@ -451,18 +514,34 @@ export function ProjectSidebar() {
                   isDropBefore={
                     dropTarget?.kind === "project" &&
                     dropTarget.projectId === project.id &&
-                    dropTarget.collectionId === null
+                    dropTarget.collectionId === null &&
+                    dropTarget.position === "before"
+                  }
+                  isDropAfter={
+                    dropTarget?.kind === "project" &&
+                    dropTarget.projectId === project.id &&
+                    dropTarget.collectionId === null &&
+                    dropTarget.position === "after"
                   }
                   onDragStart={() => {
                     draggedProjectRef.current = project.id;
                     setDraggedProjectId(project.id);
                   }}
                   onPointerDown={(event) => beginPointerDrag(project.id, event)}
-                  onPointerEnter={() =>
+                  onPointerEnter={(position) =>
                     setPointerDropTarget({
                       kind: "project",
                       projectId: project.id,
                       collectionId: null,
+                      position,
+                    })
+                  }
+                  onPointerMove={(position) =>
+                    setPointerDropTarget({
+                      kind: "project",
+                      projectId: project.id,
+                      collectionId: null,
+                      position,
                     })
                   }
                   onDragOver={(e) => {
@@ -474,6 +553,10 @@ export function ProjectSidebar() {
                       kind: "project",
                       projectId: project.id,
                       collectionId: null,
+                      position: computeDropPosition(
+                        e.clientY,
+                        e.currentTarget.getBoundingClientRect(),
+                      ),
                     });
                   }}
                   onDrop={(e) => {
@@ -483,6 +566,10 @@ export function ProjectSidebar() {
                       kind: "project",
                       projectId: project.id,
                       collectionId: null,
+                      position: computeDropPosition(
+                        e.clientY,
+                        e.currentTarget.getBoundingClientRect(),
+                      ),
                     });
                   }}
                   onTestSsh={() => void testSsh(project)}
@@ -688,15 +775,31 @@ function CollectionGroup({
                 isDropBefore={
                   dropTarget?.kind === "project" &&
                   dropTarget.projectId === project.id &&
-                  dropTarget.collectionId === collection.id
+                  dropTarget.collectionId === collection.id &&
+                  dropTarget.position === "before"
+                }
+                isDropAfter={
+                  dropTarget?.kind === "project" &&
+                  dropTarget.projectId === project.id &&
+                  dropTarget.collectionId === collection.id &&
+                  dropTarget.position === "after"
                 }
                 onDragStart={() => onDragStartProject(project.id)}
                 onPointerDown={(event) => onPointerDownProject(project.id, event)}
-                onPointerEnter={() =>
+                onPointerEnter={(position) =>
                   onPointerEnterTarget({
                     kind: "project",
                     projectId: project.id,
                     collectionId: collection.id,
+                    position,
+                  })
+                }
+                onPointerMove={(position) =>
+                  onPointerEnterTarget({
+                    kind: "project",
+                    projectId: project.id,
+                    collectionId: collection.id,
+                    position,
                   })
                 }
                 onDragOver={(e) => {
@@ -708,6 +811,10 @@ function CollectionGroup({
                     kind: "project",
                     projectId: project.id,
                     collectionId: collection.id,
+                    position: computeDropPosition(
+                      e.clientY,
+                      e.currentTarget.getBoundingClientRect(),
+                    ),
                   });
                 }}
                 onDrop={(e) => {
@@ -717,6 +824,10 @@ function CollectionGroup({
                     kind: "project",
                     projectId: project.id,
                     collectionId: collection.id,
+                    position: computeDropPosition(
+                      e.clientY,
+                      e.currentTarget.getBoundingClientRect(),
+                    ),
                   });
                 }}
                 onTestSsh={() => onTestSsh(project)}
@@ -787,12 +898,14 @@ interface ProjectRowProps {
   draggable?: boolean;
   isDragging?: boolean;
   isDropBefore?: boolean;
+  isDropAfter?: boolean;
   onDragStart?: () => void;
   onDragOver?: (e: React.DragEvent<HTMLDivElement>) => void;
   onDragLeave?: (e: React.DragEvent<HTMLDivElement>) => void;
   onDrop?: (e: React.DragEvent<HTMLDivElement>) => void;
   onPointerDown?: (event: React.PointerEvent<HTMLDivElement>) => void;
-  onPointerEnter?: () => void;
+  onPointerEnter?: (position: DropPosition) => void;
+  onPointerMove?: (position: DropPosition) => void;
 }
 
 function ProjectRow({
@@ -806,12 +919,14 @@ function ProjectRow({
   draggable = false,
   isDragging = false,
   isDropBefore = false,
+  isDropAfter = false,
   onDragStart,
   onDragOver,
   onDragLeave,
   onDrop,
   onPointerDown,
   onPointerEnter,
+  onPointerMove,
 }: ProjectRowProps) {
   const Icon =
     project.type === "local"
@@ -871,7 +986,24 @@ function ProjectRow({
         onDragLeave={(e) => onDragLeave?.(e)}
         onDrop={(e) => onDrop?.(e)}
         onPointerDown={onPointerDown}
-        onPointerEnter={onPointerEnter}
+        onPointerEnter={(e) => {
+          if (!onPointerEnter) return;
+          onPointerEnter(
+            computeDropPosition(
+              e.clientY,
+              e.currentTarget.getBoundingClientRect(),
+            ),
+          );
+        }}
+        onPointerMove={(e) => {
+          if (!onPointerMove) return;
+          onPointerMove(
+            computeDropPosition(
+              e.clientY,
+              e.currentTarget.getBoundingClientRect(),
+            ),
+          );
+        }}
         onClick={onSelect}
         onContextMenu={(event) => {
           event.preventDefault();
@@ -896,6 +1028,9 @@ function ProjectRow({
       >
         {isDropBefore ? (
           <span className="pointer-events-none absolute left-0 right-0 top-0 h-0.5 bg-blue-500" />
+        ) : null}
+        {isDropAfter ? (
+          <span className="pointer-events-none absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500" />
         ) : null}
         <Icon className="h-4 w-4 shrink-0" />
         <span className="flex-1 truncate">{project.name}</span>

@@ -99,6 +99,19 @@ describe("collectionStore", () => {
         "p2",
       ]);
     });
+    it("inserts after the specified project when position is 'after'", () => {
+      const a = useCollectionStore.getState().createCollection("A");
+      useCollectionStore.getState().moveProjectToCollection("p1", a.id);
+      useCollectionStore.getState().moveProjectToCollection("p2", a.id);
+      useCollectionStore
+        .getState()
+        .moveProjectToCollection("p3", a.id, "p1", "after");
+      expect(useCollectionStore.getState().collections[0].projectIds).toEqual([
+        "p1",
+        "p3",
+        "p2",
+      ]);
+    });
 
     it("appends when insertBeforeProjectId is not in the collection", () => {
       const a = useCollectionStore.getState().createCollection("A");
@@ -158,6 +171,18 @@ describe("collectionStore", () => {
       expect(useCollectionStore.getState().ungroupedProjectIds).toEqual([
         "p3",
         "p1",
+        "p2",
+      ]);
+    });
+    it("inserts a project after another ungrouped project", () => {
+      const store = useCollectionStore.getState();
+      store.reorderUngroupedProject("p1");
+      store.reorderUngroupedProject("p2");
+      store.reorderUngroupedProject("p3", "p1", undefined, "after");
+
+      expect(useCollectionStore.getState().ungroupedProjectIds).toEqual([
+        "p1",
+        "p3",
         "p2",
       ]);
     });

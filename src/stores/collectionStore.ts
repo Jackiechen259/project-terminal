@@ -36,20 +36,26 @@ export interface CollectionStoreState {
    * `targetCollectionId` is null). Removes the project from any other
    * collection first to enforce the one-collection invariant. When moving
    * into a collection, `insertBeforeProjectId` controls ordering: omit it
-   * (or pass null) to append; pass a project id to insert before it.
+   * (or pass null) to append; pass a project id to insert before (or after,
+   * when `insertPosition` is `"after"`) it.
    */
   moveProjectToCollection: (
     projectId: string,
     targetCollectionId: string | null,
     insertBeforeProjectId?: string | null,
+    insertPosition?: "before" | "after",
   ) => void;
   /** Reorder collections in the sidebar. */
   reorderCollection: (fromIndex: number, toIndex: number) => void;
-  /** Move an ungrouped project before another one, or append when omitted. */
+  /**
+   * Move an ungrouped project before another one, or append when omitted.
+   * Pass `position: "after"` to insert after the anchor instead.
+   */
   reorderUngroupedProject: (
     projectId: string,
     insertBeforeProjectId?: string | null,
     currentProjectIds?: string[],
+    position?: "before" | "after",
   ) => void;
   setCollapsed: (id: string, collapsed: boolean) => void;
   toggleCollapsed: (id: string) => void;
@@ -120,6 +126,7 @@ export const useCollectionStore = create<CollectionStoreState>()(
         projectId,
         targetCollectionId,
         insertBeforeProjectId = null,
+        insertPosition = "before",
       ) => {
         const current = get().collections;
         // Remove the project from any collection first (no-op if not present).
@@ -133,7 +140,9 @@ export const useCollectionStore = create<CollectionStoreState>()(
             const next = [...c.projectIds];
             const insertIndex =
               insertBeforeProjectId && next.includes(insertBeforeProjectId)
-                ? next.indexOf(insertBeforeProjectId)
+                ? insertPosition === "after"
+                  ? next.indexOf(insertBeforeProjectId) + 1
+                  : next.indexOf(insertBeforeProjectId)
                 : next.length;
             next.splice(insertIndex, 0, projectId);
             return { ...c, projectIds: next, updatedAt: nowIso() };
@@ -161,6 +170,7 @@ export const useCollectionStore = create<CollectionStoreState>()(
         projectId,
         insertBeforeProjectId = null,
         currentProjectIds,
+        position = "before",
       ) => {
         // `ungroupedProjectIds` only contains projects the user has ordered
         // before. Start from the current visible list when provided so a
@@ -169,7 +179,9 @@ export const useCollectionStore = create<CollectionStoreState>()(
         const next = base.filter((id) => id !== projectId);
         const insertIndex =
           insertBeforeProjectId && next.includes(insertBeforeProjectId)
-            ? next.indexOf(insertBeforeProjectId)
+            ? position === "after"
+              ? next.indexOf(insertBeforeProjectId) + 1
+              : next.indexOf(insertBeforeProjectId)
             : next.length;
         next.splice(insertIndex, 0, projectId);
         set({ ungroupedProjectIds: next });

@@ -192,6 +192,79 @@ describe("ProjectSidebar collections", () => {
     expect(projectRows[0]).toHaveTextContent("Beta");
     expect(projectRows[1]).toHaveTextContent("Alpha");
   });
+  it("drops a project after the last row when dragging over its bottom half", async () => {
+    render(<ProjectSidebar />);
+
+    const alphaRow = screen.getByText("Alpha").closest(
+      "[role='button']",
+    ) as HTMLElement;
+    const betaRow = screen.getByText("Beta").closest(
+      "[role='button']",
+    ) as HTMLElement;
+    // jsdom reports a zero-height rect by default, which makes
+    // computeDropPosition fall back to "before". Give Beta a real layout box
+    // so a clientY in the bottom half resolves to "after".
+    betaRow.getBoundingClientRect = vi.fn(() => ({
+      top: 0,
+      left: 0,
+      right: 100,
+      bottom: 40,
+      width: 100,
+      height: 40,
+      x: 0,
+      y: 0,
+      toJSON: () => {},
+    })) as unknown as typeof betaRow.getBoundingClientRect;
+
+    fireEvent.pointerDown(alphaRow, { button: 0, pointerId: 1 });
+    // Enter Beta near the bottom (clientY=30 > height/2=20) -> "after".
+    fireEvent.pointerEnter(betaRow, { clientY: 30 });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      // Alpha moved to after Beta (the last row) -> end of the list.
+      expect(useCollectionStore.getState().ungroupedProjectIds).toEqual([
+        "p2",
+        "p1",
+      ]);
+    });
+  });
+
+  it("switches the drop position between before and after via pointermove", async () => {
+    render(<ProjectSidebar />);
+
+    const alphaRow = screen.getByText("Alpha").closest(
+      "[role='button']",
+    ) as HTMLElement;
+    const betaRow = screen.getByText("Beta").closest(
+      "[role='button']",
+    ) as HTMLElement;
+    betaRow.getBoundingClientRect = vi.fn(() => ({
+      top: 0,
+      left: 0,
+      right: 100,
+      bottom: 40,
+      width: 100,
+      height: 40,
+      x: 0,
+      y: 0,
+      toJSON: () => {},
+    })) as unknown as typeof betaRow.getBoundingClientRect;
+
+    fireEvent.pointerDown(alphaRow, { button: 0, pointerId: 1 });
+    // Start in the top half -> "before" Beta.
+    fireEvent.pointerEnter(betaRow, { clientY: 5 });
+    // Slide down to the bottom half -> should flip to "after".
+    fireEvent.pointerMove(betaRow, { clientY: 35 });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      expect(useCollectionStore.getState().ungroupedProjectIds).toEqual([
+        "p2",
+        "p1",
+      ]);
+    });
+  });
 
   it("cancels the drag when the pointer leaves the sidebar before release", async () => {
     useCollectionStore.getState().createCollection("Work");
