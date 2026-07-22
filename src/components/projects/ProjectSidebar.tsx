@@ -51,10 +51,7 @@ type DropTarget =
  * layout height (jsdom / unmounted), default to "before" to preserve the
  * historical insert-above behaviour.
  */
-function computeDropPosition(
-  clientY: number,
-  rect: DOMRect,
-): DropPosition {
+function computeDropPosition(clientY: number, rect: DOMRect): DropPosition {
   if (rect.height === 0) return "before";
   return clientY - rect.top <= rect.height / 2 ? "before" : "after";
 }
@@ -119,6 +116,10 @@ export function ProjectSidebar() {
 
   const [notice, setNotice] = useState<string | null>(null);
   const [draggedProjectId, setDraggedProjectId] = useState<string | null>(null);
+  const [dragPosition, setDragPosition] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   // Ref mirrors `draggedProjectId` for synchronous reads inside dragover
   // handlers. React state updates are async, so by the time the first
@@ -192,10 +193,16 @@ export function ProjectSidebar() {
 
   const hasCollections = collections.length > 0;
 
+  const updateDragPosition = useCallback((x: number, y: number) => {
+    if (!draggedProjectRef.current) return;
+    setDragPosition({ x, y });
+  }, []);
+
   const clearDrag = useCallback(() => {
     draggedProjectRef.current = null;
     dropTargetRef.current = null;
     setDraggedProjectId(null);
+    setDragPosition(null);
     setDropTarget(null);
   }, []);
 
@@ -203,10 +210,7 @@ export function ProjectSidebar() {
     projectId: string,
     event: React.PointerEvent<HTMLDivElement>,
   ) {
-    if (
-      event.button > 0 ||
-      (event.target as HTMLElement).closest("button")
-    ) {
+    if (event.button > 0 || (event.target as HTMLElement).closest("button")) {
       return;
     }
     // Touch and pen inputs get implicit pointer capture on `pointerdown`,
@@ -220,6 +224,7 @@ export function ProjectSidebar() {
     draggedProjectRef.current = projectId;
     dropTargetRef.current = null;
     setDraggedProjectId(projectId);
+    setDragPosition(null);
     setDropTarget(null);
   }
 
@@ -254,50 +259,53 @@ export function ProjectSidebar() {
     return draggedProjectRef.current !== null;
   }
 
-  const handleDropTarget = useCallback((target: DropTarget) => {
-    const id = draggedProjectRef.current;
-    if (!id) return;
-    if (target.kind === "collection") {
-      if (projectCollectionId[id] === target.collectionId) {
-        clearDrag();
-        return;
-      }
-      moveProjectToCollection(id, target.collectionId, null);
-    } else if (target.kind === "project") {
-      if (target.projectId === id) {
-        clearDrag();
-        return;
-      }
-      moveProjectToCollection(
-        id,
-        target.collectionId,
-        target.projectId,
-        target.position,
-      );
-      if (target.collectionId === null) {
-        reorderUngroupedProject(
+  const handleDropTarget = useCallback(
+    (target: DropTarget) => {
+      const id = draggedProjectRef.current;
+      if (!id) return;
+      if (target.kind === "collection") {
+        if (projectCollectionId[id] === target.collectionId) {
+          clearDrag();
+          return;
+        }
+        moveProjectToCollection(id, target.collectionId, null);
+      } else if (target.kind === "project") {
+        if (target.projectId === id) {
+          clearDrag();
+          return;
+        }
+        moveProjectToCollection(
           id,
+          target.collectionId,
           target.projectId,
-          ungroupedProjects.map((project) => project.id),
           target.position,
         );
+        if (target.collectionId === null) {
+          reorderUngroupedProject(
+            id,
+            target.projectId,
+            ungroupedProjects.map((project) => project.id),
+            target.position,
+          );
+        }
+      } else {
+        moveProjectToCollection(id, null);
+        reorderUngroupedProject(
+          id,
+          null,
+          ungroupedProjects.map((project) => project.id),
+        );
       }
-    } else {
-      moveProjectToCollection(id, null);
-      reorderUngroupedProject(
-        id,
-        null,
-        ungroupedProjects.map((project) => project.id),
-      );
-    }
-    clearDrag();
-  }, [
-    clearDrag,
-    moveProjectToCollection,
-    projectCollectionId,
-    reorderUngroupedProject,
-    ungroupedProjects,
-  ]);
+      clearDrag();
+    },
+    [
+      clearDrag,
+      moveProjectToCollection,
+      projectCollectionId,
+      reorderUngroupedProject,
+      ungroupedProjects,
+    ],
+  );
 
   useEffect(() => {
     const finishPointerDrag = () => {
@@ -308,13 +316,27 @@ export function ProjectSidebar() {
         clearDrag();
       }
     };
+    const followPointerDrag = (event: PointerEvent | MouseEvent) => {
+      updateDragPosition(event.clientX, event.clientY);
+    };
+    window.addEventListener("pointermove", followPointerDrag);
+    // WebView2 occasionally continues to emit mousemove while a mouse button
+    // is pressed but omits pointermove after a row releases pointer capture.
+    // Listen to both so the drag preview never freezes.
+    window.addEventListener("mousemove", followPointerDrag);
     window.addEventListener("pointerup", finishPointerDrag);
     window.addEventListener("pointercancel", clearDrag);
     return () => {
+      window.removeEventListener("pointermove", followPointerDrag);
+      window.removeEventListener("mousemove", followPointerDrag);
       window.removeEventListener("pointerup", finishPointerDrag);
       window.removeEventListener("pointercancel", clearDrag);
     };
-  }, [clearDrag, handleDropTarget]);
+  }, [clearDrag, handleDropTarget, updateDragPosition]);
+
+  const draggedProject = draggedProjectId
+    ? projectsById[draggedProjectId]
+    : undefined;
 
   function tabsFor(projectId: string) {
     return (
@@ -379,7 +401,26 @@ export function ProjectSidebar() {
           setDropTarget(null);
         }
       }}
+      onPointerMove={(event) =>
+        updateDragPosition(event.clientX, event.clientY)
+      }
     >
+      {draggedProject && dragPosition ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed z-[60] flex max-w-56 -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-md border border-primary/70 bg-surface px-3 py-2 text-sm text-foreground shadow-xl shadow-black/40 animate-in fade-in-0 zoom-in-95 duration-150"
+          style={{ left: dragPosition.x, top: dragPosition.y }}
+        >
+          {draggedProject.type === "local" ? (
+            <Folder className="h-4 w-4 shrink-0 text-primary" />
+          ) : draggedProject.type === "wsl" ? (
+            <Terminal className="h-4 w-4 shrink-0 text-primary" />
+          ) : (
+            <Server className="h-4 w-4 shrink-0 text-primary" />
+          )}
+          <span className="truncate">{draggedProject.name}</span>
+        </div>
+      ) : null}
       <header className="flex h-11 items-center justify-between border-b border-border px-3">
         <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           Projects
@@ -494,7 +535,9 @@ export function ProjectSidebar() {
                     clearDrag();
                   }
                 }}
-                onPointerEnter={() => setPointerDropTarget({ kind: "ungrouped" })}
+                onPointerEnter={() =>
+                  setPointerDropTarget({ kind: "ungrouped" })
+                }
                 empty={ungroupedProjects.length === 0}
               />
             ) : null}
@@ -695,7 +738,10 @@ function CollectionGroup({
         }
       }}
       onPointerEnter={() =>
-        onPointerEnterTarget({ kind: "collection", collectionId: collection.id })
+        onPointerEnterTarget({
+          kind: "collection",
+          collectionId: collection.id,
+        })
       }
       onDrop={(e) => {
         e.preventDefault();
@@ -785,7 +831,9 @@ function CollectionGroup({
                   dropTarget.position === "after"
                 }
                 onDragStart={() => onDragStartProject(project.id)}
-                onPointerDown={(event) => onPointerDownProject(project.id, event)}
+                onPointerDown={(event) =>
+                  onPointerDownProject(project.id, event)
+                }
                 onPointerEnter={(position) =>
                   onPointerEnterTarget({
                     kind: "project",
