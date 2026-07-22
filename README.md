@@ -12,6 +12,8 @@ Keep every project's terminal tabs, shell profiles, environments, and SSH sessio
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![Rust](https://img.shields.io/badge/Rust-stable-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 
+[English](./README.md) · [简体中文](./README_zh.md)
+
 [Download](#download) · [Features](#features) · [Development](#development) · [Architecture](#architecture) · [Security](#security)
 
 </div>
