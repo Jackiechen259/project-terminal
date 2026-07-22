@@ -408,7 +408,7 @@ export function ProjectSidebar() {
       {draggedProject && dragPosition ? (
         <div
           aria-hidden="true"
-          className="pointer-events-none fixed z-[60] flex max-w-56 -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-md border border-primary/70 bg-surface px-3 py-2 text-sm text-foreground shadow-xl shadow-black/40 animate-in fade-in-0 zoom-in-95 duration-150"
+          className="pointer-events-none fixed z-[60] flex max-w-56 -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-md border border-primary/70 bg-surface/80 px-3 py-2 text-sm text-foreground opacity-80 shadow-xl shadow-black/40 backdrop-blur-sm animate-in fade-in-0 zoom-in-95 duration-150"
           style={{ left: dragPosition.x, top: dragPosition.y }}
         >
           {draggedProject.type === "local" ? (

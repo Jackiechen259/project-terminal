@@ -41,6 +41,14 @@ export interface TerminalStoreState {
   /** Activate a tab within its project group. */
   setActiveTab: (projectId: string, tabId: string) => void;
 
+  /** Move a tab before or after another tab in the same project. */
+  reorderTab: (
+    projectId: string,
+    tabId: string,
+    targetTabId: string,
+    position: "before" | "after",
+  ) => void;
+
   setSplitView: (
     projectId: string,
     tabIds: [string, string],
@@ -189,6 +197,27 @@ export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
       tabGroupsByProjectId: {
         ...get().tabGroupsByProjectId,
         [projectId]: { ...group, activeTabId: tabId },
+      },
+    });
+  },
+
+  reorderTab: (projectId, tabId, targetTabId, position) => {
+    const group = get().tabGroupsByProjectId[projectId];
+    if (
+      !group ||
+      tabId === targetTabId ||
+      !group.tabIds.includes(tabId) ||
+      !group.tabIds.includes(targetTabId)
+    ) {
+      return;
+    }
+    const tabIds = group.tabIds.filter((id) => id !== tabId);
+    const targetIndex = tabIds.indexOf(targetTabId);
+    tabIds.splice(targetIndex + (position === "after" ? 1 : 0), 0, tabId);
+    set({
+      tabGroupsByProjectId: {
+        ...get().tabGroupsByProjectId,
+        [projectId]: { ...group, tabIds },
       },
     });
   },

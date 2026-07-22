@@ -147,6 +147,21 @@ describe("terminalStore", () => {
     });
   });
 
+  it("reorders a tab before or after another tab", () => {
+    const { registerTab, reorderTab } = useTerminalStore.getState();
+    registerTab(makeTab("t1", "p1"));
+    registerTab(makeTab("t2", "p1"));
+    registerTab(makeTab("t3", "p1"));
+    reorderTab("p1", "t3", "t1", "before");
+    reorderTab("p1", "t1", "t2", "after");
+
+    expect(useTerminalStore.getState().tabGroupsByProjectId.p1.tabIds).toEqual([
+      "t3",
+      "t2",
+      "t1",
+    ]);
+  });
+
   describe("split views", () => {
     it("keeps two selected tabs in a project-specific split view", () => {
       const { registerTab, setSplitView, replaceSplitTab } =

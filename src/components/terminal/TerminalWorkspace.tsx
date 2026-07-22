@@ -34,6 +34,8 @@ import type {
 import { TerminalView } from "./TerminalView";
 
 type TerminalDropZone = "left" | "right" | "top" | "bottom";
+type TabDropPosition = "before" | "after";
+type TabDropTarget = { tabId: string; position: TabDropPosition };
 
 /**
  * Terminal workspace: tab strip + terminal area.
@@ -57,6 +59,7 @@ export function TerminalWorkspace() {
   const setSplitView = useTerminalStore((s) => s.setSplitView);
   const replaceSplitTab = useTerminalStore((s) => s.replaceSplitTab);
   const clearSplitView = useTerminalStore((s) => s.clearSplitView);
+  const reorderTab = useTerminalStore((s) => s.reorderTab);
   const registerTab = useTerminalStore((s) => s.registerTab);
   const updateTab = useTerminalStore((s) => s.updateTab);
   const removeTab = useTerminalStore((s) => s.removeTab);
@@ -71,6 +74,9 @@ export function TerminalWorkspace() {
     y: number;
   } | null>(null);
   const [dropZone, setDropZone] = useState<TerminalDropZone | null>(null);
+  const [tabDropTarget, setTabDropTarget] = useState<TabDropTarget | null>(
+    null,
+  );
   const [menuPosition, setMenuPosition] = useState<{
     x: number;
     y: number;
@@ -86,6 +92,7 @@ export function TerminalWorkspace() {
     started: boolean;
   } | null>(null);
   const dropZoneRef = useRef<TerminalDropZone | null>(null);
+  const tabDropTargetRef = useRef<TabDropTarget | null>(null);
   const suppressTabClickRef = useRef(false);
 
   const activeProject = projects.find((p) => p.id === activeProjectId);
@@ -207,9 +214,11 @@ export function TerminalWorkspace() {
   const finishTabDrag = useCallback(() => {
     pointerDragRef.current = null;
     dropZoneRef.current = null;
+    tabDropTargetRef.current = null;
     setDraggedTabId(null);
     setDragPosition(null);
     setDropZone(null);
+    setTabDropTarget(null);
   }, []);
 
   const getDropAnchorTabId = useCallback(
@@ -260,6 +269,66 @@ export function TerminalWorkspace() {
     [],
   );
 
+  const updateTabDropTarget = useCallback(
+    (sourceTabId: string, clientX: number, clientY: number) => {
+      let targetElement = document
+        .elementFromPoint(clientX, clientY)
+        ?.closest<HTMLElement>("[data-terminal-tab-id]");
+      let targetTabId = targetElement?.dataset.terminalTabId;
+      let position: TabDropPosition | null = null;
+
+      // The empty stretch to the right of the final tab is deliberately a
+      // generous "append" zone. Without this, users have to hit the narrow
+      // right half of the last tab to move something to the end.
+      const lastTabId = tabIds.at(-1);
+      const tabListRect = tabListRef.current?.getBoundingClientRect();
+      const lastTabElement = lastTabId
+        ? Array.from(
+            tabListRef.current?.querySelectorAll<HTMLElement>(
+              "[data-terminal-tab-id]",
+            ) ?? [],
+          ).find((element) => element.dataset.terminalTabId === lastTabId)
+        : undefined;
+      const lastTabRect = lastTabElement?.getBoundingClientRect();
+      if (
+        lastTabId &&
+        tabListRect &&
+        lastTabRect &&
+        clientX >= lastTabRect.right &&
+        clientX <= tabListRect.right &&
+        clientY >= tabListRect.top &&
+        clientY <= tabListRect.bottom
+      ) {
+        targetElement = lastTabElement;
+        targetTabId = lastTabId;
+        position = "after";
+      }
+      if (!targetElement || !targetTabId || targetTabId === sourceTabId) {
+        if (tabDropTargetRef.current) {
+          tabDropTargetRef.current = null;
+          setTabDropTarget(null);
+        }
+        return;
+      }
+      const rect = targetElement.getBoundingClientRect();
+      const nextTarget: TabDropTarget = {
+        tabId: targetTabId,
+        position:
+          position ??
+          (clientX - rect.left < rect.width / 2 ? "before" : "after"),
+      };
+      if (
+        tabDropTargetRef.current?.tabId === nextTarget.tabId &&
+        tabDropTargetRef.current.position === nextTarget.position
+      ) {
+        return;
+      }
+      tabDropTargetRef.current = nextTarget;
+      setTabDropTarget(nextTarget);
+    },
+    [tabIds],
+  );
+
   const handleTabPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>, tabId: string) => {
       if (
@@ -296,12 +365,13 @@ export function TerminalWorkspace() {
       }
 
       setDragPosition({ x: event.clientX, y: event.clientY });
+      updateTabDropTarget(drag.tabId, event.clientX, event.clientY);
       const nextDropZone = getPointerDropZone(event.clientX, event.clientY);
       dropZoneRef.current = nextDropZone;
       setDropZone(nextDropZone);
       event.preventDefault();
     },
-    [canSplitWithTab, getPointerDropZone],
+    [canSplitWithTab, getPointerDropZone, updateTabDropTarget],
   );
 
   const handleTabPointerUp = useCallback(
@@ -320,6 +390,7 @@ export function TerminalWorkspace() {
       const sourceTabId = drag.tabId;
       const anchorTabId = getDropAnchorTabId(sourceTabId);
       const targetDropZone = dropZoneRef.current;
+      const targetTabDrop = tabDropTargetRef.current;
       const tabListRect = tabListRef.current?.getBoundingClientRect();
       const splitGroupRect = splitTabGroupRef.current?.getBoundingClientRect();
       const releasedInTabList =
@@ -334,7 +405,18 @@ export function TerminalWorkspace() {
         event.clientX <= splitGroupRect.right &&
         event.clientY >= splitGroupRect.top &&
         event.clientY <= splitGroupRect.bottom;
-      if (
+      if (activeProjectId && targetTabDrop) {
+        if (validSplitView?.tabIds.includes(sourceTabId)) {
+          clearSplitView(activeProjectId);
+        }
+        reorderTab(
+          activeProjectId,
+          sourceTabId,
+          targetTabDrop.tabId,
+          targetTabDrop.position,
+        );
+        setActiveTab(activeProjectId, sourceTabId);
+      } else if (
         activeProjectId &&
         anchorTabId &&
         targetDropZone &&
@@ -373,6 +455,7 @@ export function TerminalWorkspace() {
       getDropAnchorTabId,
       setActiveTab,
       setSplitView,
+      reorderTab,
       validSplitView,
     ],
   );
@@ -599,6 +682,7 @@ export function TerminalWorkspace() {
         key={id}
         type="button"
         role="tab"
+        data-terminal-tab-id={id}
         aria-selected={id === activeTabId}
         data-active={id === activeTabId}
         data-dragging={id === draggedTabId}
@@ -608,7 +692,7 @@ export function TerminalWorkspace() {
         onPointerUp={handleTabPointerUp}
         onPointerCancel={handleTabPointerCancel}
         className={cn(
-          "group flex shrink-0 cursor-grab items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground active:cursor-grabbing data-[dragging=true]:opacity-50",
+          "group relative flex shrink-0 cursor-grab items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground active:cursor-grabbing data-[dragging=true]:opacity-50",
           id === activeTabId && "bg-accent text-accent-foreground",
         )}
         onContextMenu={(event) => {
@@ -618,6 +702,14 @@ export function TerminalWorkspace() {
           setMenuPosition({ x: event.clientX, y: event.clientY });
         }}
       >
+        {tabDropTarget?.tabId === id ? (
+          <span
+            className={cn(
+              "pointer-events-none absolute bottom-1 top-1 z-10 w-0.5 rounded-full bg-primary shadow-[0_0_8px_hsl(var(--primary))]",
+              tabDropTarget.position === "before" ? "-left-1" : "-right-1",
+            )}
+          />
+        ) : null}
         <div className="flex flex-col items-start">
           <span className="max-w-[160px] truncate">{tab.title}</span>
           {tab.status === "exited" || tab.status === "error" ? (
@@ -682,7 +774,7 @@ export function TerminalWorkspace() {
       {draggedTabId && dragPosition && tabsById[draggedTabId] ? (
         <div
           aria-hidden="true"
-          className="pointer-events-none fixed z-[60] flex max-w-56 -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-md border border-primary/70 bg-surface px-3 py-2 text-xs text-foreground shadow-xl shadow-black/40 animate-in fade-in-0 zoom-in-95 duration-150"
+          className="pointer-events-none fixed z-[60] flex max-w-56 -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-md border border-primary/70 bg-surface/80 px-3 py-2 text-xs text-foreground opacity-80 shadow-xl shadow-black/40 backdrop-blur-sm animate-in fade-in-0 zoom-in-95 duration-150"
           style={{ left: dragPosition.x, top: dragPosition.y }}
         >
           <TerminalIcon className="h-3.5 w-3.5 shrink-0 text-primary" />
