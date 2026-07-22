@@ -456,7 +456,7 @@ pub fn read_ssh_host_fingerprint(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::profile::ProfileRepository;
+    use crate::profile::{ProfileRepository, TemplateRepository};
     use crate::project::{Project, ProjectRepository, ProjectType, SshProjectConfig};
     use crate::ssh::SshConnectionRepository;
     use std::fs;
@@ -468,6 +468,7 @@ mod tests {
         AppState {
             projects: Arc::new(ProjectRepository::new(root.join("projects.json"))),
             profiles: Arc::new(ProfileRepository::new(root.join("profiles.json"))),
+            templates: Arc::new(TemplateRepository::new(root.join("templates.json"))),
             ssh: Arc::new(SshConnectionRepository::new(root.join("ssh.json"))),
         }
     }

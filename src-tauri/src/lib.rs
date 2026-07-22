@@ -101,6 +101,12 @@ pub fn run() {
                 commands::profile::update_terminal_profile,
                 commands::profile::delete_terminal_profile,
                 commands::profile::test_terminal_profile,
+                // Profile templates (global reusable presets)
+                commands::profile_template::list_profile_templates,
+                commands::profile_template::create_profile_template,
+                commands::profile_template::update_profile_template,
+                commands::profile_template::delete_profile_template,
+                commands::profile_template::create_profile_from_template,
                 // SSH Connection CRUD (plan §12.5)
                 commands::ssh::list_ssh_connections,
                 commands::ssh::validate_ssh_connection,

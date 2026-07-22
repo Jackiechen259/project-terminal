@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ChevronLeft,
+  LayoutTemplate,
   Plus,
   Settings,
   SlidersHorizontal,
@@ -27,16 +28,22 @@ import {
 } from "@/components/ui/select";
 import { listenForAppCommands } from "@/lib/appCommands";
 import { cn } from "@/lib/utils";
-import type { ProfileInput } from "@/services";
+import type { ProfileInput, TemplateInput } from "@/services";
 import { useProfileStore } from "@/stores/profileStore";
+import { useTemplateStore } from "@/stores/templateStore";
 import { useProjectStore } from "@/stores/projectStore";
 import { usePlatformStore } from "@/stores/platformStore";
 import { useTerminalStore } from "@/stores/terminalStore";
-import type { EnvironmentType, ShellType, TerminalProfile } from "@/types";
+import type {
+  EnvironmentType,
+  ProfileTemplate,
+  ShellType,
+  TerminalProfile,
+} from "@/types";
 
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
 
-type SettingsSection = "general" | "profiles";
+type SettingsSection = "general" | "profiles" | "templates";
 
 type ProfileDraft = {
   id?: string;
@@ -105,6 +112,58 @@ const ENVIRONMENTS: Array<{ value: EnvironmentType; label: string }> = [
 // selected. A freshly-created [] on each store read makes useSyncExternalStore
 // continuously think the snapshot changed, which can blank the app at startup.
 const EMPTY_PROFILES: TerminalProfile[] = [];
+const EMPTY_TEMPLATES: ProfileTemplate[] = [];
+
+function blankTemplateDraft(): ProfileDraft {
+  return {
+    name: "",
+    shellType: "powershell",
+    shellExecutable: "",
+    shellArgs: "",
+    environmentType: "none",
+    environmentName: "",
+    environmentPath: "",
+    condaExecutable: "",
+    condaRoot: "",
+    condaActivationMode: "shell-hook",
+    autoActivate: true,
+    activationCommand: "",
+    startupCommands: "",
+    environmentVariables: "",
+    wslDistribution: "",
+    wslWorkingDirectory: "",
+    remoteShellCommand: "",
+    isDefault: false,
+  };
+}
+
+function draftFromTemplate(template: ProfileTemplate): ProfileDraft {
+  return {
+    id: template.id,
+    name: template.name,
+    shellType: template.shellType,
+    shellExecutable: template.shellExecutable ?? "",
+    shellArgs: (template.shellArgs ?? []).join("\n"),
+    environmentType: template.environmentType,
+    environmentName:
+      template.conda?.environmentName ?? template.environmentName ?? "",
+    environmentPath:
+      template.conda?.environmentPath ?? template.environmentPath ?? "",
+    condaExecutable: template.conda?.condaExecutable ?? "",
+    condaRoot: template.conda?.condaRoot ?? "",
+    condaActivationMode: template.conda?.activationMode ?? "shell-hook",
+    autoActivate: template.conda?.autoActivate ?? true,
+    activationCommand: template.activationCommand ?? "",
+    startupCommands: (template.startupCommands ?? []).join("\n"),
+    environmentVariables: Object.entries(template.environmentVariables ?? {})
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n"),
+    wslDistribution: template.wslDistribution ?? "",
+    wslWorkingDirectory: template.wslWorkingDirectory ?? "",
+    remoteShellCommand: template.remoteShellCommand ?? "",
+    isDefault: false,
+  };
+}
 
 function blankDraft(projectType: "local" | "ssh" | "wsl"): ProfileDraft {
   return {
@@ -207,6 +266,17 @@ export function SettingsDialog() {
   const createProfile = useProfileStore((s) => s.createProfile);
   const updateProfile = useProfileStore((s) => s.updateProfile);
   const deleteProfile = useProfileStore((s) => s.deleteProfile);
+  const templates = useTemplateStore((s) => s.templates ?? EMPTY_TEMPLATES);
+  const templatesLoaded = useTemplateStore((s) => s.loaded);
+  const loadTemplates = useTemplateStore((s) => s.loadTemplates);
+  const createTemplate = useTemplateStore((s) => s.createTemplate);
+  const updateTemplate = useTemplateStore((s) => s.updateTemplate);
+  const deleteTemplate = useTemplateStore((s) => s.deleteTemplate);
+  const [editingTemplate, setEditingTemplate] = useState<ProfileDraft | null>(
+    null,
+  );
+  const [templateError, setTemplateError] = useState<string | null>(null);
+  const [savingTemplate, setSavingTemplate] = useState(false);
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === projectId) ?? null,
@@ -221,7 +291,15 @@ export function SettingsDialog() {
     setProjectId(initialId);
     setEditing(null);
     setError(null);
+    setEditingTemplate(null);
+    setTemplateError(null);
   }, [open, activeProjectId, projects]);
+
+  useEffect(() => {
+    if (open && section === "templates" && !templatesLoaded) {
+      void loadTemplates();
+    }
+  }, [open, section, templatesLoaded, loadTemplates]);
 
   useEffect(() => {
     if (open && section === "profiles" && projectId) {
@@ -334,6 +412,86 @@ export function SettingsDialog() {
     }
   }
 
+  async function saveTemplate() {
+    if (!editingTemplate) return;
+    if (!editingTemplate.name.trim()) {
+      setTemplateError("Template name is required.");
+      return;
+    }
+    if (
+      editingTemplate.environmentType === "conda" &&
+      !editingTemplate.environmentName.trim() &&
+      !editingTemplate.environmentPath.trim()
+    ) {
+      setTemplateError("Choose a Conda environment name or environment path.");
+      return;
+    }
+
+    try {
+      const input: TemplateInput = {
+        ...(editingTemplate.id ? { id: editingTemplate.id } : {}),
+        name: editingTemplate.name.trim(),
+        shellType: editingTemplate.shellType,
+        shellExecutable: optional(editingTemplate.shellExecutable),
+        shellArgs: lines(editingTemplate.shellArgs),
+        environmentType: editingTemplate.environmentType,
+        environmentName:
+          editingTemplate.environmentType === "conda"
+            ? undefined
+            : optional(editingTemplate.environmentName),
+        environmentPath:
+          editingTemplate.environmentType === "conda"
+            ? undefined
+            : optional(editingTemplate.environmentPath),
+        conda:
+          editingTemplate.environmentType === "conda"
+            ? {
+                condaExecutable: optional(editingTemplate.condaExecutable),
+                condaRoot: optional(editingTemplate.condaRoot),
+                environmentName: optional(editingTemplate.environmentName),
+                environmentPath: optional(editingTemplate.environmentPath),
+                activationMode: editingTemplate.condaActivationMode,
+                autoActivate: editingTemplate.autoActivate,
+              }
+            : undefined,
+        activationCommand: optional(editingTemplate.activationCommand),
+        startupCommands: lines(editingTemplate.startupCommands),
+        environmentVariables: parseVariables(
+          editingTemplate.environmentVariables,
+        ),
+        wslDistribution: optional(editingTemplate.wslDistribution),
+        wslWorkingDirectory: optional(editingTemplate.wslWorkingDirectory),
+        remoteShellCommand: optional(editingTemplate.remoteShellCommand),
+      };
+      setSavingTemplate(true);
+      setTemplateError(null);
+      if (editingTemplate.id) await updateTemplate(input);
+      else await createTemplate(input);
+      setEditingTemplate(null);
+    } catch (cause) {
+      const message =
+        cause instanceof Error
+          ? cause.message
+          : (cause as { message?: string }).message;
+      setTemplateError(message ?? "Could not save template.");
+    } finally {
+      setSavingTemplate(false);
+    }
+  }
+
+  async function removeTemplate(template: ProfileTemplate) {
+    if (!window.confirm(`Delete profile template "${template.name}"?`)) return;
+    try {
+      setTemplateError(null);
+      await deleteTemplate(template.id);
+      if (editingTemplate?.id === template.id) setEditingTemplate(null);
+    } catch (cause) {
+      setTemplateError(
+        (cause as { message?: string }).message ?? "Could not delete template.",
+      );
+    }
+  }
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <Button
@@ -350,7 +508,9 @@ export function SettingsDialog() {
           <DialogDescription>
             {section === "general"
               ? "Manage application-wide preferences."
-              : "Configure terminal profiles for each project."}
+              : section === "templates"
+                ? "Create reusable profile templates to quickly add to any project."
+                : "Configure terminal profiles for each project."}
           </DialogDescription>
         </DialogHeader>
 
@@ -371,6 +531,15 @@ export function SettingsDialog() {
                 icon={SquareTerminal}
                 label="Terminal profiles"
                 onClick={() => setSection("profiles")}
+              />
+              <SettingsNavItem
+                active={section === "templates"}
+                icon={LayoutTemplate}
+                label="Profile templates"
+                onClick={() => {
+                  setSection("templates");
+                  setError(null);
+                }}
               />
             </nav>
 
@@ -448,6 +617,49 @@ export function SettingsDialog() {
                   <Plus className="h-4 w-4" /> New profile
                 </Button>
               </div>
+            ) : section === "templates" ? (
+              <div className="mt-4 flex min-h-0 flex-1 flex-col border-t pt-4">
+                <span className="px-2 pb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Templates
+                </span>
+                <div className="app-scrollbar min-h-0 flex-1 space-y-1 overflow-y-auto">
+                  {templates.map((template) => (
+                    <button
+                      key={template.id}
+                      type="button"
+                      onClick={() => {
+                        setEditingTemplate(draftFromTemplate(template));
+                        setTemplateError(null);
+                      }}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent",
+                        editingTemplate?.id === template.id && "bg-accent",
+                      )}
+                    >
+                      <LayoutTemplate className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1 truncate">
+                        {template.name}
+                      </span>
+                    </button>
+                  ))}
+                  {templates.length === 0 ? (
+                    <p className="px-2 py-3 text-xs text-muted-foreground">
+                      No templates yet.
+                    </p>
+                  ) : null}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setEditingTemplate(blankTemplateDraft());
+                    setTemplateError(null);
+                  }}
+                  className="mt-3 w-full justify-start"
+                >
+                  <Plus className="h-4 w-4" /> New template
+                </Button>
+              </div>
             ) : (
               <p className="mt-auto px-2 py-2 text-xs leading-relaxed text-muted-foreground">
                 Preferences are stored locally and applied automatically.
@@ -458,6 +670,29 @@ export function SettingsDialog() {
           <main className="app-scrollbar min-w-0 flex-1 overflow-y-auto p-6">
             {section === "general" ? (
               <GeneralSettingsPanel />
+            ) : section === "templates" && editingTemplate ? (
+              <ProfileForm
+                draft={editingTemplate}
+                projectType="local"
+                saving={savingTemplate}
+                error={templateError}
+                onChange={setEditingTemplate}
+                onCancel={() => {
+                  setEditingTemplate(null);
+                  setTemplateError(null);
+                }}
+                onSave={() => void saveTemplate()}
+                onDelete={
+                  editingTemplate.id
+                    ? () => {
+                        const template = templates.find(
+                          (item) => item.id === editingTemplate.id,
+                        );
+                        if (template) void removeTemplate(template);
+                      }
+                    : undefined
+                }
+              />
             ) : editing && selectedProject ? (
               <ProfileForm
                 draft={editing}

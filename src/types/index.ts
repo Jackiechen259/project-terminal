@@ -103,6 +103,37 @@ export interface TerminalProfile {
   updatedAt: string;
 }
 
+/** Reusable profile template. Project-independent: stores shell/environment
+ * /startup config that can be applied to any project's terminal. */
+export interface ProfileTemplate {
+  id: string;
+  name: string;
+
+  shellType: ShellType;
+  shellExecutable?: string;
+  shellArgs?: string[];
+
+  environmentType: EnvironmentType;
+
+  environmentName?: string;
+  environmentPath?: string;
+
+  conda?: CondaEnvironmentConfig;
+
+  activationCommand?: string;
+  startupCommands?: string[];
+
+  environmentVariables?: Record<string, string>;
+
+  wslDistribution?: string;
+  wslWorkingDirectory?: string;
+
+  remoteShellCommand?: string;
+
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type SshAuthenticationType =
   "agent" | "key" | "password" | "keyboard-interactive" | "system-config";
 

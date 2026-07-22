@@ -17,6 +17,8 @@ pub enum AppError {
 
     #[error("Terminal profile was not found: {0}")]
     ProfileNotFound(String),
+    #[error("Profile template was not found: {0}")]
+    TemplateNotFound(String),
 
     #[error("Shell executable was not found: {0}")]
     ShellNotFound(String),
@@ -67,6 +69,7 @@ impl AppError {
         match self {
             AppError::ProjectNotFound(_) => "project_not_found",
             AppError::ProjectPathNotFound(_) => "project_path_not_found",
+            AppError::TemplateNotFound(_) => "template_not_found",
             AppError::RemotePathInvalid(_) => "remote_path_invalid",
             AppError::ProfileNotFound(_) => "profile_not_found",
             AppError::ShellNotFound(_) => "shell_not_found",

@@ -8,6 +8,7 @@ import { Channel, invoke as tauriInvoke } from "@tauri-apps/api/core";
 
 import type {
   PlatformInfo,
+  ProfileTemplate,
   Project,
   SshConnection,
   TerminalProfile,
@@ -35,6 +36,14 @@ const PROFILE_CMD = {
   update: "update_terminal_profile",
   delete: "delete_terminal_profile",
   test: "test_terminal_profile",
+} as const;
+
+const TEMPLATE_CMD = {
+  list: "list_profile_templates",
+  create: "create_profile_template",
+  update: "update_profile_template",
+  delete: "delete_profile_template",
+  createFromTemplate: "create_profile_from_template",
 } as const;
 
 const SSH_CMD = {
@@ -77,6 +86,24 @@ export interface ProfileInput {
   wslWorkingDirectory?: string;
   remoteShellCommand?: string;
   isDefault: boolean;
+}
+
+export interface TemplateInput {
+  id?: string;
+  name: string;
+  shellType: ProfileTemplate["shellType"];
+  shellExecutable?: string;
+  shellArgs?: string[];
+  environmentType: ProfileTemplate["environmentType"];
+  environmentName?: string;
+  environmentPath?: string;
+  conda?: ProfileTemplate["conda"];
+  activationCommand?: string;
+  startupCommands?: string[];
+  environmentVariables?: Record<string, string>;
+  wslDistribution?: string;
+  wslWorkingDirectory?: string;
+  remoteShellCommand?: string;
 }
 
 export interface SshConnectionInput {
@@ -177,6 +204,24 @@ export const profileService = {
     invokeOrThrow<TerminalProfile>(PROFILE_CMD.update, { input }),
   delete: (id: string) => invokeOrThrow<void>(PROFILE_CMD.delete, { id }),
   test: (id: string) => invokeOrThrow<string>(PROFILE_CMD.test, { id }),
+};
+
+export const templateService = {
+  list: () =>
+    invokeOrThrow<ListResponse<ProfileTemplate>>(TEMPLATE_CMD.list).then(
+      (r) => r.items,
+    ),
+  create: (input: TemplateInput) =>
+    invokeOrThrow<ProfileTemplate>(TEMPLATE_CMD.create, { input }),
+  update: (input: TemplateInput) =>
+    invokeOrThrow<ProfileTemplate>(TEMPLATE_CMD.update, { input }),
+  delete: (id: string) => invokeOrThrow<void>(TEMPLATE_CMD.delete, { id }),
+  createFromTemplate: (templateId: string, projectId: string, name: string) =>
+    invokeOrThrow<TerminalProfile>(TEMPLATE_CMD.createFromTemplate, {
+      templateId,
+      projectId,
+      name,
+    }),
 };
 
 export const sshService = {

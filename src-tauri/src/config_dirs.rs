@@ -49,6 +49,9 @@ impl ConfigDirs {
     pub fn profiles_path(&self) -> PathBuf {
         self.root.join("profiles.json")
     }
+    pub fn templates_path(&self) -> PathBuf {
+        self.root.join("profile-templates.json")
+    }
     pub fn ssh_connections_path(&self) -> PathBuf {
         self.root.join("ssh-connections.json")
     }

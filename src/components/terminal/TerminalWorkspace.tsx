@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import {
   Boxes,
   Columns2,
+  LayoutTemplate,
   Plus,
   RotateCcw,
   Rows2,
@@ -30,13 +31,16 @@ import { getAppShortcut, isBrowserShortcut } from "@/lib/keyboardShortcuts";
 import {
   environmentService,
   profileService,
+  templateService,
   type ProfileInput,
 } from "@/services";
 import { useProjectStore } from "@/stores/projectStore";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useTemplateStore } from "@/stores/templateStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { cn } from "@/lib/utils";
 import type {
+  ProfileTemplate,
   Project,
   TerminalProfile,
   TerminalSplitDirection,
@@ -106,6 +110,9 @@ export function TerminalWorkspace() {
   const updateTab = useTerminalStore((s) => s.updateTab);
   const removeTab = useTerminalStore((s) => s.removeTab);
   const confirmCloseTerminal = useSettingsStore((s) => s.confirmCloseTerminal);
+  const templateList = useTemplateStore((s) => s.templates);
+  const templatesLoaded = useTemplateStore((s) => s.loaded);
+  const loadTemplates = useTemplateStore((s) => s.loadTemplates);
   const [error, setError] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<TerminalProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState("");
@@ -595,6 +602,11 @@ export function TerminalWorkspace() {
     };
   }, [activeProjectId, activeProject]);
 
+  // Load global profile templates for the + quick-launch menu.
+  useEffect(() => {
+    if (!templatesLoaded) void loadTemplates();
+  }, [templatesLoaded, loadTemplates]);
+
   // Quick-launch a terminal from a preset template. Creates the profile on
   // first use (by name), then reuses the existing one on subsequent launches.
   const handleQuickLaunch = useCallback(
@@ -648,6 +660,42 @@ export function TerminalWorkspace() {
       }
     },
     [activeProjectId, profiles, projects, registerTab],
+  );
+
+  // Quick-launch a terminal from a saved profile template. Creates a concrete
+  // TerminalProfile for the active project from the template, then opens a tab.
+  const handleLaunchFromTemplate = useCallback(
+    async (template: ProfileTemplate): Promise<string | null> => {
+      if (!activeProjectId) return null;
+      setError(null);
+      try {
+        const profile = await templateService.createFromTemplate(
+          template.id,
+          activeProjectId,
+          template.name,
+        );
+        setProfiles((prev) => [...prev, profile]);
+        const tab: TerminalTab = {
+          id: crypto.randomUUID(),
+          sessionId: "",
+          projectId: activeProjectId,
+          profileId: profile.id,
+          defaultTitle: profile.name,
+          title: profile.name,
+          cwd: "",
+          status: "starting",
+          createdAt: Date.now(),
+          lastActivatedAt: Date.now(),
+        };
+        registerTab(tab);
+        return tab.id;
+      } catch (e) {
+        const err = e as { message?: string };
+        setError(err.message ?? "Failed to launch from template");
+        return null;
+      }
+    },
+    [activeProjectId, registerTab],
   );
 
   function handleSessionId(tabId: string, sessionId: string) {
@@ -1184,6 +1232,16 @@ export function TerminalWorkspace() {
               onSelect: () =>
                 void handleQuickLaunch(preset.name, preset.configure),
             })),
+            ...(templateList.length > 0
+              ? ([
+                  { separator: true } as ContextMenuItem,
+                  ...templateList.map((template): ContextMenuItem => ({
+                    label: template.name,
+                    icon: LayoutTemplate,
+                    onSelect: () => void handleLaunchFromTemplate(template),
+                  })),
+                ] as ContextMenuItem[])
+              : []),
             ...(condaEnvs.length > 0
               ? ([
                   { separator: true } as ContextMenuItem,

@@ -676,6 +676,7 @@ mod tests {
     use crate::profile::repository::default_powershell_profile;
     use crate::profile::{
         default_wsl_profile, EnvironmentType, ProfileRepository, ShellType,
+        TemplateRepository,
     };
     use crate::project::{
         LocalProjectConfig, Project, ProjectRepository, ProjectType, WslProjectConfig,
@@ -747,6 +748,7 @@ mod tests {
         AppState {
             projects: Arc::new(ProjectRepository::new(root.join("projects.json"))),
             profiles: Arc::new(ProfileRepository::new(root.join("profiles.json"))),
+            templates: Arc::new(TemplateRepository::new(root.join("templates.json"))),
             ssh: Arc::new(SshConnectionRepository::new(root.join("ssh.json"))),
         }
     }

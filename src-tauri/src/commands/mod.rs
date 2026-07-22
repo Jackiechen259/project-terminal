@@ -4,6 +4,7 @@ pub mod clipboard;
 pub mod platform;
 pub mod profile;
 pub mod project;
+pub mod profile_template;
 pub mod ssh;
 pub mod terminal;
 use serde::Serialize;

@@ -2,11 +2,11 @@
 
 use std::sync::Arc;
 
-use crate::config_dirs::ConfigDirs;
 use crate::error::AppResult;
-use crate::profile::ProfileRepository;
+use crate::profile::{ProfileRepository, TemplateRepository};
 use crate::project::ProjectRepository;
 use crate::ssh::SshConnectionRepository;
+use crate::config_dirs::ConfigDirs;
 
 /// Holds the configuration directories and repositories. Repositories are
 /// cheap to construct (they just hold paths) so they are recreated per command
@@ -15,6 +15,7 @@ use crate::ssh::SshConnectionRepository;
 pub struct AppState {
     pub projects: Arc<ProjectRepository>,
     pub profiles: Arc<ProfileRepository>,
+    pub templates: Arc<TemplateRepository>,
     pub ssh: Arc<SshConnectionRepository>,
 }
 
@@ -28,6 +29,7 @@ impl AppState {
         Ok(Self {
             projects: Arc::new(ProjectRepository::new(dirs.projects_path())),
             profiles: Arc::new(ProfileRepository::new(dirs.profiles_path())),
+            templates: Arc::new(TemplateRepository::new(dirs.templates_path())),
             ssh: Arc::new(SshConnectionRepository::new(dirs.ssh_connections_path())),
         })
     }
