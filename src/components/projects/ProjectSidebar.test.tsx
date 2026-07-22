@@ -226,12 +226,12 @@ describe("ProjectSidebar collections", () => {
   it("drops a project after the last row when dragging over its bottom half", async () => {
     render(<ProjectSidebar />);
 
-    const alphaRow = screen.getByText("Alpha").closest(
-      "[role='button']",
-    ) as HTMLElement;
-    const betaRow = screen.getByText("Beta").closest(
-      "[role='button']",
-    ) as HTMLElement;
+    const alphaRow = screen
+      .getByText("Alpha")
+      .closest("[role='button']") as HTMLElement;
+    const betaRow = screen
+      .getByText("Beta")
+      .closest("[role='button']") as HTMLElement;
     // jsdom reports a zero-height rect by default, which makes
     // computeDropPosition fall back to "before". Give Beta a real layout box
     // so a clientY in the bottom half resolves to "after".
@@ -264,12 +264,12 @@ describe("ProjectSidebar collections", () => {
   it("switches the drop position between before and after via pointermove", async () => {
     render(<ProjectSidebar />);
 
-    const alphaRow = screen.getByText("Alpha").closest(
-      "[role='button']",
-    ) as HTMLElement;
-    const betaRow = screen.getByText("Beta").closest(
-      "[role='button']",
-    ) as HTMLElement;
+    const alphaRow = screen
+      .getByText("Alpha")
+      .closest("[role='button']") as HTMLElement;
+    const betaRow = screen
+      .getByText("Beta")
+      .closest("[role='button']") as HTMLElement;
     betaRow.getBoundingClientRect = vi.fn(() => ({
       top: 0,
       left: 0,

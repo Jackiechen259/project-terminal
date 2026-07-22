@@ -1,16 +1,18 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import type { LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
-export interface ContextMenuItem {
-  label: string;
-  shortcut?: string;
-  icon?: LucideIcon;
-  disabled?: boolean;
-  destructive?: boolean;
-  onSelect: () => void;
-}
+export type ContextMenuItem =
+  | {
+      label: string;
+      shortcut?: string;
+      icon?: LucideIcon;
+      disabled?: boolean;
+      destructive?: boolean;
+      onSelect: () => void;
+    }
+  | { separator: true };
 
 interface ContextMenuProps {
   position: { x: number; y: number };
@@ -46,6 +48,24 @@ export function ContextMenu({ position, items, onClose }: ContextMenuProps) {
     };
   }, [onClose]);
 
+  // Clamp the menu inside the viewport. The caller passes the cursor
+  // coordinates as the desired top-left corner; if that would push the menu
+  // past the right or bottom edge, shift it back inside. Runs after the DOM
+  // is mounted but before paint so there is no visible flash.
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let left = position.x;
+    let top = position.y;
+    if (left + rect.width > vw) left = Math.max(0, vw - rect.width);
+    if (top + rect.height > vh) top = Math.max(0, vh - rect.height);
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+  }, [position, items.length]);
+
   return (
     <div
       ref={menuRef}
@@ -54,7 +74,16 @@ export function ContextMenu({ position, items, onClose }: ContextMenuProps) {
       className="fixed z-50 min-w-48 rounded-md border bg-popover p-1 text-popover-foreground shadow-lg"
       style={{ left: position.x, top: position.y }}
     >
-      {items.map((item) => {
+      {items.map((item, index) => {
+        if ("separator" in item) {
+          return (
+            <div
+              key={`sep-${index}`}
+              role="separator"
+              className="my-1 h-px bg-border"
+            />
+          );
+        }
         const Icon = item.icon;
         return (
           <button

@@ -8,24 +8,36 @@ import {
 } from "react";
 import { Button } from "@/components/ui/button";
 import {
+  Boxes,
   Columns2,
   Plus,
   RotateCcw,
   Rows2,
+  Settings2,
+  Sparkles,
   Square,
+  Star,
   Terminal as TerminalIcon,
   X,
 } from "lucide-react";
 
-import { ContextMenu } from "@/components/ui/context-menu";
+import {
+  ContextMenu,
+  type ContextMenuItem,
+} from "@/components/ui/context-menu";
 import { dispatchAppCommand, listenForAppCommands } from "@/lib/appCommands";
 import { getAppShortcut, isBrowserShortcut } from "@/lib/keyboardShortcuts";
-import { profileService } from "@/services";
+import {
+  environmentService,
+  profileService,
+  type ProfileInput,
+} from "@/services";
 import { useProjectStore } from "@/stores/projectStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { cn } from "@/lib/utils";
 import type {
+  Project,
   TerminalProfile,
   TerminalSplitDirection,
   TerminalTab,
@@ -36,6 +48,36 @@ import { TerminalView } from "./TerminalView";
 type TerminalDropZone = "left" | "right" | "top" | "bottom";
 type TabDropPosition = "before" | "after";
 type TabDropTarget = { tabId: string; position: TabDropPosition };
+
+/** Quick-launch preset: creates a profile on first use, then reuses it. */
+interface PresetTemplate {
+  name: string;
+  icon: typeof Sparkles;
+  configure: (base: ProfileInput) => void;
+}
+
+/** Detected Conda environment available as a quick-launch target. */
+interface CondaEnvOption {
+  name: string;
+  condaExecutable: string;
+}
+
+const PRESET_TEMPLATES: PresetTemplate[] = [
+  {
+    name: "Codex CLI",
+    icon: Sparkles,
+    configure: (base) => {
+      base.startupCommands = ["codex"];
+    },
+  },
+  {
+    name: "Oh My Pi",
+    icon: Sparkles,
+    configure: (base) => {
+      base.startupCommands = ["omp"];
+    },
+  },
+];
 
 /**
  * Terminal workspace: tab strip + terminal area.
@@ -81,6 +123,11 @@ export function TerminalWorkspace() {
     x: number;
     y: number;
   } | null>(null);
+  const [plusMenuPosition, setPlusMenuPosition] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const [condaEnvs, setCondaEnvs] = useState<CondaEnvOption[]>([]);
   const tabListRef = useRef<HTMLDivElement>(null);
   const splitTabGroupRef = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -512,6 +559,97 @@ export function TerminalWorkspace() {
     };
   }, [activeProjectId]);
 
+  // Detect Conda environments for quick-launch in the + button menu. Only
+  // runs for local/WSL projects where a Conda install is reachable from the
+  // host. SSH remotes are skipped (their Conda lives on the remote host).
+  useEffect(() => {
+    if (!activeProjectId || !activeProject || activeProject.type === "ssh") {
+      setCondaEnvs([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const condaPaths = await environmentService.detectConda();
+        if (condaPaths.length === 0 || cancelled) {
+          if (!cancelled) setCondaEnvs([]);
+          return;
+        }
+        const condaExecutable = condaPaths[0];
+        const envs = await environmentService.listConda(condaExecutable);
+        if (cancelled) return;
+        setCondaEnvs(
+          envs
+            .filter((env) => !env.isBase)
+            .map((env) => ({
+              name: env.name ?? env.path,
+              condaExecutable,
+            })),
+        );
+      } catch {
+        if (!cancelled) setCondaEnvs([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProjectId, activeProject]);
+
+  // Quick-launch a terminal from a preset template. Creates the profile on
+  // first use (by name), then reuses the existing one on subsequent launches.
+  const handleQuickLaunch = useCallback(
+    async (
+      presetName: string,
+      configure: (base: ProfileInput) => void,
+    ): Promise<string | null> => {
+      if (!activeProjectId) return null;
+      setError(null);
+      try {
+        const existing =
+          profiles.length > 0
+            ? profiles.find((p) => p.name === presetName)
+            : undefined;
+        let profile: TerminalProfile;
+        if (existing) {
+          profile = existing;
+        } else {
+          const project = projects.find((p) => p.id === activeProjectId) as
+            Project | undefined;
+          const base: ProfileInput = {
+            projectId: activeProjectId,
+            name: presetName,
+            shellType:
+              project?.type === "ssh" ? "remote-default" : "powershell",
+            environmentType: "none",
+            isDefault: false,
+          };
+          configure(base);
+          profile = await profileService.create(base);
+          setProfiles((prev) => [...prev, profile]);
+        }
+        const tab: TerminalTab = {
+          id: crypto.randomUUID(),
+          sessionId: "",
+          projectId: activeProjectId,
+          profileId: profile.id,
+          defaultTitle: profile.name,
+          title: profile.name,
+          cwd: "",
+          status: "starting",
+          createdAt: Date.now(),
+          lastActivatedAt: Date.now(),
+        };
+        registerTab(tab);
+        return tab.id;
+      } catch (e) {
+        const err = e as { message?: string };
+        setError(err.message ?? "Failed to launch preset terminal");
+        return null;
+      }
+    },
+    [activeProjectId, profiles, projects, registerTab],
+  );
+
   function handleSessionId(tabId: string, sessionId: string) {
     updateTab(tabId, { sessionId, status: "running", exitCode: undefined });
   }
@@ -692,7 +830,7 @@ export function TerminalWorkspace() {
         onPointerUp={handleTabPointerUp}
         onPointerCancel={handleTabPointerCancel}
         className={cn(
-          "group relative flex shrink-0 cursor-grab items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground active:cursor-grabbing data-[dragging=true]:opacity-50",
+          "group relative flex shrink-0 items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground data-[dragging=true]:opacity-50",
           id === activeTabId && "bg-accent text-accent-foreground",
         )}
         onContextMenu={(event) => {
@@ -866,12 +1004,23 @@ export function TerminalWorkspace() {
           variant="ghost"
           size="icon"
           aria-label="New terminal"
+          title="New terminal (right-click for presets)"
           className="h-7 w-7 text-muted-foreground"
           disabled={!activeProject}
           onClick={() =>
             activeProject &&
             void handleNewTerminal(activeProject.id, selectedProfileId)
           }
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (activeProject) {
+              setPlusMenuPosition({
+                x: event.clientX,
+                y: event.clientY,
+              });
+            }
+          }}
         >
           <Plus className="h-4 w-4" />
         </Button>
@@ -1009,6 +1158,60 @@ export function TerminalWorkspace() {
               icon: X,
               disabled: !activeTabId,
               onSelect: () => activeTabId && void handleCloseTab(activeTabId),
+            },
+          ]}
+        />
+      ) : null}
+      {plusMenuPosition ? (
+        <ContextMenu
+          position={plusMenuPosition}
+          onClose={() => setPlusMenuPosition(null)}
+          items={[
+            ...profiles.map((profile): ContextMenuItem => ({
+              label: profile.name,
+              icon: profile.isDefault ? Star : TerminalIcon,
+              onSelect: () => {
+                if (activeProjectId)
+                  void handleNewTerminal(activeProjectId, profile.id);
+              },
+            })),
+            ...(profiles.length > 0
+              ? ([{ separator: true }] as ContextMenuItem[])
+              : []),
+            ...PRESET_TEMPLATES.map((preset): ContextMenuItem => ({
+              label: preset.name,
+              icon: preset.icon,
+              onSelect: () =>
+                void handleQuickLaunch(preset.name, preset.configure),
+            })),
+            ...(condaEnvs.length > 0
+              ? ([
+                  { separator: true } as ContextMenuItem,
+                  ...condaEnvs.map((env): ContextMenuItem => ({
+                    label: `Conda: ${env.name}`,
+                    icon: Boxes,
+                    onSelect: () =>
+                      void handleQuickLaunch(`Conda: ${env.name}`, (base) => {
+                        base.environmentType = "conda";
+                        base.conda = {
+                          condaExecutable: env.condaExecutable,
+                          environmentName: env.name,
+                          activationMode: "shell-hook",
+                          autoActivate: true,
+                        };
+                      }),
+                  })),
+                ] as ContextMenuItem[])
+              : []),
+            { separator: true } as ContextMenuItem,
+            {
+              label: "Manage profiles…",
+              icon: Settings2,
+              onSelect: () =>
+                dispatchAppCommand({
+                  type: "open-settings",
+                  section: "profiles",
+                }),
             },
           ]}
         />

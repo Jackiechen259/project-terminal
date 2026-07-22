@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ChevronLeft,
@@ -25,6 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { listenForAppCommands } from "@/lib/appCommands";
 import { cn } from "@/lib/utils";
 import type { ProfileInput } from "@/services";
 import { useProfileStore } from "@/stores/profileStore";
@@ -194,6 +195,7 @@ export function SettingsDialog() {
   const [editing, setEditing] = useState<ProfileDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const requestedSectionRef = useRef<SettingsSection | null>(null);
 
   const profiles = useProfileStore((s) =>
     projectId ? (s.byProjectId[projectId] ?? EMPTY_PROFILES) : EMPTY_PROFILES,
@@ -214,7 +216,8 @@ export function SettingsDialog() {
   useEffect(() => {
     if (!open) return;
     const initialId = activeProjectId ?? projects[0]?.id ?? null;
-    setSection("general");
+    setSection(requestedSectionRef.current ?? "general");
+    requestedSectionRef.current = null;
     setProjectId(initialId);
     setEditing(null);
     setError(null);
@@ -225,6 +228,15 @@ export function SettingsDialog() {
       void loadForProject(projectId);
     }
   }, [open, projectId, loadForProject, section]);
+
+  useEffect(() => {
+    return listenForAppCommands((command) => {
+      if (command.type === "open-settings") {
+        requestedSectionRef.current = command.section ?? null;
+        setOpen(true);
+      }
+    });
+  }, []);
 
   function selectProject(nextProjectId: string) {
     setProjectId(nextProjectId);

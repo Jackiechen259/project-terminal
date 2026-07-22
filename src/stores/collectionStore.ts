@@ -215,7 +215,10 @@ export const useCollectionStore = create<CollectionStoreState>()(
         const ungroupedProjectIds = get().ungroupedProjectIds.filter((id) =>
           existingProjectIds.has(id),
         );
-        if (changed || ungroupedProjectIds.length !== get().ungroupedProjectIds.length) {
+        if (
+          changed ||
+          ungroupedProjectIds.length !== get().ungroupedProjectIds.length
+        ) {
           set({ collections: next, ungroupedProjectIds });
         }
       },

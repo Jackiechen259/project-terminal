@@ -62,9 +62,17 @@ export function WindowTitleBar({
           <button
             type="button"
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label={sidebarCollapsed ? "Show projects sidebar" : "Hide projects sidebar"}
+            aria-label={
+              sidebarCollapsed
+                ? "Show projects sidebar"
+                : "Hide projects sidebar"
+            }
             aria-expanded={!sidebarCollapsed}
-            title={sidebarCollapsed ? "Show projects sidebar" : "Hide projects sidebar"}
+            title={
+              sidebarCollapsed
+                ? "Show projects sidebar"
+                : "Hide projects sidebar"
+            }
             onMouseDown={(event) => event.stopPropagation()}
             onDoubleClick={(event) => event.stopPropagation()}
             onClick={onToggleSidebar}
