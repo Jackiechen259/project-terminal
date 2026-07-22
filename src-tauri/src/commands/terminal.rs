@@ -235,6 +235,45 @@ fn build_session_spawn(
     ))
 }
 
+/// Escape a remote working-directory path for use inside `cd --`, preserving
+/// a leading tilde unquoted so the remote shell expands it.
+///
+/// Returns `None` when the path is empty or `~`: SSH sessions already start
+/// in `$HOME`, so no `cd` is needed. For `~/sub`, `~user/sub`, and bare
+/// `~user`, the tilde prefix and the following slash are kept unquoted so
+/// POSIX tilde expansion fires; only the remainder is POSIX-escaped.
+fn escape_remote_cd_path(remote_path: &str) -> Option<String> {
+    use crate::terminal::escaping::escape_remote_posix_argument;
+    let trimmed = remote_path.trim();
+    if trimmed.is_empty() || trimmed == "~" {
+        return None;
+    }
+    if !trimmed.starts_with('~') {
+        return Some(escape_remote_posix_argument(trimmed));
+    }
+    let after_tilde = &trimmed[1..];
+    if after_tilde.is_empty() {
+        return None; // bare "~", already handled above
+    }
+    // ~/rest — keep the slash unquoted so tilde expansion fires.
+    if let Some(rest) = after_tilde.strip_prefix('/') {
+        return Some(format!("~/{}", escape_remote_posix_argument(rest)));
+    }
+    // ~user or ~user/rest — split at the first slash.
+    match after_tilde.find('/') {
+        Some(slash_pos) => {
+            let user = &after_tilde[..slash_pos];
+            let rest = &after_tilde[slash_pos + 1..];
+            Some(format!("~{}/{}", user, escape_remote_posix_argument(rest)))
+        }
+        None => {
+            // ~user without a trailing slash. Usernames consist of safe
+            // characters; the whole token is the tilde-expansion target.
+            Some(trimmed.to_string())
+        }
+    }
+}
+
 /// Prepare the remote working directory inside the OpenSSH remote command.
 /// The command is constructed only from saved profile/project fields and each
 /// path is POSIX-escaped before it is interpreted by the remote shell.
@@ -244,7 +283,7 @@ fn remote_start_command(
 ) -> AppResult<Option<String>> {
     use crate::profile::ShellType;
 
-    let path = crate::terminal::escaping::escape_remote_posix_argument(remote_path);
+    let cd_path = escape_remote_cd_path(remote_path);
     let initialization = crate::terminal::build_remote_initialization_commands(profile)?;
     let (shell, final_shell) = match profile.shell_type {
         ShellType::RemoteDefault => ("sh", "\"${SHELL:-sh}\" -l".to_string()),
@@ -270,14 +309,13 @@ fn remote_start_command(
         }
     };
     let separator = if shell == "fish" { "; and " } else { "; " };
-    let mut script = format!("cd -- {path}");
-    for command in initialization {
-        script.push_str(separator);
-        script.push_str(&command);
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(path) = cd_path {
+        parts.push(format!("cd -- {path}"));
     }
-    script.push_str(separator);
-    script.push_str("exec ");
-    script.push_str(&final_shell);
+    parts.extend(initialization);
+    parts.push(format!("exec {final_shell}"));
+    let script = parts.join(separator);
 
     Ok(Some(format!(
         "{shell} -{} {}",
@@ -867,6 +905,67 @@ mod tests {
         // The apostrophe is safely represented as the POSIX quote boundary,
         // not passed through as an unquoted shell character.
         assert!(command.contains("'\"'\"'"));
+    }
+
+    #[test]
+    fn escape_remote_cd_path_skips_home_and_empty() {
+        assert_eq!(escape_remote_cd_path("~"), None);
+        assert_eq!(escape_remote_cd_path(""), None);
+        assert_eq!(escape_remote_cd_path("  "), None);
+        assert_eq!(escape_remote_cd_path(" ~ "), None);
+    }
+
+    #[test]
+    fn escape_remote_cd_path_preserves_tilde_unquoted() {
+        // ~/subpath — tilde and slash unquoted so the shell expands ~.
+        assert_eq!(escape_remote_cd_path("~/projects"), Some("~/projects".into()));
+        assert_eq!(
+            escape_remote_cd_path("~/my project"),
+            Some("~/'my project'".into())
+        );
+        // ~user/subpath — username and slash unquoted.
+        assert_eq!(
+            escape_remote_cd_path("~deploy/app"),
+            Some("~deploy/app".into())
+        );
+        assert_eq!(
+            escape_remote_cd_path("~deploy/my app"),
+            Some("~deploy/'my app'".into())
+        );
+        // Bare ~user.
+        assert_eq!(escape_remote_cd_path("~deploy"), Some("~deploy".into()));
+        // Normal absolute path — fully escaped as before.
+        assert_eq!(escape_remote_cd_path("/srv/app"), Some("/srv/app".into()));
+        assert_eq!(
+            escape_remote_cd_path("/srv/my app"),
+            Some("'/srv/my app'".into())
+        );
+    }
+
+    #[test]
+    fn remote_start_command_skips_cd_for_tilde() {
+        let mut profile = default_powershell_profile("profile-1".into(), "p1".into());
+        profile.shell_type = ShellType::RemoteBash;
+        // "~" means $HOME, where SSH already starts — no cd needed.
+        let command = remote_start_command(&profile, "~").unwrap().unwrap();
+        assert!(command.starts_with("bash -lc "));
+        assert!(!command.contains("cd --"));
+        assert!(command.contains("exec bash -l"));
+    }
+
+    #[test]
+    fn remote_start_command_keeps_tilde_unquoted_in_cd() {
+        let mut profile = default_powershell_profile("profile-1".into(), "p1".into());
+        profile.shell_type = ShellType::RemoteBash;
+        let command = remote_start_command(&profile, "~/projects/app")
+            .unwrap()
+            .unwrap();
+        assert!(command.starts_with("bash -lc "));
+        // The tilde must be unquoted for shell expansion.
+        assert!(command.contains("cd -- ~/projects/app"));
+        // The tilde must NOT be single-quoted (which caused the original bug
+        // where `cd -- '~'` failed with "can't cd to ~").
+        assert!(!command.contains("'~"));
     }
 
     #[test]
