@@ -80,6 +80,17 @@ export const TERMINAL_THEMES: Record<AppTheme, ITheme> = {
   light,
 };
 
+const TERMINAL_MINIMUM_CONTRAST: Record<AppTheme, number> = {
+  dark: 1,
+  "eye-care": 4.5,
+  light: 4.5,
+};
+
 export function getTerminalTheme(theme: AppTheme | undefined): ITheme {
   return TERMINAL_THEMES[theme ?? "dark"] ?? dark;
+}
+
+/** Keep agent-generated ANSI and truecolor text readable on pale backgrounds. */
+export function getTerminalMinimumContrast(theme: AppTheme | undefined) {
+  return TERMINAL_MINIMUM_CONTRAST[theme ?? "dark"] ?? 1;
 }

@@ -115,7 +115,7 @@ function positiveNumber(
 
 function toInput(
   draft: Draft,
-  t?: (source: string, params?: Record<string, string | number>) => string,
+  t: (source: string, params?: Record<string, string | number>) => string,
 ): SshConnectionInput {
   const jumpHost = draft.jumpHost.trim()
     ? {

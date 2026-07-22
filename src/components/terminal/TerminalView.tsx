@@ -5,8 +5,12 @@ import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 
 import { useTranslation } from "@/i18n";
+import { listenForAppCommands } from "@/lib/appCommands";
 import { TerminalInputQueue } from "@/lib/terminalInputQueue";
-import { getTerminalTheme } from "@/lib/terminalThemes";
+import {
+  getTerminalMinimumContrast,
+  getTerminalTheme,
+} from "@/lib/terminalThemes";
 import { terminalService } from "@/services";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { resolveTerminalTabTitle } from "./terminalTitle";
@@ -134,6 +138,7 @@ export function TerminalView({
       fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, monospace',
       fontSize: terminalFontSize,
       lineHeight: 1.2,
+      minimumContrastRatio: getTerminalMinimumContrast(theme),
       allowTransparency: false,
       convertEol: false,
       theme: getTerminalTheme(theme),
@@ -304,6 +309,7 @@ export function TerminalView({
 
     term.options.fontSize = terminalFontSize;
     term.options.cursorBlink = cursorBlink;
+    term.options.minimumContrastRatio = getTerminalMinimumContrast(theme);
     term.options.theme = getTerminalTheme(theme);
     const frame = requestAnimationFrame(() => {
       try {
