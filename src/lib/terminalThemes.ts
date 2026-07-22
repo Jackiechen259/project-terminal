@@ -27,10 +27,10 @@ const dark: ITheme = {
 };
 
 const eyeCare: ITheme = {
-  background: "#f5eedc",
-  foreground: "#39342b",
+  background: "#f5f1e5",
+  foreground: "#362f26",
   cursor: "#655b47",
-  cursorAccent: "#f5eedc",
+  cursorAccent: "#f5f1e5",
   selectionBackground: "#d8c9a9",
   black: "#39342b",
   red: "#a33b32",

@@ -335,7 +335,7 @@ export function TerminalView({
 
   return (
     <div
-      className="h-full w-full p-2"
+      className="h-full w-full bg-background p-2"
       onContextMenuCapture={handleContextMenu}
       onFocusCapture={onFocus}
     >
