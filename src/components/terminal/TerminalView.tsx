@@ -12,7 +12,10 @@ import {
   getTerminalTheme,
 } from "@/lib/terminalThemes";
 import { terminalService } from "@/services";
-import { useSettingsStore } from "@/stores/settingsStore";
+import {
+  clampTerminalFontSize,
+  useSettingsStore,
+} from "@/stores/settingsStore";
 import { resolveTerminalTabTitle } from "./terminalTitle";
 
 /**
@@ -185,6 +188,25 @@ export function TerminalView({
     term.element?.addEventListener("wheel", handleTerminalWheel, {
       passive: true,
     });
+    // Ctrl+wheel adjusts the terminal font size. The settings store clamps
+    // to the supported range and the existing fontSize effect re-fits the
+    // grid. preventDefault stops both the browser page-zoom and xterm's own
+    // scroll handling so the gesture only resizes text.
+    const handleWheelZoom = (event: WheelEvent) => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      const { terminalFontSize, updateGeneralSettings } =
+        useSettingsStore.getState();
+      const next = clampTerminalFontSize(
+        terminalFontSize + (event.deltaY < 0 ? 1 : -1),
+      );
+      if (next !== terminalFontSize) {
+        updateGeneralSettings({ terminalFontSize: next });
+      }
+    };
+    containerRef.current?.addEventListener("wheel", handleWheelZoom, {
+      passive: false,
+    });
 
     const fitAndResize = () => {
       const container = containerRef.current;
@@ -290,6 +312,7 @@ export function TerminalView({
       }
       viewport?.removeEventListener("scroll", handleViewportScroll);
       term.element?.removeEventListener("wheel", handleTerminalWheel);
+      containerRef.current?.removeEventListener("wheel", handleWheelZoom);
       const sid = sessionIdRef.current;
       if (sid) void terminalService.close(sid);
       term.dispose();
