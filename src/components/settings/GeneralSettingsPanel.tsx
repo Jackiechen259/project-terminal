@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { RefreshCw, RotateCcw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -31,6 +33,10 @@ export function GeneralSettingsPanel() {
   );
   const update = useSettingsStore((state) => state.updateGeneralSettings);
   const reset = useSettingsStore((state) => state.resetGeneralSettings);
+  const [version, setVersion] = useState("");
+  useEffect(() => {
+    void getVersion().then(setVersion);
+  }, []);
 
   const isDefault =
     language === DEFAULT_GENERAL_SETTINGS.language &&
@@ -193,9 +199,9 @@ export function GeneralSettingsPanel() {
 
       <SettingsGroup
         title={t("Updates")}
-        description={t(
-          "Keep Project Terminal up to date from signed GitHub Releases.",
-        )}
+        description={t("Current version: {version}", {
+          version: version || "…",
+        })}
       >
         <SettingRow
           title={t("Automatically check for updates")}

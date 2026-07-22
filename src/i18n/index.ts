@@ -50,8 +50,7 @@ const zhCN: Record<string, string> = {
     "在每个项目旁显示活动终端数量。",
   "Show running terminal count": "显示运行中终端数量",
   Updates: "更新",
-  "Keep Project Terminal up to date from signed GitHub Releases.":
-    "通过签名的 GitHub Releases 保持 Project Terminal 为最新版本。",
+  "Current version: {version}": "当前版本：{version}",
   "Automatically check for updates": "自动检查更新",
   "Check once whenever the application starts.": "每次应用启动时检查一次。",
   "Check for updates": "检查更新",
