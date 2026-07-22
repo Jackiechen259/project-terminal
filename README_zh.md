@@ -331,7 +331,7 @@ pnpm bump patch --dry-run
 git add -A
 git commit -m "chore: release v0.3.0"
 git tag v0.3.0
-git push --follow-tags
+git push origin v0.3.0
 ```
 
 发布工作流将自动构建 Windows 与 Linux 安装包、为更新包签名、创建 GitHub Release 并发布更新元数据。

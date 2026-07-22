@@ -57,7 +57,7 @@ if (flags.has("help") || positional.length === 0) {
 Bumps and syncs the version in package.json, tauri.conf.json, Cargo.toml, Cargo.lock.
 After bumping, tag and push to trigger the release workflow:
   git add -A && git commit -m "chore: release v<version>"
-  git tag v<version> && git push --follow-tags
+  git tag v<version> && git push origin v<version>
 `);
   process.exit(flags.has("help") ? 0 : 1);
 }
@@ -235,7 +235,7 @@ process.stdout.write(
   `  updated: package.json, src-tauri/tauri.conf.json, src-tauri/Cargo.toml, src-tauri/Cargo.lock\n`
 );
 process.stdout.write(
-  `\nNext:\n  git add -A && git commit -m "chore: release v${newVersion}"\n  git tag v${newVersion} && git push --follow-tags\n`
+  `\nNext:\n  git add -A && git commit -m "chore: release v${newVersion}"\n  git tag v${newVersion} && git push origin v${newVersion}\n`
 );
 
 function fail(msg) {

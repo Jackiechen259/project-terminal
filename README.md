@@ -332,7 +332,7 @@ Then commit the version update, tag the release, and push to GitHub:
 git add -A
 git commit -m "chore: release v0.3.0"
 git tag v0.3.0
-git push --follow-tags
+git push origin v0.3.0
 ```
 
 The workflow builds Windows and Linux packages, signs updater artifacts, creates the GitHub Release, and publishes update metadata.
