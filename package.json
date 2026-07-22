@@ -1,6 +1,6 @@
 {
   "name": "project-terminal",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
@@ -16,7 +16,8 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css,json}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css,json}\"",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "bump": "node scripts/bump-version.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.4",
