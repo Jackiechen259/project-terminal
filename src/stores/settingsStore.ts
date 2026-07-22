@@ -3,8 +3,12 @@ import { persist } from "zustand/middleware";
 
 export const MIN_TERMINAL_FONT_SIZE = 10;
 export const MAX_TERMINAL_FONT_SIZE = 24;
+export type AppLanguage = "en" | "zh-CN";
+export type AppTheme = "dark" | "eye-care" | "light";
 
 export interface GeneralSettings {
+  language: AppLanguage;
+  theme: AppTheme;
   restoreLastProject: boolean;
   confirmCloseTerminal: boolean;
   showTerminalCount: boolean;
@@ -14,6 +18,8 @@ export interface GeneralSettings {
 }
 
 export const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
+  language: "en",
+  theme: "dark",
   restoreLastProject: true,
   confirmCloseTerminal: true,
   showTerminalCount: true,
@@ -60,6 +66,8 @@ export const useSettingsStore = create<SettingsStoreState>()(
       name: "project-terminal.general-settings",
       version: 1,
       partialize: (state) => ({
+        language: state.language,
+        theme: state.theme,
         restoreLastProject: state.restoreLastProject,
         confirmCloseTerminal: state.confirmCloseTerminal,
         showTerminalCount: state.showTerminalCount,

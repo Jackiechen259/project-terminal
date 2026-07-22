@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 
 import { listenForAppCommands } from "@/lib/appCommands";
+import { getTerminalTheme } from "@/lib/terminalThemes";
 import { terminalService } from "@/services";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { resolveTerminalTabTitle } from "./terminalTitle";
@@ -73,6 +74,7 @@ export function TerminalView({
   const onTitleChangeRef = useRef(onTitleChange);
   const terminalFontSize = useSettingsStore((state) => state.terminalFontSize);
   const cursorBlink = useSettingsStore((state) => state.cursorBlink);
+  const theme = useSettingsStore((state) => state.theme);
 
   const copySelection = useCallback(async () => {
     const selection = termRef.current?.getSelection() ?? "";
@@ -128,6 +130,7 @@ export function TerminalView({
       lineHeight: 1.2,
       allowTransparency: false,
       convertEol: false,
+      theme: getTerminalTheme(theme),
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -294,6 +297,7 @@ export function TerminalView({
 
     term.options.fontSize = terminalFontSize;
     term.options.cursorBlink = cursorBlink;
+    term.options.theme = getTerminalTheme(theme);
     const frame = requestAnimationFrame(() => {
       try {
         fitRef.current?.fit();
@@ -304,7 +308,7 @@ export function TerminalView({
       }
     });
     return () => cancelAnimationFrame(frame);
-  }, [cursorBlink, terminalFontSize]);
+  }, [cursorBlink, terminalFontSize, theme]);
 
   // When this view becomes visible again, re-fit so the terminal reports the
   // correct dimensions after being hidden.

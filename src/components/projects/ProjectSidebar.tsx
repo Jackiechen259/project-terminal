@@ -22,6 +22,7 @@ import { useSettingsStore } from "@/stores/settingsStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { projectService, sshService, terminalService } from "@/services";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/i18n";
 import type { Project } from "@/types";
 
 import { ProjectDialog } from "./ProjectDialog";
@@ -86,6 +87,7 @@ function sameDropTarget(a: DropTarget | null, b: DropTarget): boolean {
  * avoids platform-specific native drag-and-drop cursors.
  */
 export function ProjectSidebar() {
+  const { t } = useTranslation();
   const projects = useProjectStore((s) => s.projects);
   const loading = useProjectStore((s) => s.loading);
   const error = useProjectStore((s) => s.error);
@@ -347,12 +349,14 @@ export function ProjectSidebar() {
 
   async function testSsh(project: Project) {
     if (project.type !== "ssh" || !project.ssh?.connectionId) return;
-    setNotice("Testing SSH connection…");
+    setNotice(t("Testing SSH connection…"));
     try {
       setNotice(await sshService.test(project.ssh.connectionId));
     } catch (cause) {
       setNotice(
-        `SSH test failed: ${(cause as { message?: string }).message ?? "Unknown error"}`,
+        t("SSH test failed: {error}", {
+          error: (cause as { message?: string }).message ?? t("Unknown error"),
+        }),
       );
     }
   }
@@ -360,7 +364,7 @@ export function ProjectSidebar() {
   return (
     <aside
       className="flex w-[260px] shrink-0 select-none flex-col border-r border-border bg-surface"
-      aria-label="Projects"
+      aria-label={t("Projects")}
       onDragEnter={(e) => {
         // WebView2 determines the cursor from the first entered drop target.
         // Accept the in-app drag here as well as on individual targets so it
@@ -423,7 +427,7 @@ export function ProjectSidebar() {
       ) : null}
       <header className="flex h-11 items-center justify-between border-b border-border px-3">
         <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Projects
+          {t("Projects")}
         </span>
         <div className="flex flex-row gap-1">
           <CollectionDialog
@@ -432,8 +436,8 @@ export function ProjectSidebar() {
                 variant="ghost"
                 size="icon"
                 className="h-7 w-7"
-                aria-label="New collection"
-                title="New collection"
+                aria-label={t("New collection")}
+                title={t("New collection")}
               >
                 <FolderPlus className="h-4 w-4" />
               </Button>
@@ -445,8 +449,8 @@ export function ProjectSidebar() {
                 variant="ghost"
                 size="icon"
                 className="h-7 w-7"
-                aria-label="Add project"
-                title="Add project"
+                aria-label={t("Add project")}
+                title={t("Add project")}
               >
                 <Plus className="h-4 w-4" />
               </Button>
@@ -458,13 +462,13 @@ export function ProjectSidebar() {
       <div className="app-scrollbar flex flex-1 flex-col gap-1 overflow-y-auto p-2">
         {loading && projects.length === 0 ? (
           <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-            Loading projects...
+            {t("Loading projects…")}
           </div>
         ) : projects.length === 0 ? (
           <div className="rounded-md border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
-            No projects yet.
+            {t("No projects yet.")}
             <br />
-            Use the + button to add one.
+            {t("Use the + button to add one.")}
           </div>
         ) : (
           <>
@@ -486,7 +490,10 @@ export function ProjectSidebar() {
                 onDeleteCollection={() => {
                   if (
                     window.confirm(
-                      `Delete collection "${collection.name}"? Projects inside will not be removed.`,
+                      t(
+                        'Delete collection "{name}"? Projects inside will not be removed.',
+                        { name: collection.name },
+                      ),
                     )
                   ) {
                     deleteCollection(collection.id);
@@ -703,6 +710,7 @@ function CollectionGroup({
     event: React.PointerEvent<HTMLDivElement>,
   ) => void;
 }) {
+  const { t } = useTranslation();
   const [renaming, setRenaming] = useState(false);
   const isDropTarget =
     dropTarget?.kind === "collection" &&
@@ -754,7 +762,9 @@ function CollectionGroup({
           type="button"
           onClick={onToggleCollapsed}
           className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-          aria-label={collapsed ? "Expand collection" : "Collapse collection"}
+          aria-label={
+            collapsed ? t("Expand collection") : t("Collapse collection")
+          }
         >
           {collapsed ? (
             <ChevronRight className="h-3.5 w-3.5" />
@@ -779,7 +789,7 @@ function CollectionGroup({
           variant="ghost"
           size="icon"
           className="h-6 w-6 opacity-0 group-hover:opacity-100"
-          aria-label="Rename collection"
+          aria-label={t("Rename collection")}
           onClick={(e) => {
             e.stopPropagation();
             setRenaming(true);
@@ -791,7 +801,7 @@ function CollectionGroup({
           variant="ghost"
           size="icon"
           className="h-6 w-6 opacity-0 group-hover:opacity-100"
-          aria-label="Delete collection"
+          aria-label={t("Delete collection")}
           onClick={(e) => {
             e.stopPropagation();
             onDeleteCollection();
@@ -805,7 +815,7 @@ function CollectionGroup({
         <div className="flex flex-col gap-0.5 pb-1 pl-3">
           {projects.length === 0 ? (
             <div className="rounded-md border border-dashed border-border/60 px-2 py-3 text-center text-[11px] text-muted-foreground">
-              Drag projects here
+              {t("Drag projects here")}
             </div>
           ) : (
             projects.map((project) => (
@@ -908,6 +918,7 @@ function UngroupedHeader({
   onDrop: (e: React.DragEvent<HTMLDivElement>) => void;
   onPointerEnter: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div
       data-project-drop-target="ungrouped"
@@ -921,7 +932,7 @@ function UngroupedHeader({
       onPointerEnter={onPointerEnter}
     >
       <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        {empty ? "Drag here to ungroup" : "Ungrouped"}
+        {empty ? t("Drag here to ungroup") : t("Ungrouped")}
       </span>
     </div>
   );
@@ -976,6 +987,7 @@ function ProjectRow({
   onPointerEnter,
   onPointerMove,
 }: ProjectRowProps) {
+  const { t } = useTranslation();
   const Icon =
     project.type === "local"
       ? Folder
@@ -1004,7 +1016,7 @@ function ProjectRow({
   const [editing, setEditing] = useState(false);
 
   async function removeProject() {
-    if (window.confirm(`Remove project "${project.name}"?`)) {
+    if (window.confirm(t('Remove project "{name}"?', { name: project.name }))) {
       let switchedTerminalProject = false;
       let nextProjectId: string | null = null;
       try {
@@ -1088,8 +1100,7 @@ function ProjectRow({
           }
         }}
         className={cn(
-          "group relative flex select-none items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground",
-          onPointerDown && "cursor-grab active:cursor-grabbing",
+          "group relative flex cursor-default select-none items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground",
           active && "bg-accent text-accent-foreground",
           isDragging && "opacity-40",
           indent === 1 && "ml-1",
@@ -1105,21 +1116,21 @@ function ProjectRow({
         <Icon className="h-4 w-4 shrink-0" />
         <span className="flex-1 truncate">{project.name}</span>
         {showTerminalCount && running ? (
-          <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-400">
+          <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-ok">
             {running}
           </span>
         ) : null}
         {hasError ? (
           <span
             className="h-2 w-2 rounded-full bg-destructive"
-            aria-label="Terminal error"
+            aria-label={t("Terminal error")}
           />
         ) : null}
         <Button
           variant="ghost"
           size="icon"
           className="h-6 w-6 opacity-0 group-hover:opacity-100"
-          aria-label="Remove project"
+          aria-label={t("Remove project")}
           onClick={(e) => {
             e.stopPropagation();
             void removeProject();

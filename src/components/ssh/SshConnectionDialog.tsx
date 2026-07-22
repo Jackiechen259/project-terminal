@@ -30,6 +30,7 @@ import {
 import { sshService, type SshConnectionInput } from "@/services";
 import { useSshStore } from "@/stores/sshStore";
 import type { SshAuthenticationType, SshConnection } from "@/types";
+import { useTranslation } from "@/i18n";
 
 type Draft = {
   id?: string;
@@ -154,6 +155,7 @@ export function SshConnectionDialog({
   trigger: React.ReactNode;
   onClosed?: () => void;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -194,22 +196,24 @@ export function SshConnectionDialog({
       const input = toInput(draft);
       if (input.authenticationType !== "system-config" && !input.username) {
         throw new Error(
-          "Username is required unless you use a system SSH config alias.",
+          t("Username is required unless you use a system SSH config alias."),
         );
       }
       if (input.authenticationType === "key" && !input.identityFile) {
-        throw new Error("Key authentication requires an identity file path.");
+        throw new Error(
+          t("Key authentication requires an identity file path."),
+        );
       }
       const saved = draft.id
         ? await updateConnection(input)
         : await createConnection(input);
       setDraft(draftFrom(saved));
-      setResult("Connection saved.");
+      setResult(t("Connection saved."));
     } catch (cause) {
       setError(
         cause instanceof Error
           ? cause.message
-          : "Unable to save SSH connection.",
+          : t("Unable to save SSH connection."),
       );
     } finally {
       setBusy(false);
@@ -226,7 +230,7 @@ export function SshConnectionDialog({
     } catch (cause) {
       setError(
         (cause as { message?: string }).message ??
-          "SSH connection test failed.",
+          t("SSH connection test failed."),
       );
     } finally {
       setBusy(false);
@@ -236,7 +240,9 @@ export function SshConnectionDialog({
   async function removeConnection() {
     if (
       !selected ||
-      !window.confirm(`Remove SSH connection "${selected.name}"?`)
+      !window.confirm(
+        t('Remove SSH connection "{name}"?', { name: selected.name }),
+      )
     )
       return;
     setBusy(true);
@@ -244,11 +250,11 @@ export function SshConnectionDialog({
     try {
       await deleteConnection(selected.id);
       setDraft(null);
-      setResult("Connection removed.");
+      setResult(t("Connection removed."));
     } catch (cause) {
       setError(
         (cause as { message?: string }).message ??
-          "Unable to remove SSH connection.",
+          t("Unable to remove SSH connection."),
       );
     } finally {
       setBusy(false);
@@ -266,26 +272,29 @@ export function SshConnectionDialog({
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-[720px]">
         <DialogHeader>
-          <DialogTitle>SSH connections</DialogTitle>
+          <DialogTitle>{t("SSH connections")}</DialogTitle>
           <DialogDescription>
-            Reusable connection settings. Passwords and private-key contents are
-            never stored.
+            {t(
+              "Reusable connection settings. Passwords and private-key contents are never stored.",
+            )}
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
           <span className="truncate">
             {clientPath === undefined
-              ? "Detecting OpenSSH client…"
+              ? t("Detecting OpenSSH client…")
               : clientPath
-                ? `OpenSSH: ${clientPath}`
-                : "OpenSSH client was not found. Install Windows OpenSSH Client to connect."}
+                ? t("OpenSSH: {path}", { path: clientPath })
+                : t(
+                    "OpenSSH client was not found. Install Windows OpenSSH Client to connect.",
+                  )}
           </span>
           <Button
             variant="ghost"
             size="icon"
             className="h-7 w-7 shrink-0"
-            aria-label="Detect SSH client again"
+            aria-label={t("Detect SSH client again")}
             onClick={() => void detectSshClient()}
           >
             <RefreshCw className="h-3.5 w-3.5" />
@@ -304,7 +313,7 @@ export function SshConnectionDialog({
               }}
             >
               <Plus className="mr-2 h-4 w-4" />
-              New connection
+              {t("New connection")}
             </Button>
             {connections.map((connection) => (
               <Button
@@ -327,7 +336,7 @@ export function SshConnectionDialog({
             <ConnectionForm draft={draft} busy={busy} onChange={change} />
           ) : (
             <div className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">
-              Create or select an SSH connection.
+              {t("Create or select an SSH connection.")}
             </div>
           )}
         </div>
@@ -335,7 +344,7 @@ export function SshConnectionDialog({
         {storeError ? <Message error={storeError.message} /> : null}
         {error ? <Message error={error} /> : null}
         {result ? (
-          <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
+          <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-ok">
             {result}
           </div>
         ) : null}
@@ -348,7 +357,7 @@ export function SshConnectionDialog({
               disabled={busy}
             >
               <Trash2 className="mr-2 h-4 w-4" />
-              Remove
+              {t("Remove")}
             </Button>
           ) : null}
           <div className="flex-1" />
@@ -359,12 +368,12 @@ export function SshConnectionDialog({
               disabled={busy || !clientPath}
             >
               <ShieldCheck className="mr-2 h-4 w-4" />
-              Test
+              {t("Test")}
             </Button>
           ) : null}
           {draft ? (
             <Button onClick={() => void save()} disabled={busy || !clientPath}>
-              {busy ? "Working…" : "Save connection"}
+              {busy ? t("Working…") : t("Save connection")}
             </Button>
           ) : null}
         </DialogFooter>
@@ -390,6 +399,7 @@ function ConnectionForm({
   busy: boolean;
   onChange: <Key extends keyof Draft>(key: Key, value: Draft[Key]) => void;
 }) {
+  const { t } = useTranslation();
   const field = <Key extends keyof Draft>(
     key: Key,
     label: string,
@@ -411,20 +421,22 @@ function ConnectionForm({
   return (
     <div className="grid gap-4">
       <div className="grid gap-3 sm:grid-cols-2">
-        {field("name", "Connection name", { placeholder: "GPU server" })}
-        {field("host", isSystemConfig ? "SSH config alias" : "Host", {
+        {field("name", t("Connection name"), {
+          placeholder: t("GPU server"),
+        })}
+        {field("host", isSystemConfig ? t("SSH config alias") : t("Host"), {
           placeholder: isSystemConfig ? "gpu-prod" : "server.example.com",
         })}
-        {field("port", "Port", { type: "number" })}
-        {field("username", "Username", {
+        {field("port", t("Port"), { type: "number" })}
+        {field("username", t("Username"), {
           placeholder: isSystemConfig
-            ? "Optional; read from SSH config"
+            ? t("Optional; read from SSH config")
             : "developer",
           disabled: isSystemConfig,
         })}
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label>Authentication</Label>
+        <Label>{t("Authentication")}</Label>
         <Select
           value={draft.authenticationType}
           onValueChange={(value) =>
@@ -436,18 +448,24 @@ function ConnectionForm({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="agent">SSH agent (recommended)</SelectItem>
-            <SelectItem value="key">Private key file</SelectItem>
-            <SelectItem value="password">Password in terminal</SelectItem>
-            <SelectItem value="keyboard-interactive">
-              Keyboard interactive
+            <SelectItem value="agent">
+              {t("SSH agent (recommended)")}
             </SelectItem>
-            <SelectItem value="system-config">System SSH config</SelectItem>
+            <SelectItem value="key">{t("Private key file")}</SelectItem>
+            <SelectItem value="password">
+              {t("Password in terminal")}
+            </SelectItem>
+            <SelectItem value="keyboard-interactive">
+              {t("Keyboard interactive")}
+            </SelectItem>
+            <SelectItem value="system-config">
+              {t("System SSH config")}
+            </SelectItem>
           </SelectContent>
         </Select>
       </div>
       {draft.authenticationType === "key"
-        ? field("identityFile", "Identity file path", {
+        ? field("identityFile", t("Identity file path"), {
             placeholder: "C:\\Users\\you\\.ssh\\id_ed25519",
           })
         : null}
@@ -458,34 +476,38 @@ function ConnectionForm({
           disabled={busy}
           onChange={(event) => onChange("useSshAgent", event.target.checked)}
         />
-        Use the system SSH agent
+        {t("Use the system SSH agent")}
       </label>
       <details className="rounded-md border border-border p-3">
         <summary className="cursor-pointer text-sm font-medium">
-          Connection options
+          {t("Connection options")}
         </summary>
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
-          {field("connectTimeoutSeconds", "Connect timeout (s)", {
+          {field("connectTimeoutSeconds", t("Connect timeout (s)"), {
             type: "number",
           })}
-          {field("serverAliveIntervalSeconds", "Keepalive interval (s)", {
+          {field("serverAliveIntervalSeconds", t("Keepalive interval (s)"), {
             type: "number",
           })}
-          {field("serverAliveCountMax", "Keepalive count", { type: "number" })}
+          {field("serverAliveCountMax", t("Keepalive count"), {
+            type: "number",
+          })}
         </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          {field("jumpHost", "Jump host", {
+          {field("jumpHost", t("Jump host"), {
             placeholder: "gateway.example.com",
           })}
-          {field("jumpPort", "Jump port", { type: "number" })}
-          {field("jumpUsername", "Jump username", { placeholder: "Optional" })}
-          {field("knownHostsFile", "Known hosts file", {
-            placeholder: "Use system default",
+          {field("jumpPort", t("Jump port"), { type: "number" })}
+          {field("jumpUsername", t("Jump username"), {
+            placeholder: t("Optional"),
+          })}
+          {field("knownHostsFile", t("Known hosts file"), {
+            placeholder: t("Use system default"),
           })}
         </div>
         <div className="mt-3 flex flex-col gap-1.5">
           <Label htmlFor="ssh-extraArgs">
-            Extra OpenSSH arguments (one argv item per line)
+            {t("Extra OpenSSH arguments (one argv item per line)")}
           </Label>
           <textarea
             id="ssh-extraArgs"
@@ -497,7 +519,7 @@ function ConnectionForm({
           />
         </div>
       </details>
-      <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-200">
+      <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-warn">
         <label className="flex gap-2">
           <input
             type="checkbox"
@@ -508,19 +530,20 @@ function ConnectionForm({
             }
           />
           <span>
-            <strong>Strict host-key checking</strong>
+            <strong>{t("Strict host-key checking")}</strong>
             <br />
-            Keep enabled to only trust known keys. If you turn it off, OpenSSH
-            still asks before accepting a new key and this app never
-            auto-accepts it; changed keys remain blocked.
+            {t(
+              "Keep enabled to only trust known keys. If you turn it off, OpenSSH still asks before accepting a new key and this app never auto-accepts it; changed keys remain blocked.",
+            )}
           </span>
         </label>
       </div>
       {draft.authenticationType === "key" ? (
         <p className="flex items-center gap-2 text-xs text-muted-foreground">
           <KeyRound className="h-3.5 w-3.5" />
-          Only the key path is saved. Passphrases are entered directly in the
-          terminal.
+          {t(
+            "Only the key path is saved. Passphrases are entered directly in the terminal.",
+          )}
         </p>
       ) : null}
     </div>

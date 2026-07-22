@@ -17,11 +17,15 @@ describe("settingsStore", () => {
 
   it("updates and resets general settings", () => {
     useSettingsStore.getState().updateGeneralSettings({
+      language: "zh-CN",
+      theme: "eye-care",
       cursorBlink: false,
       terminalFontSize: 18,
       autoCheckForUpdates: false,
     });
 
+    expect(useSettingsStore.getState().language).toBe("zh-CN");
+    expect(useSettingsStore.getState().theme).toBe("eye-care");
     expect(useSettingsStore.getState().cursorBlink).toBe(false);
     expect(useSettingsStore.getState().terminalFontSize).toBe(18);
     expect(useSettingsStore.getState().autoCheckForUpdates).toBe(false);

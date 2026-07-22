@@ -17,6 +17,7 @@ import {
   type UpdateProgress,
 } from "@/services/updater";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useTranslation } from "@/i18n";
 
 type InstallState =
   | { kind: "idle" }
@@ -27,6 +28,7 @@ type CheckState = "idle" | "checking" | "upToDate" | "error";
 
 /** Checks for signed GitHub releases once per application launch. */
 export function UpdateManager() {
+  const { t } = useTranslation();
   const autoCheckForUpdates = useSettingsStore(
     (state) => state.autoCheckForUpdates,
   );
@@ -80,7 +82,7 @@ export function UpdateManager() {
         message:
           cause instanceof Error
             ? cause.message
-            : "The update could not be installed. Please try again later.",
+            : t("The update could not be installed. Please try again later."),
       });
     }
   }
@@ -103,21 +105,25 @@ export function UpdateManager() {
         <DialogHeader>
           <DialogTitle>
             {update
-              ? "Update available"
+              ? t("Update available")
               : checkState === "checking"
-                ? "Checking for updates"
+                ? t("Checking for updates")
                 : checkState === "upToDate"
-                  ? "You’re up to date"
-                  : "Could not check for updates"}
+                  ? t("You’re up to date")
+                  : t("Could not check for updates")}
           </DialogTitle>
           <DialogDescription>
             {update
-              ? `Project Terminal ${update.version} is ready to install.`
+              ? t("Project Terminal {version} is ready to install.", {
+                  version: update.version,
+                })
               : checkState === "checking"
-                ? "Looking for a newer signed release…"
+                ? t("Looking for a newer signed release…")
                 : checkState === "upToDate"
-                  ? "You already have the latest version of Project Terminal."
-                  : "Check your internet connection and try again."}
+                  ? t(
+                      "You already have the latest version of Project Terminal.",
+                    )
+                  : t("Check your internet connection and try again.")}
           </DialogDescription>
         </DialogHeader>
 
@@ -136,8 +142,12 @@ export function UpdateManager() {
               />
             </div>
             <p className="text-xs text-muted-foreground">
-              Downloading {formatBytes(progress?.downloaded ?? 0)}
-              {progress?.total ? ` of ${formatBytes(progress.total)}` : ""}…
+              {t("Downloading {downloaded}{total}…", {
+                downloaded: formatBytes(progress?.downloaded ?? 0),
+                total: progress?.total
+                  ? t(" of {total}", { total: formatBytes(progress.total) })
+                  : "",
+              })}
             </p>
           </div>
         ) : null}
@@ -156,10 +166,10 @@ export function UpdateManager() {
                 disabled={installing}
                 onClick={() => setUpdate(null)}
               >
-                Later
+                {t("Later")}
               </Button>
               <Button disabled={installing} onClick={() => void install()}>
-                {installing ? "Installing…" : "Install and restart"}
+                {installing ? t("Installing…") : t("Install and restart")}
               </Button>
             </>
           ) : (
@@ -167,7 +177,7 @@ export function UpdateManager() {
               disabled={checkState === "checking"}
               onClick={() => setCheckState("idle")}
             >
-              Close
+              {t("Close")}
             </Button>
           )}
         </DialogFooter>

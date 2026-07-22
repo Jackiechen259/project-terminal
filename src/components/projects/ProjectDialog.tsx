@@ -27,6 +27,7 @@ import { usePlatformStore } from "@/stores/platformStore";
 import { environmentService, type ProjectInput } from "@/services";
 import { SshConnectionDialog } from "@/components/ssh/SshConnectionDialog";
 import { RemoteFolderPicker } from "@/components/ssh/RemoteFolderPicker";
+import { useTranslation } from "@/i18n";
 
 type ProjectType = "local" | "ssh" | "wsl";
 
@@ -38,6 +39,7 @@ type ProjectType = "local" | "ssh" | "wsl";
  * `wsl.exe` when the dialog opens.
  */
 export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
+  const { t } = useTranslation();
   const [openState, setOpenState] = useState(false);
   const [name, setName] = useState("");
   const [type, setType] = useState<ProjectType>("local");
@@ -131,23 +133,23 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
 
   async function handleSubmit() {
     if (!name.trim()) {
-      setError("Project name is required");
+      setError(t("Project name is required"));
       return;
     }
     if (type === "local" && !localPath.trim()) {
-      setError("Local path is required");
+      setError(t("Local path is required"));
       return;
     }
     if (type === "ssh" && !sshConnectionId) {
-      setError("Choose an SSH connection first");
+      setError(t("Choose an SSH connection first"));
       return;
     }
     if (type === "ssh" && !remotePath.trim()) {
-      setError("Remote path is required");
+      setError(t("Remote path is required"));
       return;
     }
     if (type === "wsl" && !wslDistribution.trim()) {
-      setError("Select a WSL distribution");
+      setError(t("Select a WSL distribution"));
       return;
     }
     const input: ProjectInput = {
@@ -177,7 +179,7 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
       setOpenState(false);
     } catch (e) {
       const err = e as { message?: string };
-      setError(err.message ?? "Failed to create project");
+      setError(err.message ?? t("Failed to create project"));
     } finally {
       setSubmitting(false);
     }
@@ -194,16 +196,17 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent className="sm:max-w-[480px]">
         <DialogHeader>
-          <DialogTitle>Add project</DialogTitle>
+          <DialogTitle>{t("Add project")}</DialogTitle>
           <DialogDescription>
-            Create a local, WSL, or SSH remote project. Each project gets its
-            own terminal tab group.
+            {t(
+              "Create a local, WSL, or SSH remote project. Each project gets its own terminal tab group.",
+            )}
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-4 py-2">
           <div className="flex flex-col gap-2">
-            <Label htmlFor="project-name">Project name</Label>
+            <Label htmlFor="project-name">{t("Project name")}</Label>
             <Input
               id="project-name"
               value={name}
@@ -213,7 +216,7 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
           </div>
 
           <div className="flex flex-col gap-2">
-            <Label htmlFor="project-type">Type</Label>
+            <Label htmlFor="project-type">{t("Type")}</Label>
             <Select
               value={type}
               onValueChange={(v) => setType(v as ProjectType)}
@@ -223,13 +226,13 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
               </SelectTrigger>
               <SelectContent>
                 {availableProjectTypes.includes("local") ? (
-                  <SelectItem value="local">Local folder</SelectItem>
+                  <SelectItem value="local">{t("Local folder")}</SelectItem>
                 ) : null}
                 {availableProjectTypes.includes("wsl") ? (
-                  <SelectItem value="wsl">WSL distribution</SelectItem>
+                  <SelectItem value="wsl">{t("WSL distribution")}</SelectItem>
                 ) : null}
                 {availableProjectTypes.includes("ssh") ? (
-                  <SelectItem value="ssh">SSH remote</SelectItem>
+                  <SelectItem value="ssh">{t("SSH remote")}</SelectItem>
                 ) : null}
               </SelectContent>
             </Select>
@@ -237,7 +240,7 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
 
           {type === "local" ? (
             <div className="flex flex-col gap-2">
-              <Label htmlFor="project-path">Local path</Label>
+              <Label htmlFor="project-path">{t("Local path")}</Label>
               <div className="flex gap-2">
                 <Input
                   id="project-path"
@@ -248,7 +251,7 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
                   variant="secondary"
                   size="icon"
                   onClick={pickFolder}
-                  aria-label="Browse folder"
+                  aria-label={t("Browse folder")}
                 >
                   <FolderOpen className="h-4 w-4" />
                 </Button>
@@ -259,7 +262,9 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
           {type === "wsl" ? (
             <div className="flex flex-col gap-4">
               <div className="flex flex-col gap-2">
-                <Label htmlFor="wsl-distribution">WSL distribution</Label>
+                <Label htmlFor="wsl-distribution">
+                  {t("WSL distribution")}
+                </Label>
                 {distributions.length > 0 ? (
                   <Select
                     value={wslDistribution}
@@ -269,8 +274,8 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
                       <SelectValue
                         placeholder={
                           distributionsLoading
-                            ? "Detecting distributions..."
-                            : "Choose a distribution"
+                            ? t("Detecting distributions...")
+                            : t("Choose a distribution")
                         }
                       />
                     </SelectTrigger>
@@ -289,31 +294,33 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
                     onChange={(e) => setWslDistribution(e.target.value)}
                     placeholder={
                       distributionsLoading
-                        ? "Detecting distributions..."
-                        : "e.g. Ubuntu"
+                        ? t("Detecting distributions...")
+                        : t("e.g. Ubuntu")
                     }
                   />
                 )}
                 {distributions.length === 0 && !distributionsLoading ? (
                   <span className="text-xs text-muted-foreground">
-                    No distributions detected. Type a name manually or install
-                    WSL via `wsl --install`.
+                    {t(
+                      "No distributions detected. Type a name manually or install WSL via `wsl --install`.",
+                    )}
                   </span>
                 ) : null}
               </div>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="wsl-working-directory">
-                  Working directory (optional)
+                  {t("Working directory (optional)")}
                 </Label>
                 <Input
                   id="wsl-working-directory"
                   value={wslWorkingDirectory}
                   onChange={(e) => setWslWorkingDirectory(e.target.value)}
-                  placeholder="e.g. /home/user/project"
+                  placeholder={t("e.g. /home/user/project")}
                 />
                 <span className="text-xs text-muted-foreground">
-                  Linux path inside the distribution. Leave blank to start in
-                  the WSL user&apos;s home directory.
+                  {t(
+                    "Linux path inside the distribution. Leave blank to start in the WSL user's home directory.",
+                  )}
                 </span>
               </div>
             </div>
@@ -323,7 +330,7 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
             <div className="flex flex-col gap-4">
               <div className="flex flex-col gap-2">
                 <div className="flex items-center justify-between gap-3">
-                  <Label htmlFor="ssh-connection">SSH connection</Label>
+                  <Label htmlFor="ssh-connection">{t("SSH connection")}</Label>
                   <SshConnectionDialog
                     onClosed={() => void loadConnections()}
                     trigger={
@@ -332,7 +339,7 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
                         variant="link"
                         className="h-auto p-0 text-xs"
                       >
-                        Manage connections
+                        {t("Manage connections")}
                       </Button>
                     }
                   />
@@ -345,8 +352,8 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
                     <SelectValue
                       placeholder={
                         connections.length
-                          ? "Choose a connection"
-                          : "No saved connections"
+                          ? t("Choose a connection")
+                          : t("No saved connections")
                       }
                     />
                   </SelectTrigger>
@@ -360,12 +367,14 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
                 </Select>
                 {connections.length === 0 ? (
                   <span className="text-xs text-muted-foreground">
-                    Create a reusable SSH connection before adding this project.
+                    {t(
+                      "Create a reusable SSH connection before adding this project.",
+                    )}
                   </span>
                 ) : null}
               </div>
               <div className="flex flex-col gap-2">
-                <Label htmlFor="remote-path">Remote path</Label>
+                <Label htmlFor="remote-path">{t("Remote path")}</Label>
                 <div className="flex gap-2">
                   <Input
                     id="remote-path"
@@ -379,8 +388,9 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
                   />
                 </div>
                 <span className="text-xs text-muted-foreground">
-                  Browse folders after choosing a connection, or type a remote
-                  working directory manually.
+                  {t(
+                    "Browse folders after choosing a connection, or type a remote working directory manually.",
+                  )}
                 </span>
               </div>
             </div>
@@ -399,10 +409,10 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
             onClick={() => setOpenState(false)}
             disabled={submitting}
           >
-            Cancel
+            {t("Cancel")}
           </Button>
           <Button onClick={handleSubmit} disabled={submitting}>
-            {submitting ? "Creating..." : "Create project"}
+            {submitting ? t("Creating...") : t("Create project")}
           </Button>
         </DialogFooter>
       </DialogContent>

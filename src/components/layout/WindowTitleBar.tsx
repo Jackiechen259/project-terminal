@@ -10,6 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useTranslation } from "@/i18n";
 
 /**
  * Application-owned title bar for the undecorated desktop window. Keeping the
@@ -23,6 +24,7 @@ export function WindowTitleBar({
   sidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
 }) {
+  const { t } = useTranslation();
   const [isMaximized, setIsMaximized] = useState(false);
 
   useEffect(() => {
@@ -53,7 +55,7 @@ export function WindowTitleBar({
   return (
     <header
       className="window-titlebar flex h-10 shrink-0 select-none items-center border-b border-border bg-surface text-foreground"
-      aria-label="Window controls"
+      aria-label={t("Window controls")}
       onMouseDown={startDragging}
       onDoubleClick={toggleMaximize}
     >
@@ -64,14 +66,14 @@ export function WindowTitleBar({
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label={
               sidebarCollapsed
-                ? "Show projects sidebar"
-                : "Hide projects sidebar"
+                ? t("Show projects sidebar")
+                : t("Hide projects sidebar")
             }
             aria-expanded={!sidebarCollapsed}
             title={
               sidebarCollapsed
-                ? "Show projects sidebar"
-                : "Hide projects sidebar"
+                ? t("Show projects sidebar")
+                : t("Hide projects sidebar")
             }
             onMouseDown={(event) => event.stopPropagation()}
             onDoubleClick={(event) => event.stopPropagation()}
@@ -91,7 +93,7 @@ export function WindowTitleBar({
           Project Terminal
         </span>
         <span className="hidden text-[11px] text-muted-foreground sm:inline">
-          Workspace
+          {t("Workspace")}
         </span>
       </div>
 
@@ -101,19 +103,19 @@ export function WindowTitleBar({
         onDoubleClick={(event) => event.stopPropagation()}
       >
         <WindowControl
-          label="Minimize"
+          label={t("Minimize")}
           onClick={() => void getCurrentWindow().minimize()}
         >
           <Minus />
         </WindowControl>
         <WindowControl
-          label={isMaximized ? "Restore" : "Maximize"}
+          label={isMaximized ? t("Restore") : t("Maximize")}
           onClick={toggleMaximize}
         >
           {isMaximized ? <Copy /> : <Square />}
         </WindowControl>
         <WindowControl
-          label="Close"
+          label={t("Close")}
           close
           onClick={() => void getCurrentWindow().close()}
         >

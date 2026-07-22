@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { sshService, type RemoteDirectoryListing } from "@/services";
+import { useTranslation } from "@/i18n";
 
 function parentDirectory(path: string) {
   const trimmed = path.replace(/\/+$/, "") || "/";
@@ -30,6 +31,7 @@ export function RemoteFolderPicker({
   initialPath: string;
   onSelect: (path: string) => void;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [path, setPath] = useState(initialPath || "~");
   const [listing, setListing] = useState<RemoteDirectoryListing | null>(null);
@@ -51,13 +53,13 @@ export function RemoteFolderPicker({
         if (id !== requestId.current) return;
         setError(
           (cause as { message?: string }).message ??
-            "Unable to read remote directories.",
+            t("Unable to read remote directories."),
         );
       } finally {
         if (id === requestId.current) setLoading(false);
       }
     },
-    [connectionId],
+    [connectionId, t],
   );
 
   useEffect(() => {
@@ -75,11 +77,11 @@ export function RemoteFolderPicker({
         type="button"
         variant="secondary"
         size="icon"
-        aria-label="Browse remote folders"
+        aria-label={t("Browse remote folders")}
         title={
           connectionId
-            ? "Browse remote folders"
-            : "Choose an SSH connection first"
+            ? t("Browse remote folders")
+            : t("Choose an SSH connection first")
         }
         disabled={!connectionId}
         onClick={() => setOpen(true)}
@@ -88,10 +90,11 @@ export function RemoteFolderPicker({
       </Button>
       <DialogContent className="sm:max-w-[560px]">
         <DialogHeader>
-          <DialogTitle>Browse remote folders</DialogTitle>
+          <DialogTitle>{t("Browse remote folders")}</DialogTitle>
           <DialogDescription>
-            Select a folder on the connected SSH host. Authentication must be
-            available through the saved connection, SSH agent, or SSH config.
+            {t(
+              "Select a folder on the connected SSH host. Authentication must be available through the saved connection, SSH agent, or SSH config.",
+            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -107,7 +110,7 @@ export function RemoteFolderPicker({
               type="button"
               variant="secondary"
               size="icon"
-              aria-label="Parent remote folder"
+              aria-label={t("Parent remote folder")}
               disabled={loading || !listing || listing.path === "/"}
               onClick={() =>
                 listing && void load(parentDirectory(listing.path))
@@ -116,17 +119,17 @@ export function RemoteFolderPicker({
               <ChevronUp className="h-4 w-4" />
             </Button>
             <Input
-              aria-label="Remote folder path"
+              aria-label={t("Remote folder path")}
               value={path}
               onChange={(event) => setPath(event.target.value)}
-              placeholder="~ or /home/user/project"
+              placeholder={t("~ or /home/user/project")}
             />
             <Button
               type="submit"
               variant="secondary"
               size="icon"
               disabled={loading}
-              aria-label="Open remote path"
+              aria-label={t("Open remote path")}
             >
               <RefreshCw className="h-4 w-4" />
             </Button>
@@ -135,7 +138,7 @@ export function RemoteFolderPicker({
           <div className="h-64 overflow-y-auto rounded-md border border-border">
             {loading ? (
               <div className="p-3 text-sm text-muted-foreground">
-                Reading remote folders…
+                {t("Reading remote folders…")}
               </div>
             ) : error ? (
               <div className="p-3 text-sm text-destructive">{error}</div>
@@ -156,7 +159,7 @@ export function RemoteFolderPicker({
               </div>
             ) : listing ? (
               <div className="p-3 text-sm text-muted-foreground">
-                No subfolders in this directory.
+                {t("No subfolders in this directory.")}
               </div>
             ) : null}
           </div>
@@ -164,7 +167,7 @@ export function RemoteFolderPicker({
 
         <DialogFooter>
           <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
-            Cancel
+            {t("Cancel")}
           </Button>
           <Button
             type="button"
@@ -175,7 +178,7 @@ export function RemoteFolderPicker({
               setOpen(false);
             }}
           >
-            Use this folder
+            {t("Use this folder")}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -2,6 +2,7 @@ import { FolderOpen, Pencil, Plus, ShieldCheck, Trash2 } from "lucide-react";
 
 import { ContextMenu } from "@/components/ui/context-menu";
 import { dispatchAppCommand } from "@/lib/appCommands";
+import { useTranslation } from "@/i18n";
 import { usePlatformStore } from "@/stores/platformStore";
 interface ProjectContextMenuProps {
   project: { id: string; name: string; type: "local" | "ssh" | "wsl" };
@@ -25,15 +26,16 @@ export function ProjectContextMenu({
   onOpenExplorer,
   onClose,
 }: ProjectContextMenuProps) {
+  const { t } = useTranslation();
   const isWindows = usePlatformStore((state) => state.info?.os) === "windows";
   return (
     <ContextMenu
       position={position}
       onClose={onClose}
       items={[
-        { label: "Open project", icon: FolderOpen, onSelect: onOpen },
+        { label: t("Open project"), icon: FolderOpen, onSelect: onOpen },
         {
-          label: "New terminal",
+          label: t("New terminal"),
           shortcut: "Ctrl+Shift+T",
           icon: Plus,
           onSelect: () =>
@@ -42,24 +44,24 @@ export function ProjectContextMenu({
         ...(project.type === "ssh" && onTestSsh
           ? [
               {
-                label: "Test SSH connection",
+                label: t("Test SSH connection"),
                 icon: ShieldCheck,
                 onSelect: onTestSsh,
               },
             ]
           : []),
-        { label: "Edit project", icon: Pencil, onSelect: onEdit },
+        { label: t("Edit project"), icon: Pencil, onSelect: onEdit },
         ...(project.type !== "ssh" && onOpenExplorer && isWindows
           ? [
               {
-                label: "Open in File Explorer",
+                label: t("Open in File Explorer"),
                 icon: FolderOpen,
                 onSelect: onOpenExplorer,
               },
             ]
           : []),
         {
-          label: "Remove project",
+          label: t("Remove project"),
           icon: Trash2,
           destructive: true,
           onSelect: onRemove,

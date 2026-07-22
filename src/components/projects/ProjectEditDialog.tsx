@@ -26,6 +26,7 @@ import { usePlatformStore } from "@/stores/platformStore";
 import { environmentService } from "@/services";
 import type { Project } from "@/types";
 import { RemoteFolderPicker } from "@/components/ssh/RemoteFolderPicker";
+import { useTranslation } from "@/i18n";
 
 export function ProjectEditDialog({
   project,
@@ -36,6 +37,7 @@ export function ProjectEditDialog({
   openState: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const { t } = useTranslation();
   const [name, setName] = useState(project.name);
   const [localPath, setLocalPath] = useState(project.local?.path ?? "");
   const [connectionId, setConnectionId] = useState(
@@ -82,13 +84,13 @@ export function ProjectEditDialog({
   }
 
   async function save() {
-    if (!name.trim()) return setError("Project name is required.");
+    if (!name.trim()) return setError(t("Project name is required."));
     if (project.type === "local" && !localPath.trim())
-      return setError("Local path is required.");
+      return setError(t("Local path is required."));
     if (project.type === "ssh" && (!connectionId || !remotePath.trim()))
-      return setError("SSH connection and remote path are required.");
+      return setError(t("SSH connection and remote path are required."));
     if (project.type === "wsl" && !wslDistribution.trim())
-      return setError("WSL distribution is required.");
+      return setError(t("WSL distribution is required."));
     setSaving(true);
     setError(null);
     try {
@@ -111,7 +113,8 @@ export function ProjectEditDialog({
       onOpenChange(false);
     } catch (cause) {
       setError(
-        (cause as { message?: string }).message ?? "Unable to update project.",
+        (cause as { message?: string }).message ??
+          t("Unable to update project."),
       );
     } finally {
       setSaving(false);
@@ -122,14 +125,16 @@ export function ProjectEditDialog({
     <Dialog open={openState} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[480px]">
         <DialogHeader>
-          <DialogTitle>Edit project</DialogTitle>
+          <DialogTitle>{t("Edit project")}</DialogTitle>
           <DialogDescription>
-            Changing a project does not close its existing terminal sessions.
+            {t(
+              "Changing a project does not close its existing terminal sessions.",
+            )}
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-4 py-2">
           <div className="flex flex-col gap-2">
-            <Label htmlFor="edit-project-name">Project name</Label>
+            <Label htmlFor="edit-project-name">{t("Project name")}</Label>
             <Input
               id="edit-project-name"
               value={name}
@@ -138,7 +143,7 @@ export function ProjectEditDialog({
           </div>
           {project.type === "local" ? (
             <div className="flex flex-col gap-2">
-              <Label htmlFor="edit-project-path">Local path</Label>
+              <Label htmlFor="edit-project-path">{t("Local path")}</Label>
               <div className="flex gap-2">
                 <Input
                   id="edit-project-path"
@@ -158,14 +163,16 @@ export function ProjectEditDialog({
           ) : project.type === "wsl" ? (
             <>
               <div className="flex flex-col gap-2">
-                <Label htmlFor="edit-wsl-distribution">WSL distribution</Label>
+                <Label htmlFor="edit-wsl-distribution">
+                  {t("WSL distribution")}
+                </Label>
                 {distributions.length > 0 ? (
                   <Select
                     value={wslDistribution}
                     onValueChange={setWslDistribution}
                   >
                     <SelectTrigger id="edit-wsl-distribution">
-                      <SelectValue placeholder="Choose a distribution" />
+                      <SelectValue placeholder={t("Choose a distribution")} />
                     </SelectTrigger>
                     <SelectContent>
                       {distributions.map((distro) => (
@@ -188,13 +195,13 @@ export function ProjectEditDialog({
                     id="edit-wsl-distribution"
                     value={wslDistribution}
                     onChange={(event) => setWslDistribution(event.target.value)}
-                    placeholder="e.g. Ubuntu"
+                    placeholder={t("e.g. Ubuntu")}
                   />
                 )}
               </div>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="edit-wsl-working-directory">
-                  Working directory (optional)
+                  {t("Working directory (optional)")}
                 </Label>
                 <Input
                   id="edit-wsl-working-directory"
@@ -202,17 +209,17 @@ export function ProjectEditDialog({
                   onChange={(event) =>
                     setWslWorkingDirectory(event.target.value)
                   }
-                  placeholder="e.g. /home/user/project"
+                  placeholder={t("e.g. /home/user/project")}
                 />
               </div>
             </>
           ) : (
             <>
               <div className="flex flex-col gap-2">
-                <Label>SSH connection</Label>
+                <Label>{t("SSH connection")}</Label>
                 <Select value={connectionId} onValueChange={setConnectionId}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Choose a connection" />
+                    <SelectValue placeholder={t("Choose a connection")} />
                   </SelectTrigger>
                   <SelectContent>
                     {connections.map((connection) => (
@@ -224,7 +231,7 @@ export function ProjectEditDialog({
                 </Select>
               </div>
               <div className="flex flex-col gap-2">
-                <Label htmlFor="edit-remote-path">Remote path</Label>
+                <Label htmlFor="edit-remote-path">{t("Remote path")}</Label>
                 <div className="flex gap-2">
                   <Input
                     id="edit-remote-path"
@@ -252,10 +259,10 @@ export function ProjectEditDialog({
             disabled={saving}
             onClick={() => onOpenChange(false)}
           >
-            Cancel
+            {t("Cancel")}
           </Button>
           <Button disabled={saving} onClick={() => void save()}>
-            {saving ? "Saving…" : "Save changes"}
+            {saving ? t("Saving…") : t("Save changes")}
           </Button>
         </DialogFooter>
       </DialogContent>

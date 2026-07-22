@@ -2,6 +2,7 @@ import { RefreshCw, RotateCcw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/i18n";
 import { requestUpdateCheck } from "@/services/updater";
 import {
   DEFAULT_GENERAL_SETTINGS,
@@ -11,6 +12,9 @@ import {
 const FONT_SIZES = [10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24];
 
 export function GeneralSettingsPanel() {
+  const { t } = useTranslation();
+  const language = useSettingsStore((state) => state.language);
+  const theme = useSettingsStore((state) => state.theme);
   const restoreLastProject = useSettingsStore(
     (state) => state.restoreLastProject,
   );
@@ -29,6 +33,8 @@ export function GeneralSettingsPanel() {
   const reset = useSettingsStore((state) => state.resetGeneralSettings);
 
   const isDefault =
+    language === DEFAULT_GENERAL_SETTINGS.language &&
+    theme === DEFAULT_GENERAL_SETTINGS.theme &&
     restoreLastProject === DEFAULT_GENERAL_SETTINGS.restoreLastProject &&
     confirmCloseTerminal === DEFAULT_GENERAL_SETTINGS.confirmCloseTerminal &&
     showTerminalCount === DEFAULT_GENERAL_SETTINGS.showTerminalCount &&
@@ -39,22 +45,73 @@ export function GeneralSettingsPanel() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
-        <h2 className="text-lg font-semibold">General</h2>
+        <h2 className="text-lg font-semibold">{t("General")}</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Application-wide preferences are saved automatically on this device.
+          {t(
+            "Application-wide preferences are saved automatically on this device.",
+          )}
         </p>
       </div>
 
       <SettingsGroup
-        title="Startup"
-        description="Choose what the application restores when it opens."
+        title={t("Language")}
+        description={t("Choose the language used throughout the application.")}
       >
         <SettingRow
-          title="Restore last project"
-          description="Select the most recently used project after the project list loads."
+          title={t("Interface language")}
+          description={t("Changes apply immediately.")}
+        >
+          <select
+            aria-label={t("Language")}
+            className="h-9 w-36 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+            value={language}
+            onChange={(event) =>
+              update({ language: event.target.value as "en" | "zh-CN" })
+            }
+          >
+            <option value="en">{t("English")}</option>
+            <option value="zh-CN">简体中文</option>
+          </select>
+        </SettingRow>
+      </SettingsGroup>
+
+      <SettingsGroup
+        title={t("Appearance")}
+        description={t("Choose the colors used by the interface and terminal.")}
+      >
+        <SettingRow
+          title={t("Theme")}
+          description={t("Changes apply immediately.")}
+        >
+          <select
+            aria-label={t("Theme")}
+            className="h-9 w-36 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+            value={theme ?? "dark"}
+            onChange={(event) =>
+              update({
+                theme: event.target.value as "dark" | "eye-care" | "light",
+              })
+            }
+          >
+            <option value="dark">{t("Dark")}</option>
+            <option value="eye-care">{t("Warm eye care")}</option>
+            <option value="light">{t("White")}</option>
+          </select>
+        </SettingRow>
+      </SettingsGroup>
+
+      <SettingsGroup
+        title={t("Startup")}
+        description={t("Choose what the application restores when it opens.")}
+      >
+        <SettingRow
+          title={t("Restore last project")}
+          description={t(
+            "Select the most recently used project after the project list loads.",
+          )}
         >
           <SettingSwitch
-            label="Restore last project"
+            label={t("Restore last project")}
             checked={restoreLastProject}
             onCheckedChange={(checked) =>
               update({ restoreLastProject: checked })
@@ -64,15 +121,17 @@ export function GeneralSettingsPanel() {
       </SettingsGroup>
 
       <SettingsGroup
-        title="Terminal"
-        description="Defaults for terminal interaction and rendering."
+        title={t("Terminal")}
+        description={t("Defaults for terminal interaction and rendering.")}
       >
         <SettingRow
-          title="Confirm before closing"
-          description="Ask before closing a terminal that is starting or still running."
+          title={t("Confirm before closing")}
+          description={t(
+            "Ask before closing a terminal that is starting or still running.",
+          )}
         >
           <SettingSwitch
-            label="Confirm before closing a running terminal"
+            label={t("Confirm before closing a running terminal")}
             checked={confirmCloseTerminal}
             onCheckedChange={(checked) =>
               update({ confirmCloseTerminal: checked })
@@ -80,11 +139,11 @@ export function GeneralSettingsPanel() {
           />
         </SettingRow>
         <SettingRow
-          title="Font size"
-          description="Applied immediately to every open terminal."
+          title={t("Font size")}
+          description={t("Applied immediately to every open terminal.")}
         >
           <select
-            aria-label="Terminal font size"
+            aria-label={t("Terminal font size")}
             className="h-9 w-24 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring"
             value={terminalFontSize}
             onChange={(event) =>
@@ -99,11 +158,13 @@ export function GeneralSettingsPanel() {
           </select>
         </SettingRow>
         <SettingRow
-          title="Blinking cursor"
-          description="Animate the block cursor while the terminal is focused."
+          title={t("Blinking cursor")}
+          description={t(
+            "Animate the block cursor while the terminal is focused.",
+          )}
         >
           <SettingSwitch
-            label="Blinking terminal cursor"
+            label={t("Blinking terminal cursor")}
             checked={cursorBlink}
             onCheckedChange={(checked) => update({ cursorBlink: checked })}
           />
@@ -111,15 +172,17 @@ export function GeneralSettingsPanel() {
       </SettingsGroup>
 
       <SettingsGroup
-        title="Projects sidebar"
-        description="Control the information shown beside each project."
+        title={t("Projects sidebar")}
+        description={t("Control the information shown beside each project.")}
       >
         <SettingRow
-          title="Running terminal count"
-          description="Show the number of active terminals next to each project."
+          title={t("Running terminal count")}
+          description={t(
+            "Show the number of active terminals next to each project.",
+          )}
         >
           <SettingSwitch
-            label="Show running terminal count"
+            label={t("Show running terminal count")}
             checked={showTerminalCount}
             onCheckedChange={(checked) =>
               update({ showTerminalCount: checked })
@@ -129,15 +192,17 @@ export function GeneralSettingsPanel() {
       </SettingsGroup>
 
       <SettingsGroup
-        title="Updates"
-        description="Keep Project Terminal up to date from signed GitHub Releases."
+        title={t("Updates")}
+        description={t(
+          "Keep Project Terminal up to date from signed GitHub Releases.",
+        )}
       >
         <SettingRow
-          title="Automatically check for updates"
-          description="Check once whenever the application starts."
+          title={t("Automatically check for updates")}
+          description={t("Check once whenever the application starts.")}
         >
           <SettingSwitch
-            label="Automatically check for updates"
+            label={t("Automatically check for updates")}
             checked={autoCheckForUpdates}
             onCheckedChange={(checked) =>
               update({ autoCheckForUpdates: checked })
@@ -145,11 +210,13 @@ export function GeneralSettingsPanel() {
           />
         </SettingRow>
         <SettingRow
-          title="Check for updates"
-          description="Check now and install a signed update when one is available."
+          title={t("Check for updates")}
+          description={t(
+            "Check now and install a signed update when one is available.",
+          )}
         >
           <Button variant="outline" size="sm" onClick={requestUpdateCheck}>
-            <RefreshCw className="h-4 w-4" /> Check now
+            <RefreshCw className="h-4 w-4" /> {t("Check now")}
           </Button>
         </SettingRow>
       </SettingsGroup>
@@ -157,7 +224,7 @@ export function GeneralSettingsPanel() {
       <div className="flex justify-end border-t pt-5">
         <Button variant="outline" onClick={reset} disabled={isDefault}>
           <RotateCcw className="h-4 w-4" />
-          Restore defaults
+          {t("Restore defaults")}
         </Button>
       </div>
     </div>

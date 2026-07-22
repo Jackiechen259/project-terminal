@@ -36,6 +36,7 @@ import {
 import { joinContextMenuSections } from "@/components/ui/context-menu-items";
 import { dispatchAppCommand, listenForAppCommands } from "@/lib/appCommands";
 import { getAppShortcut, isBrowserShortcut } from "@/lib/keyboardShortcuts";
+import { useTranslation } from "@/i18n";
 import {
   BUILT_IN_PROFILE_PRESETS,
   findProfileByName,
@@ -87,6 +88,7 @@ interface CondaEnvOption {
  * bytes from its own Tauri Channel into its xterm instance.
  */
 export function TerminalWorkspace() {
+  const { t } = useTranslation();
   const activeProjectId = useTerminalStore((s) => s.activeProjectId);
   const projects = useProjectStore((s) => s.projects);
   const tabsById = useTerminalStore((s) => s.tabsById);
@@ -191,7 +193,7 @@ export function TerminalWorkspace() {
             ? profiles
             : await profileService.list(projectId);
         if (availableProfiles.length === 0) {
-          setError("This project has no terminal profiles yet.");
+          setError(t("This project has no terminal profiles yet."));
           return null;
         }
         const profile =
@@ -216,11 +218,11 @@ export function TerminalWorkspace() {
         return tab.id;
       } catch (e) {
         const err = e as { message?: string };
-        setError(err.message ?? "Failed to start terminal");
+        setError(err.message ?? t("Failed to start terminal"));
         return null;
       }
     },
-    [activeProjectId, profiles, registerTab],
+    [activeProjectId, profiles, registerTab, t],
   );
 
   const handleSplitTerminal = useCallback(
@@ -559,13 +561,13 @@ export function TerminalWorkspace() {
         if (!cancelled)
           setError(
             (cause as { message?: string }).message ??
-              "Failed to load terminal profiles",
+              t("Failed to load terminal profiles"),
           );
       });
     return () => {
       cancelled = true;
     };
-  }, [activeProjectId, applyProfiles]);
+  }, [activeProjectId, applyProfiles, t]);
 
   // Detect Conda environments for quick-launch in the + button menu. Only
   // runs for local/WSL projects where a Conda install is reachable from the
@@ -654,11 +656,11 @@ export function TerminalWorkspace() {
         return tab.id;
       } catch (e) {
         const err = e as { message?: string };
-        setError(err.message ?? "Failed to launch preset terminal");
+        setError(err.message ?? t("Failed to launch preset terminal"));
         return null;
       }
     },
-    [activeProjectId, profiles, projects, registerTab],
+    [activeProjectId, profiles, projects, registerTab, t],
   );
 
   // Quick-launch from a saved template. Reuse a same-name project profile so
@@ -693,11 +695,11 @@ export function TerminalWorkspace() {
         return tab.id;
       } catch (e) {
         const err = e as { message?: string };
-        setError(err.message ?? "Failed to launch from template");
+        setError(err.message ?? t("Failed to launch from template"));
         return null;
       }
     },
-    [activeProjectId, profiles, registerTab],
+    [activeProjectId, profiles, registerTab, t],
   );
 
   function handleSessionId(tabId: string, sessionId: string) {
@@ -803,12 +805,12 @@ export function TerminalWorkspace() {
           .catch((cause) =>
             setError(
               (cause as { message?: string }).message ??
-                "Failed to refresh terminal profiles",
+                t("Failed to refresh terminal profiles"),
             ),
           );
       }
     });
-  }, [activeProjectId, applyProfiles, handleNewTerminal]);
+  }, [activeProjectId, applyProfiles, handleNewTerminal, t]);
 
   useEffect(() => {
     const isEditableControl = (target: EventTarget | null) => {
@@ -893,7 +895,7 @@ export function TerminalWorkspace() {
         onPointerUp={handleTabPointerUp}
         onPointerCancel={handleTabPointerCancel}
         className={cn(
-          "group relative flex shrink-0 items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground data-[dragging=true]:opacity-50",
+          "group relative flex shrink-0 cursor-default items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground data-[dragging=true]:opacity-50",
           id === activeTabId && "bg-accent text-accent-foreground",
         )}
         onContextMenu={(event) => {
@@ -956,7 +958,7 @@ export function TerminalWorkspace() {
             }
           }}
           className="opacity-50 hover:opacity-100"
-          aria-label="Close tab"
+          aria-label={t("Close tab")}
         >
           <X className="h-3.5 w-3.5" />
         </span>
@@ -1029,7 +1031,7 @@ export function TerminalWorkspace() {
     quickLaunchItems,
     [
       {
-        label: "Manage profiles…",
+        label: t("Manage profiles…"),
         icon: Settings2,
         onSelect: () =>
           dispatchAppCommand({
@@ -1062,7 +1064,7 @@ export function TerminalWorkspace() {
         <div
           ref={tabListRef}
           role="tablist"
-          aria-label="Terminal tabs"
+          aria-label={t("Terminal tabs")}
           className="app-scrollbar terminal-tab-scrollbar flex h-full min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden"
           onWheel={(event) => {
             const tabList = event.currentTarget;
@@ -1077,7 +1079,7 @@ export function TerminalWorkspace() {
         >
           {tabIds.length === 0 ? (
             <span className="shrink-0 px-2 text-xs text-muted-foreground">
-              {activeProject ? "No terminals open" : "Select a project"}
+              {activeProject ? t("No terminals open") : t("Select a project")}
             </span>
           ) : (
             <>
@@ -1085,18 +1087,18 @@ export function TerminalWorkspace() {
                 <div
                   ref={splitTabGroupRef}
                   role="group"
-                  aria-label="Split terminal group"
+                  aria-label={t("Split terminal group")}
                   className="flex shrink-0 items-center gap-1 rounded-lg border border-primary/60 bg-accent/40 p-1 shadow-sm"
                 >
                   <span className="px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                    Split
+                    {t("Split")}
                   </span>
                   {validSplitView.tabIds.map(renderTerminalTab)}
                   <button
                     type="button"
                     className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-destructive/15 hover:text-destructive"
-                    aria-label="Close split group"
-                    title="Close both terminals"
+                    aria-label={t("Close split group")}
+                    title={t("Close both terminals")}
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={(event) => {
                       event.stopPropagation();
@@ -1119,8 +1121,8 @@ export function TerminalWorkspace() {
             onValueChange={setSelectedProfileId}
           >
             <SelectTrigger
-              aria-label="Terminal profile"
-              title="Profile used by the + button"
+              aria-label={t("Terminal profile")}
+              title={t("Profile used by the + button")}
               className="group h-7 w-36 shrink-0 gap-1.5 rounded-md border-border/70 bg-background/70 px-2 text-xs font-medium shadow-sm transition-all hover:border-primary/40 hover:bg-accent/50 focus:ring-1 focus:ring-primary/50 focus:ring-offset-0 [&>svg:last-child]:h-3.5 [&>svg:last-child]:w-3.5 [&>svg:last-child]:transition-transform data-[state=open]:border-primary/50 data-[state=open]:bg-accent/60 data-[state=open]:[&>svg:last-child]:rotate-180"
             >
               {selectedProfile?.isDefault ? (
@@ -1128,9 +1130,9 @@ export function TerminalWorkspace() {
               ) : (
                 <TerminalIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
               )}
-              <SelectValue placeholder="Choose profile">
+              <SelectValue placeholder={t("Choose profile")}>
                 <span className="block truncate">
-                  {selectedProfile?.name ?? "Choose profile"}
+                  {selectedProfile?.name ?? t("Choose profile")}
                 </span>
               </SelectValue>
             </SelectTrigger>
@@ -1156,8 +1158,8 @@ export function TerminalWorkspace() {
           <Button
             variant="ghost"
             size="icon"
-            aria-label="Exit split view"
-            title="Exit split view"
+            aria-label={t("Exit split view")}
+            title={t("Exit split view")}
             className="h-7 w-7 text-muted-foreground"
             onClick={() => activeProjectId && clearSplitView(activeProjectId)}
           >
@@ -1167,8 +1169,8 @@ export function TerminalWorkspace() {
         <Button
           variant="ghost"
           size="icon"
-          aria-label="New terminal"
-          title="New terminal (right-click for presets)"
+          aria-label={t("New terminal")}
+          title={t("New terminal (right-click for presets)")}
           className="h-7 w-7 text-muted-foreground"
           disabled={!activeProject}
           onClick={() =>
@@ -1287,7 +1289,7 @@ export function TerminalWorkspace() {
           onClose={() => setMenuPosition(null)}
           items={[
             {
-              label: "New terminal",
+              label: t("New terminal"),
               shortcut: "Ctrl+Shift+T",
               icon: Plus,
               disabled: !activeProject,
@@ -1295,13 +1297,13 @@ export function TerminalWorkspace() {
                 activeProject && void handleNewTerminal(activeProject.id),
             },
             {
-              label: "Split terminal side by side",
+              label: t("Split terminal side by side"),
               icon: Columns2,
               disabled: !activeProject || !activeTabId,
               onSelect: () => void handleSplitTerminal("side-by-side"),
             },
             {
-              label: "Split terminal top and bottom",
+              label: t("Split terminal top and bottom"),
               icon: Rows2,
               disabled: !activeProject || !activeTabId,
               onSelect: () => void handleSplitTerminal("stacked"),
@@ -1309,7 +1311,7 @@ export function TerminalWorkspace() {
             ...(validSplitView
               ? [
                   {
-                    label: "Exit split view",
+                    label: t("Exit split view"),
                     icon: Square,
                     onSelect: () =>
                       activeProjectId && clearSplitView(activeProjectId),
@@ -1317,7 +1319,7 @@ export function TerminalWorkspace() {
                 ]
               : []),
             {
-              label: "Close active terminal",
+              label: t("Close active terminal"),
               shortcut: "Ctrl+Shift+W",
               icon: X,
               disabled: !activeTabId,

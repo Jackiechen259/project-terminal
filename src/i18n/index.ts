@@ -1,0 +1,354 @@
+import { useCallback } from "react";
+
+import { type AppLanguage, useSettingsStore } from "@/stores/settingsStore";
+
+type TranslationParams = Record<string, string | number>;
+
+const zhCN: Record<string, string> = {
+  Language: "语言",
+  "Choose the language used throughout the application.":
+    "选择应用界面使用的语言。",
+  English: "English",
+  "Simplified Chinese": "简体中文",
+  "Interface language": "界面语言",
+  "Changes apply immediately.": "更改会立即生效。",
+  Appearance: "外观",
+  "Choose the colors used by the interface and terminal.":
+    "选择界面和终端使用的颜色。",
+  Theme: "主题",
+  Dark: "深色",
+  "Warm eye care": "米黄护眼",
+  White: "白色",
+  General: "通用",
+  "Application-wide preferences are saved automatically on this device.":
+    "应用级偏好设置会自动保存在此设备上。",
+  Startup: "启动",
+  "Choose what the application restores when it opens.":
+    "选择应用启动时恢复的内容。",
+  "Restore last project": "恢复上次项目",
+  "Select the most recently used project after the project list loads.":
+    "项目列表加载后自动选择最近使用的项目。",
+  Terminal: "终端",
+  "Defaults for terminal interaction and rendering.":
+    "终端交互与显示的默认设置。",
+  "Confirm before closing": "关闭前确认",
+  "Ask before closing a terminal that is starting or still running.":
+    "关闭正在启动或运行中的终端前进行确认。",
+  "Confirm before closing a running terminal": "关闭运行中的终端前确认",
+  "Font size": "字体大小",
+  "Applied immediately to every open terminal.": "立即应用到所有已打开的终端。",
+  "Terminal font size": "终端字体大小",
+  "Blinking cursor": "光标闪烁",
+  "Animate the block cursor while the terminal is focused.":
+    "终端获得焦点时让块状光标闪烁。",
+  "Blinking terminal cursor": "终端光标闪烁",
+  "Projects sidebar": "项目侧边栏",
+  "Control the information shown beside each project.":
+    "控制每个项目旁显示的信息。",
+  "Running terminal count": "运行中终端数量",
+  "Show the number of active terminals next to each project.":
+    "在每个项目旁显示活动终端数量。",
+  "Show running terminal count": "显示运行中终端数量",
+  Updates: "更新",
+  "Keep Project Terminal up to date from signed GitHub Releases.":
+    "通过签名的 GitHub Releases 保持 Project Terminal 为最新版本。",
+  "Automatically check for updates": "自动检查更新",
+  "Check once whenever the application starts.": "每次应用启动时检查一次。",
+  "Check for updates": "检查更新",
+  "Check now and install a signed update when one is available.":
+    "立即检查，并在有可用签名更新时进行安装。",
+  "Check now": "立即检查",
+  "Restore defaults": "恢复默认设置",
+  Workspace: "工作区",
+  "Show projects sidebar": "显示项目侧边栏",
+  "Hide projects sidebar": "隐藏项目侧边栏",
+  Minimize: "最小化",
+  Restore: "还原",
+  Maximize: "最大化",
+  Close: "关闭",
+  Settings: "设置",
+  "Manage application-wide preferences.": "管理应用级偏好设置。",
+  "Terminal profiles": "终端配置",
+  "Profile templates": "配置模板",
+  "Configure terminal profiles for each project.": "配置每个项目使用的终端。",
+  "Create reusable profile templates to quickly add to any project.":
+    "创建可复用的配置模板，快速添加到任意项目。",
+  Project: "项目",
+  "Select a project": "选择项目",
+  "Loading profiles…": "正在加载配置…",
+  "No profiles yet.": "暂无配置。",
+  "Add a project to create profiles.": "添加项目后即可创建配置。",
+  "New profile": "新建配置",
+  Templates: "模板",
+  "No templates yet.": "暂无模板。",
+  "New template": "新建模板",
+  "Preferences are stored locally and applied automatically.":
+    "偏好设置保存在本地并自动应用。",
+  "Select a profile to edit it, or create a new one.":
+    "选择一个配置进行编辑，或创建新配置。",
+};
+
+const zhCNWorkspace: Record<string, string> = {
+  "Window controls": "窗口控制",
+  "Add project": "添加项目",
+  "Create a local, WSL, or SSH remote project. Each project gets its own terminal tab group.":
+    "创建本地、WSL 或 SSH 远程项目。每个项目都有独立的终端标签组。",
+  "Project name": "项目名称",
+  Type: "类型",
+  "Local folder": "本地文件夹",
+  "WSL distribution": "WSL 发行版",
+  "SSH remote": "SSH 远程",
+  "Local path": "本地路径",
+  "Browse folder": "浏览文件夹",
+  "Detecting distributions...": "正在检测发行版...",
+  "Choose a distribution": "选择发行版",
+  "e.g. Ubuntu": "例如 Ubuntu",
+  "No distributions detected. Type a name manually or install WSL via `wsl --install`.":
+    "未检测到发行版。请手动输入名称，或通过 `wsl --install` 安装 WSL。",
+  "Working directory (optional)": "工作目录（可选）",
+  "e.g. /home/user/project": "例如 /home/user/project",
+  "Linux path inside the distribution. Leave blank to start in the WSL user's home directory.":
+    "发行版内的 Linux 路径。留空则从 WSL 用户的主目录启动。",
+  "SSH connection": "SSH 连接",
+  "Manage connections": "管理连接",
+  "Choose a connection": "选择连接",
+  "No saved connections": "没有已保存的连接",
+  "Create a reusable SSH connection before adding this project.":
+    "添加此项目前，请先创建可复用的 SSH 连接。",
+  "Remote path": "远程路径",
+  "Browse folders after choosing a connection, or type a remote working directory manually.":
+    "选择连接后浏览文件夹，或手动输入远程工作目录。",
+  Cancel: "取消",
+  "Creating...": "正在创建...",
+  "Create project": "创建项目",
+  "Project name is required": "请输入项目名称",
+  "Local path is required": "请输入本地路径",
+  "Choose an SSH connection first": "请先选择 SSH 连接",
+  "Remote path is required": "请输入远程路径",
+  "Select a WSL distribution": "请选择 WSL 发行版",
+  "Failed to create project": "创建项目失败",
+  "Edit project": "编辑项目",
+  "Changing a project does not close its existing terminal sessions.":
+    "修改项目不会关闭其现有终端会话。",
+  "Project name is required.": "请输入项目名称。",
+  "Local path is required.": "请输入本地路径。",
+  "SSH connection and remote path are required.": "请输入 SSH 连接和远程路径。",
+  "WSL distribution is required.": "请输入 WSL 发行版。",
+  "Unable to update project.": "无法更新项目。",
+  "Saving…": "正在保存…",
+  "Save changes": "保存更改",
+  "Browse remote folders": "浏览远程文件夹",
+  "Unable to read remote directories.": "无法读取远程目录。",
+  "Select a folder on the connected SSH host. Authentication must be available through the saved connection, SSH agent, or SSH config.":
+    "选择已连接 SSH 主机上的文件夹。身份验证需通过已保存的连接、SSH 代理或 SSH 配置完成。",
+  "Parent remote folder": "上一级远程文件夹",
+  "Remote folder path": "远程文件夹路径",
+  "~ or /home/user/project": "~ 或 /home/user/project",
+  "Open remote path": "打开远程路径",
+  "Reading remote folders…": "正在读取远程文件夹…",
+  "No subfolders in this directory.": "此目录中没有子文件夹。",
+  "Use this folder": "使用此文件夹",
+  "SSH connections": "SSH 连接",
+  "Reusable connection settings. Passwords and private-key contents are never stored.":
+    "可复用的连接设置。密码和私钥内容不会被保存。",
+  "Detecting OpenSSH client…": "正在检测 OpenSSH 客户端…",
+  "OpenSSH: {path}": "OpenSSH：{path}",
+  "OpenSSH client was not found. Install Windows OpenSSH Client to connect.":
+    "未找到 OpenSSH 客户端。请安装 Windows OpenSSH 客户端后再连接。",
+  "Detect SSH client again": "重新检测 SSH 客户端",
+  "New connection": "新建连接",
+  "Create or select an SSH connection.": "创建或选择一个 SSH 连接。",
+  Remove: "移除",
+  Test: "测试",
+  "Working…": "处理中…",
+  "Save connection": "保存连接",
+  "Username is required unless you use a system SSH config alias.":
+    "除非使用系统 SSH 配置别名，否则必须填写用户名。",
+  "Key authentication requires an identity file path.":
+    "密钥验证需要填写私钥文件路径。",
+  "Connection saved.": "连接已保存。",
+  "Unable to save SSH connection.": "无法保存 SSH 连接。",
+  "SSH connection test failed.": "SSH 连接测试失败。",
+  'Remove SSH connection "{name}"?': "移除 SSH 连接“{name}”？",
+  "Connection removed.": "连接已移除。",
+  "Unable to remove SSH connection.": "无法移除 SSH 连接。",
+  "Connection name": "连接名称",
+  "GPU server": "GPU 服务器",
+  "SSH config alias": "SSH 配置别名",
+  Host: "主机",
+  Port: "端口",
+  Username: "用户名",
+  "Optional; read from SSH config": "可选；从 SSH 配置读取",
+  Authentication: "身份验证",
+  "SSH agent (recommended)": "SSH 代理（推荐）",
+  "Private key file": "私钥文件",
+  "Password in terminal": "在终端中输入密码",
+  "Keyboard interactive": "键盘交互验证",
+  "System SSH config": "系统 SSH 配置",
+  "Identity file path": "私钥文件路径",
+  "Use the system SSH agent": "使用系统 SSH 代理",
+  "Connection options": "连接选项",
+  "Connect timeout (s)": "连接超时（秒）",
+  "Keepalive interval (s)": "保活间隔（秒）",
+  "Keepalive count": "保活次数",
+  "Jump host": "跳板主机",
+  "Jump port": "跳板端口",
+  "Jump username": "跳板用户名",
+  Optional: "可选",
+  "Known hosts file": "已知主机文件",
+  "Use system default": "使用系统默认值",
+  "Extra OpenSSH arguments (one argv item per line)":
+    "额外 OpenSSH 参数（每行一个参数）",
+  "Strict host-key checking": "严格检查主机密钥",
+  "Keep enabled to only trust known keys. If you turn it off, OpenSSH still asks before accepting a new key and this app never auto-accepts it; changed keys remain blocked.":
+    "保持开启以仅信任已知密钥。关闭后，OpenSSH 在接受新密钥前仍会询问，本应用不会自动接受；已更改的密钥仍会被阻止。",
+  "Only the key path is saved. Passphrases are entered directly in the terminal.":
+    "只保存密钥路径。密码短语请直接在终端中输入。",
+  "Terminal tabs": "终端标签页",
+  "New terminal": "新建终端",
+  "New terminal (right-click for presets)": "新建终端（右键查看预设）",
+  "Choose profile": "选择配置",
+  "Manage profiles…": "管理配置…",
+  "No terminals open": "没有打开的终端",
+  "This project has no terminal profiles yet.": "此项目还没有终端配置。",
+  "Split terminal group": "拆分终端组",
+  "Split terminal side by side": "左右拆分终端",
+  "Split terminal top and bottom": "上下拆分终端",
+  "Exit split view": "退出拆分视图",
+  "Close active terminal": "关闭当前终端",
+  "Close both terminals": "关闭两个终端",
+  "Close split group": "关闭拆分组",
+  "Close tab": "关闭标签页",
+  Split: "拆分",
+  "Open in File Explorer": "在文件资源管理器中打开",
+  "Open project": "打开项目",
+  "Test SSH connection": "测试 SSH 连接",
+  "Testing SSH connection…": "正在测试 SSH 连接…",
+  "SSH test failed: {error}": "SSH 测试失败：{error}",
+  "Unknown error": "未知错误",
+  "Remove project": "移除项目",
+  'Remove project "{name}"?': "移除项目“{name}”？",
+  Projects: "项目",
+  "New collection": "新建分组",
+  "Loading projects…": "正在加载项目…",
+  "No projects yet.": "暂无项目。",
+  "Use the + button to add one.": "使用 + 按钮添加项目。",
+  "Expand collection": "展开分组",
+  "Rename collection": "重命名分组",
+  "Delete collection": "删除分组",
+  "Drag projects here": "将项目拖到这里",
+  "Drag here to ungroup": "拖到这里取消分组",
+  "Collection name": "分组名称",
+  "Create collection": "创建分组",
+  "Terminal error": "终端错误",
+  "Failed to start terminal": "启动终端失败",
+  "Failed to launch preset terminal": "启动预设终端失败",
+  "Failed to launch from template": "从模板启动终端失败",
+  "Failed to load terminal profiles": "加载终端配置失败",
+  "Failed to refresh terminal profiles": "刷新终端配置失败",
+  "Profile name": "配置名称",
+  Shell: "Shell",
+  "Shell executable": "Shell 可执行文件",
+  "Remote shell command": "远程 Shell 命令",
+  "WSL working directory": "WSL 工作目录",
+  "Optional Linux path": "可选的 Linux 路径",
+  "Shell arguments": "Shell 参数",
+  "One argument per line": "每行一个参数",
+  Environment: "环境",
+  "Environment type": "环境类型",
+  "Manual command": "手动命令",
+  "Shell hook": "Shell 钩子",
+  "Environment name": "环境名称",
+  "Alternative to name": "名称的替代值",
+  "Environment path": "环境路径",
+  "Optional installation folder": "可选的安装目录",
+  "Conda root": "Conda 根目录",
+  "Conda executable": "Conda 可执行文件",
+  "Optional path to conda.exe": "可选的 conda.exe 路径",
+  "Activation method": "激活方式",
+  "Activation command": "激活命令",
+  "Startup commands": "启动命令",
+  "One command per line": "每行一个命令",
+  "Command to run after opening the shell": "打开 Shell 后运行的命令",
+  "Environment variables": "环境变量",
+  "One NAME=value pair per line": "每行一个 NAME=value",
+  "Show this profile in the + button context menu":
+    "在 + 按钮右键菜单中显示此配置",
+  "Use this as the default profile for new terminals":
+    "将此配置用作新终端的默认配置",
+  "Profile used by the + button": "+ 按钮使用的配置",
+  "This profile is used only by the selected project.":
+    "此配置仅供所选项目使用。",
+  "Edit profile": "编辑配置",
+  "Set up built-in profile": "设置内置配置",
+  "Delete profile": "删除配置",
+  Save: "保存",
+  "e.g. Python environment": "例如 Python 环境",
+  "Optional label": "可选标签",
+  "Settings sections": "设置分类",
+  "Hidden from + menu": "已从 + 菜单隐藏",
+  "Default profile": "默认配置",
+  "Built-in profile": "内置配置",
+  "e.g. /usr/bin/bash": "例如 /usr/bin/bash",
+  "e.g. C:\\Tools\\shell.exe": "例如 C:\\Tools\\shell.exe",
+  "e.g. my-env": "例如 my-env",
+  "e.g. .venv": "例如 .venv",
+  "Terminal profile": "终端配置",
+  "Save profile": "保存配置",
+  "Save to customize this built-in profile for the selected project.":
+    "保存后即可为所选项目自定义此内置配置。",
+  "Activate this Conda environment when the terminal opens":
+    "终端打开时激活此 Conda 环境",
+  "The application only activates an existing environment; it never changes it.":
+    "应用只会激活现有环境，不会修改环境。",
+  "Collapse collection": "收起分组",
+  Ungrouped: "未分组",
+  'Delete collection "{name}"? Projects inside will not be removed.':
+    "删除分组“{name}”？其中的项目不会被删除。",
+  "Group related projects together. Drag projects into the collection from the sidebar.":
+    "将相关项目整理到一起。可从侧边栏将项目拖入分组。",
+  "Checking for updates": "正在检查更新",
+  "Looking for a newer signed release…": "正在查找较新的签名版本…",
+  "You’re up to date": "已是最新版本",
+  "You already have the latest version of Project Terminal.":
+    "你已安装 Project Terminal 的最新版本。",
+  "Update available": "有可用更新",
+  "Install and restart": "安装并重启",
+  "Project Terminal {version} is ready to install.":
+    "Project Terminal {version} 已可安装。",
+  Later: "稍后",
+  "Downloading {downloaded}{total}…": "正在下载 {downloaded}{total}…",
+  " of {total}": " / {total}",
+  "Installing…": "正在安装…",
+  "Could not check for updates": "无法检查更新",
+  "Check your internet connection and try again.": "请检查网络连接后重试。",
+  "The update could not be installed. Please try again later.":
+    "无法安装更新，请稍后重试。",
+};
+
+const dictionaries: Record<AppLanguage, Record<string, string>> = {
+  en: {},
+  "zh-CN": { ...zhCN, ...zhCNWorkspace },
+};
+
+export function translate(
+  language: AppLanguage,
+  source: string,
+  params?: TranslationParams,
+) {
+  const translated = dictionaries[language]?.[source] ?? source;
+  if (!params) return translated;
+  return translated.replace(/\{(\w+)\}/g, (match, key: string) =>
+    params[key] === undefined ? match : String(params[key]),
+  );
+}
+
+export function useTranslation() {
+  const language = useSettingsStore((state) => state.language);
+  const t = useCallback(
+    (source: string, params?: TranslationParams) =>
+      translate(language, source, params),
+    [language],
+  );
+  return { language, t };
+}

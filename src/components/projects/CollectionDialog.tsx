@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useTranslation } from "@/i18n";
 import { useCollectionStore } from "@/stores/collectionStore";
 import type { ProjectCollection } from "@/stores/collectionStore";
 
@@ -32,6 +33,7 @@ export function CollectionDialog({
   openState?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
+  const { t } = useTranslation();
   const isRename = Boolean(collection);
   const [internalOpen, setInternalOpen] = useState(false);
   const open = openState ?? internalOpen;
@@ -85,16 +87,17 @@ export function CollectionDialog({
       <DialogContent className="sm:max-w-[400px]">
         <DialogHeader>
           <DialogTitle>
-            {isRename ? "Rename collection" : "New collection"}
+            {isRename ? t("Rename collection") : t("New collection")}
           </DialogTitle>
           <DialogDescription>
-            Group related projects together. Drag projects into the collection
-            from the sidebar.
+            {t(
+              "Group related projects together. Drag projects into the collection from the sidebar.",
+            )}
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-2 py-2">
-          <Label htmlFor="collection-name">Collection name</Label>
+          <Label htmlFor="collection-name">{t("Collection name")}</Label>
           <Input
             ref={inputRef}
             id="collection-name"
@@ -115,10 +118,14 @@ export function CollectionDialog({
             onClick={() => setOpen(false)}
             disabled={submitting}
           >
-            Cancel
+            {t("Cancel")}
           </Button>
           <Button onClick={handleSubmit} disabled={submitting || !name.trim()}>
-            {submitting ? "Saving..." : isRename ? "Save" : "Create collection"}
+            {submitting
+              ? t("Saving…")
+              : isRename
+                ? t("Save")
+                : t("Create collection")}
           </Button>
         </DialogFooter>
       </DialogContent>

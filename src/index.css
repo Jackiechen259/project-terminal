@@ -3,7 +3,9 @@
 @tailwind utilities;
 
 @layer base {
-  :root {
+  :root,
+  :root[data-theme="dark"] {
+    color-scheme: dark;
     /* shadcn/ui standard tokens (zinc base, dark theme by default). */
     --background: 240 10% 3.9%;
     --foreground: 0 0% 98%;
@@ -39,8 +41,82 @@
     --bg: 240 10% 3.9%;
     --surface: 240 6% 10%;
     --surface-2: 240 5% 14%;
-    --warn: 47.9% 53.1%;
-    --ok: 142.1% 70.6%;
+    --warn: 47.9 95.8% 53.1%;
+    --ok: 142.1 70.6% 45.3%;
+    --scrollbar: 240 5% 31%;
+    --scrollbar-hover: 240 5% 45%;
+    --frame-edge: 240 5% 20%;
+    --frame-accent-1: 210 45% 47%;
+    --frame-accent-2: 270 40% 48%;
+    --titlebar-shadow: 240 5% 4%;
+  }
+
+  :root[data-theme="eye-care"] {
+    color-scheme: light;
+    --background: 43 45% 93%;
+    --foreground: 35 18% 18%;
+    --card: 42 42% 96%;
+    --card-foreground: 35 18% 18%;
+    --popover: 42 42% 97%;
+    --popover-foreground: 35 18% 18%;
+    --primary: 33 25% 26%;
+    --primary-foreground: 45 50% 97%;
+    --secondary: 40 30% 87%;
+    --secondary-foreground: 35 20% 22%;
+    --muted: 40 25% 88%;
+    --muted-foreground: 35 12% 42%;
+    --accent: 38 30% 84%;
+    --accent-foreground: 35 22% 20%;
+    --destructive: 2 63% 43%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 38 22% 78%;
+    --input: 38 22% 78%;
+    --ring: 33 34% 45%;
+    --bg: 43 45% 93%;
+    --surface: 42 36% 90%;
+    --surface-2: 40 28% 85%;
+    --warn: 40 85% 38%;
+    --ok: 140 45% 34%;
+    --scrollbar: 36 16% 58%;
+    --scrollbar-hover: 34 18% 44%;
+    --frame-edge: 38 22% 72%;
+    --frame-accent-1: 200 38% 48%;
+    --frame-accent-2: 32 43% 48%;
+    --titlebar-shadow: 35 18% 66%;
+  }
+
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    --primary: 240 5.9% 10%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 72.2% 50.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 240 5% 64.9%;
+    --bg: 0 0% 100%;
+    --surface: 240 20% 98%;
+    --surface-2: 240 4.8% 95.9%;
+    --warn: 38 92% 36%;
+    --ok: 142 56% 32%;
+    --scrollbar: 240 5% 65%;
+    --scrollbar-hover: 240 4% 46%;
+    --frame-edge: 240 6% 85%;
+    --frame-accent-1: 210 55% 50%;
+    --frame-accent-2: 270 42% 54%;
+    --titlebar-shadow: 240 6% 80%;
   }
 
   html,
@@ -66,7 +142,7 @@
   .app-scrollbar,
   .xterm .xterm-viewport {
     scrollbar-width: thin;
-    scrollbar-color: hsl(240 5% 31%) transparent;
+    scrollbar-color: hsl(var(--scrollbar)) transparent;
   }
 
   .app-scrollbar::-webkit-scrollbar,
@@ -85,13 +161,13 @@
     min-height: 36px;
     border: 3px solid transparent;
     border-radius: 999px;
-    background: hsl(240 5% 31% / 0.8);
+    background: hsl(var(--scrollbar) / 0.8);
     background-clip: padding-box;
   }
 
   .app-scrollbar::-webkit-scrollbar-thumb:hover,
   .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
-    background-color: hsl(240 5% 45% / 0.9);
+    background-color: hsl(var(--scrollbar-hover) / 0.9);
   }
 
   .app-scrollbar::-webkit-scrollbar-corner,
@@ -134,20 +210,20 @@
   pointer-events: none;
   background: linear-gradient(
     90deg,
-    hsl(240 5% 20%),
-    hsl(210 45% 47% / 0.7) 42%,
-    hsl(270 40% 48% / 0.55) 62%,
-    hsl(240 5% 20%)
+    hsl(var(--frame-edge)),
+    hsl(var(--frame-accent-1) / 0.7) 42%,
+    hsl(var(--frame-accent-2) / 0.55) 62%,
+    hsl(var(--frame-edge))
   );
   box-shadow: 0 1px 12px hsl(220 70% 55% / 0.15);
 }
 
-/* Desktop window chrome. The controls deliberately use the familiar Windows
-   hit areas while sharing the application's dark surface and blue accent. */
+/* Desktop window chrome. The controls deliberately use familiar Windows hit
+   areas while sharing the active theme's surface and accent colors. */
 .window-titlebar {
   position: relative;
   z-index: 30;
-  box-shadow: 0 1px 0 hsl(240 5% 4% / 0.65);
+  box-shadow: 0 1px 0 hsl(var(--titlebar-shadow) / 0.65);
 }
 
 .window-control {

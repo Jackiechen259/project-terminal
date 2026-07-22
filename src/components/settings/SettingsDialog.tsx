@@ -29,6 +29,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { dispatchAppCommand, listenForAppCommands } from "@/lib/appCommands";
+import { useTranslation } from "@/i18n";
 import {
   BUILT_IN_PROFILE_PRESETS,
   type BuiltInProfilePreset,
@@ -271,6 +272,7 @@ function parseVariables(value: string): Record<string, string> | undefined {
 
 /** Settings surface for project-scoped terminal profiles. */
 export function SettingsDialog() {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [section, setSection] = useState<SettingsSection>("general");
   const projects = useProjectStore((s) => s.projects);
@@ -540,30 +542,32 @@ export function SettingsDialog() {
       <Button
         variant="secondary"
         size="icon"
-        aria-label="Settings"
+        aria-label={t("Settings")}
         onClick={() => setOpen(true)}
       >
         <Settings className="h-4 w-4" />
       </Button>
       <DialogContent className="flex h-[min(720px,calc(100vh-2rem))] max-w-5xl flex-col gap-0 overflow-hidden p-0">
         <DialogHeader className="border-b px-6 py-5 pr-12">
-          <DialogTitle>Settings</DialogTitle>
+          <DialogTitle>{t("Settings")}</DialogTitle>
           <DialogDescription>
             {section === "general"
-              ? "Manage application-wide preferences."
+              ? t("Manage application-wide preferences.")
               : section === "templates"
-                ? "Create reusable profile templates to quickly add to any project."
-                : "Configure terminal profiles for each project."}
+                ? t(
+                    "Create reusable profile templates to quickly add to any project.",
+                  )
+                : t("Configure terminal profiles for each project.")}
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex min-h-0 flex-1">
           <aside className="flex w-56 shrink-0 flex-col border-r bg-surface p-3">
-            <nav className="space-y-1" aria-label="Settings sections">
+            <nav className="space-y-1" aria-label={t("Settings sections")}>
               <SettingsNavItem
                 active={section === "general"}
                 icon={SlidersHorizontal}
-                label="General"
+                label={t("General")}
                 onClick={() => {
                   setSection("general");
                   setError(null);
@@ -572,13 +576,13 @@ export function SettingsDialog() {
               <SettingsNavItem
                 active={section === "profiles"}
                 icon={SquareTerminal}
-                label="Terminal profiles"
+                label={t("Terminal profiles")}
                 onClick={() => setSection("profiles")}
               />
               <SettingsNavItem
                 active={section === "templates"}
                 icon={LayoutTemplate}
-                label="Profile templates"
+                label={t("Profile templates")}
                 onClick={() => {
                   setSection("templates");
                   setError(null);
@@ -589,7 +593,7 @@ export function SettingsDialog() {
             {section === "profiles" ? (
               <div className="mt-4 flex min-h-0 flex-1 flex-col border-t pt-4">
                 <span className="px-2 pb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Project
+                  {t("Project")}
                 </span>
                 {projects.length ? (
                   <Select
@@ -597,7 +601,7 @@ export function SettingsDialog() {
                     onValueChange={selectProject}
                   >
                     <SelectTrigger className="mb-3 h-9">
-                      <SelectValue placeholder="Select a project" />
+                      <SelectValue placeholder={t("Select a project")} />
                     </SelectTrigger>
                     <SelectContent>
                       {projects.map((project) => (
@@ -611,7 +615,7 @@ export function SettingsDialog() {
                 <div className="app-scrollbar min-h-0 flex-1 space-y-1 overflow-y-auto">
                   {loading ? (
                     <p className="px-2 py-3 text-xs text-muted-foreground">
-                      Loading profiles…
+                      {t("Loading profiles…")}
                     </p>
                   ) : null}
                   {!loading &&
@@ -634,13 +638,13 @@ export function SettingsDialog() {
                         {profile.showInContextMenu === false ? (
                           <EyeOff
                             className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
-                            aria-label="Hidden from + menu"
+                            aria-label={t("Hidden from + menu")}
                           />
                         ) : null}
                         {profile.isDefault ? (
                           <Check
                             className="h-3.5 w-3.5 shrink-0 text-ok"
-                            aria-label="Default profile"
+                            aria-label={t("Default profile")}
                           />
                         ) : null}
                       </button>
@@ -667,7 +671,7 @@ export function SettingsDialog() {
                       >
                         <Sparkles
                           className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
-                          aria-label="Built-in profile"
+                          aria-label={t("Built-in profile")}
                         />
                         <span className="min-w-0 flex-1 truncate">
                           {preset.name}
@@ -679,12 +683,12 @@ export function SettingsDialog() {
                   !profiles.length &&
                   !uncreatedBuiltInPresets.length ? (
                     <p className="px-2 py-3 text-xs text-muted-foreground">
-                      No profiles yet.
+                      {t("No profiles yet.")}
                     </p>
                   ) : null}
                   {!selectedProject ? (
                     <p className="px-2 py-3 text-xs text-muted-foreground">
-                      Add a project to create profiles.
+                      {t("Add a project to create profiles.")}
                     </p>
                   ) : null}
                 </div>
@@ -695,13 +699,13 @@ export function SettingsDialog() {
                   disabled={!selectedProject}
                   className="mt-3 w-full justify-start"
                 >
-                  <Plus className="h-4 w-4" /> New profile
+                  <Plus className="h-4 w-4" /> {t("New profile")}
                 </Button>
               </div>
             ) : section === "templates" ? (
               <div className="mt-4 flex min-h-0 flex-1 flex-col border-t pt-4">
                 <span className="px-2 pb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Templates
+                  {t("Templates")}
                 </span>
                 <div className="app-scrollbar min-h-0 flex-1 space-y-1 overflow-y-auto">
                   {templates.map((template) => (
@@ -725,7 +729,7 @@ export function SettingsDialog() {
                   ))}
                   {templates.length === 0 ? (
                     <p className="px-2 py-3 text-xs text-muted-foreground">
-                      No templates yet.
+                      {t("No templates yet.")}
                     </p>
                   ) : null}
                 </div>
@@ -738,12 +742,12 @@ export function SettingsDialog() {
                   }}
                   className="mt-3 w-full justify-start"
                 >
-                  <Plus className="h-4 w-4" /> New template
+                  <Plus className="h-4 w-4" /> {t("New template")}
                 </Button>
               </div>
             ) : (
               <p className="mt-auto px-2 py-2 text-xs leading-relaxed text-muted-foreground">
-                Preferences are stored locally and applied automatically.
+                {t("Preferences are stored locally and applied automatically.")}
               </p>
             )}
           </aside>
@@ -800,7 +804,7 @@ export function SettingsDialog() {
               />
             ) : (
               <div className="flex h-full min-h-52 items-center justify-center text-center text-sm text-muted-foreground">
-                Select a profile to edit it, or create a new one.
+                {t("Select a profile to edit it, or create a new one.")}
               </div>
             )}
           </main>
@@ -831,6 +835,7 @@ function ProfileForm({
   onDelete?: () => void;
   showProjectOptions?: boolean;
 }) {
+  const { t } = useTranslation();
   const platformInfo = usePlatformStore((state) => state.info);
   const update = <K extends keyof ProfileDraft>(
     key: K,
@@ -850,27 +855,29 @@ function ProfileForm({
       <div>
         <h2 className="text-base font-semibold">
           {draft.id
-            ? "Edit profile"
+            ? t("Edit profile")
             : draft.builtInPresetId
-              ? "Set up built-in profile"
-              : "New profile"}
+              ? t("Set up built-in profile")
+              : t("New profile")}
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
           {draft.builtInPresetId
-            ? "Save to customize this built-in profile for the selected project."
-            : "This profile is used only by the selected project."}
+            ? t(
+                "Save to customize this built-in profile for the selected project.",
+              )
+            : t("This profile is used only by the selected project.")}
         </p>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Profile name">
+        <Field label={t("Profile name")}>
           <Input
             value={draft.name}
             onChange={(event) => update("name", event.target.value)}
             autoFocus
-            placeholder="e.g. Python environment"
+            placeholder={t("e.g. Python environment")}
           />
         </Field>
-        <Field label="Shell">
+        <Field label={t("Shell")}>
           <Select
             value={draft.shellType}
             onValueChange={(value) => update("shellType", value as ShellType)}
@@ -881,7 +888,7 @@ function ProfileForm({
             <SelectContent>
               {shells.map((shell) => (
                 <SelectItem key={shell.value} value={shell.value}>
-                  {shell.label}
+                  {t(shell.label)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -891,7 +898,9 @@ function ProfileForm({
       {draft.shellType === "custom" ? (
         <Field
           label={
-            projectType === "ssh" ? "Remote shell command" : "Shell executable"
+            projectType === "ssh"
+              ? t("Remote shell command")
+              : t("Shell executable")
           }
         >
           <Input
@@ -910,35 +919,35 @@ function ProfileForm({
             }
             placeholder={
               projectType === "ssh"
-                ? "e.g. /usr/bin/bash"
-                : "e.g. C:\\Tools\\shell.exe"
+                ? t("e.g. /usr/bin/bash")
+                : t("e.g. C:\\Tools\\shell.exe")
             }
           />
         </Field>
       ) : null}
       {draft.shellType === "wsl" ? (
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="WSL distribution">
+          <Field label={t("WSL distribution")}>
             <Input
               value={draft.wslDistribution}
               onChange={(event) =>
                 update("wslDistribution", event.target.value)
               }
-              placeholder="e.g. Ubuntu"
+              placeholder={t("e.g. Ubuntu")}
             />
           </Field>
-          <Field label="WSL working directory">
+          <Field label={t("WSL working directory")}>
             <Input
               value={draft.wslWorkingDirectory}
               onChange={(event) =>
                 update("wslWorkingDirectory", event.target.value)
               }
-              placeholder="Optional Linux path"
+              placeholder={t("Optional Linux path")}
             />
           </Field>
         </div>
       ) : null}
-      <Field label="Shell arguments" hint="One argument per line">
+      <Field label={t("Shell arguments")} hint={t("One argument per line")}>
         <textarea
           className="form-textarea min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
           value={draft.shellArgs}
@@ -947,13 +956,14 @@ function ProfileForm({
         />
       </Field>
       <div className="border-t pt-6">
-        <h3 className="font-medium">Environment</h3>
+        <h3 className="font-medium">{t("Environment")}</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          The application only activates an existing environment; it never
-          changes it.
+          {t(
+            "The application only activates an existing environment; it never changes it.",
+          )}
         </p>
       </div>
-      <Field label="Environment type">
+      <Field label={t("Environment type")}>
         <Select
           value={draft.environmentType}
           onValueChange={(value) =>
@@ -966,7 +976,7 @@ function ProfileForm({
           <SelectContent>
             {ENVIRONMENTS.map((environment) => (
               <SelectItem key={environment.value} value={environment.value}>
-                {environment.label}
+                {t(environment.label)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -975,42 +985,42 @@ function ProfileForm({
       {draft.environmentType === "conda" ? (
         <>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Environment name">
+            <Field label={t("Environment name")}>
               <Input
                 value={draft.environmentName}
                 onChange={(event) =>
                   update("environmentName", event.target.value)
                 }
-                placeholder="e.g. my-env"
+                placeholder={t("e.g. my-env")}
               />
             </Field>
-            <Field label="Environment path">
+            <Field label={t("Environment path")}>
               <Input
                 value={draft.environmentPath}
                 onChange={(event) =>
                   update("environmentPath", event.target.value)
                 }
-                placeholder="Alternative to name"
+                placeholder={t("Alternative to name")}
               />
             </Field>
-            <Field label="Conda executable">
+            <Field label={t("Conda executable")}>
               <Input
                 value={draft.condaExecutable}
                 onChange={(event) =>
                   update("condaExecutable", event.target.value)
                 }
-                placeholder="Optional path to conda.exe"
+                placeholder={t("Optional path to conda.exe")}
               />
             </Field>
-            <Field label="Conda root">
+            <Field label={t("Conda root")}>
               <Input
                 value={draft.condaRoot}
                 onChange={(event) => update("condaRoot", event.target.value)}
-                placeholder="Optional installation folder"
+                placeholder={t("Optional installation folder")}
               />
             </Field>
           </div>
-          <Field label="Activation method">
+          <Field label={t("Activation method")}>
             <Select
               value={draft.condaActivationMode}
               onValueChange={(value) =>
@@ -1024,56 +1034,58 @@ function ProfileForm({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="shell-hook">Shell hook</SelectItem>
+                <SelectItem value="shell-hook">{t("Shell hook")}</SelectItem>
                 <SelectItem value="conda-bat">conda.bat</SelectItem>
-                <SelectItem value="manual-command">Manual command</SelectItem>
+                <SelectItem value="manual-command">
+                  {t("Manual command")}
+                </SelectItem>
               </SelectContent>
             </Select>
           </Field>
           <Checkbox
             checked={draft.autoActivate}
             onChange={(checked) => update("autoActivate", checked)}
-            label="Activate this Conda environment when the terminal opens"
+            label={t("Activate this Conda environment when the terminal opens")}
           />
         </>
       ) : null}
       {environmentNeedsPath ? (
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Environment name">
+          <Field label={t("Environment name")}>
             <Input
               value={draft.environmentName}
               onChange={(event) =>
                 update("environmentName", event.target.value)
               }
-              placeholder="Optional label"
+              placeholder={t("Optional label")}
             />
           </Field>
-          <Field label="Environment path">
+          <Field label={t("Environment path")}>
             <Input
               value={draft.environmentPath}
               onChange={(event) =>
                 update("environmentPath", event.target.value)
               }
-              placeholder="e.g. .venv"
+              placeholder={t("e.g. .venv")}
             />
           </Field>
         </div>
       ) : null}
       {draft.environmentType === "custom" ? (
-        <Field label="Activation command">
+        <Field label={t("Activation command")}>
           <Input
             value={draft.activationCommand}
             onChange={(event) =>
               update("activationCommand", event.target.value)
             }
-            placeholder="Command to run after opening the shell"
+            placeholder={t("Command to run after opening the shell")}
           />
         </Field>
       ) : null}
       <div className="border-t pt-6">
-        <h3 className="font-medium">Startup</h3>
+        <h3 className="font-medium">{t("Startup")}</h3>
       </div>
-      <Field label="Startup commands" hint="One command per line">
+      <Field label={t("Startup commands")} hint={t("One command per line")}>
         <textarea
           className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
           value={draft.startupCommands}
@@ -1081,7 +1093,10 @@ function ProfileForm({
           placeholder="python --version"
         />
       </Field>
-      <Field label="Environment variables" hint="One NAME=value pair per line">
+      <Field
+        label={t("Environment variables")}
+        hint={t("One NAME=value pair per line")}
+      >
         <textarea
           className="min-h-20 w-full rounded-md border bg-background px-3 py-2 font-mono text-sm outline-none focus:ring-2 focus:ring-ring"
           value={draft.environmentVariables}
@@ -1096,12 +1111,12 @@ function ProfileForm({
           <Checkbox
             checked={draft.showInContextMenu}
             onChange={(checked) => update("showInContextMenu", checked)}
-            label="Show this profile in the + button context menu"
+            label={t("Show this profile in the + button context menu")}
           />
           <Checkbox
             checked={draft.isDefault}
             onChange={(checked) => update("isDefault", checked)}
-            label="Use this as the default profile for new terminals"
+            label={t("Use this as the default profile for new terminals")}
           />
         </div>
       ) : null}
@@ -1122,16 +1137,16 @@ function ProfileForm({
               onClick={onDelete}
               disabled={saving}
             >
-              <Trash2 className="h-4 w-4" /> Delete profile
+              <Trash2 className="h-4 w-4" /> {t("Delete profile")}
             </Button>
           ) : null}
         </div>
         <div className="flex gap-2">
           <Button variant="ghost" onClick={onCancel} disabled={saving}>
-            <ChevronLeft className="h-4 w-4" /> Cancel
+            <ChevronLeft className="h-4 w-4" /> {t("Cancel")}
           </Button>
           <Button onClick={onSave} disabled={saving}>
-            {saving ? "Saving…" : "Save profile"}
+            {saving ? t("Saving…") : t("Save profile")}
           </Button>
         </div>
       </div>
