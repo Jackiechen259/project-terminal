@@ -43,19 +43,25 @@ interface PendingSession {
 export function TerminalView({
   pending,
   active,
+  focused = active,
   defaultTitle,
   onSessionId,
   onExit,
   onTitleChange,
+  onFocus,
 }: {
   pending: PendingSession;
   active: boolean;
+  /** Only the focused pane responds to workspace-level terminal commands. */
+  focused?: boolean;
   /** Profile label to restore after a shell emits its executable path. */
   defaultTitle: string;
   onSessionId?: (sessionId: string) => void;
   onExit?: (code: number | null, status?: "exited" | "error") => void;
   /** Called when the terminal emits OSC 0/2 to update its window title. */
   onTitleChange?: (title: string) => void;
+  /** Marks this terminal as the focused split pane. */
+  onFocus?: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -107,10 +113,10 @@ export function TerminalView({
 
   useEffect(() => {
     return listenForAppCommands((command) => {
-      if (!active) return;
+      if (!focused) return;
       if (command.type === "copy-terminal") void copySelection();
     });
-  }, [active, copySelection]);
+  }, [focused, copySelection]);
 
   useEffect(() => {
     const term = new Terminal({
@@ -320,7 +326,11 @@ export function TerminalView({
   }, [active]);
 
   return (
-    <div className="h-full w-full p-2" onContextMenuCapture={handleContextMenu}>
+    <div
+      className="h-full w-full p-2"
+      onContextMenuCapture={handleContextMenu}
+      onFocusCapture={onFocus}
+    >
       <div
         ref={containerRef}
         className="h-full w-full"

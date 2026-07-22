@@ -168,6 +168,15 @@ export interface ProjectTabGroup {
   activeTabId: string | null;
 }
 
+/** The two layouts supported by a terminal split view. */
+export type TerminalSplitDirection = "side-by-side" | "stacked";
+
+/** A project's optional two-pane terminal view. */
+export interface TerminalSplitView {
+  direction: TerminalSplitDirection;
+  tabIds: [string, string];
+}
+
 /**
  * Host platform capability snapshot. Returned once per session by the
  * `get_platform_info` Tauri command. Components MUST consume this instead of

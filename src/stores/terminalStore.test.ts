@@ -23,6 +23,7 @@ beforeEach(() => {
     activeProjectId: null,
     tabsById: {},
     tabGroupsByProjectId: {},
+    splitViewsByProjectId: {},
   });
 });
 
@@ -143,6 +144,39 @@ describe("terminalStore", () => {
       const tab = useTerminalStore.getState().tabsById["t1"];
       expect(tab.status).toBe("exited");
       expect(tab.exitCode).toBe(0);
+    });
+  });
+
+  describe("split views", () => {
+    it("keeps two selected tabs in a project-specific split view", () => {
+      const { registerTab, setSplitView, replaceSplitTab } =
+        useTerminalStore.getState();
+      registerTab(makeTab("t1", "p1"));
+      registerTab(makeTab("t2", "p1"));
+      registerTab(makeTab("t3", "p1"));
+      setSplitView("p1", ["t1", "t2"], "side-by-side");
+      replaceSplitTab("p1", 1, "t3");
+
+      expect(useTerminalStore.getState().splitViewsByProjectId.p1).toEqual({
+        direction: "side-by-side",
+        tabIds: ["t1", "t3"],
+      });
+    });
+
+    it("collapses a split when one of its terminals is closed", () => {
+      const { registerTab, setSplitView, removeTab } =
+        useTerminalStore.getState();
+      registerTab(makeTab("t1", "p1"));
+      registerTab(makeTab("t2", "p1"));
+      setSplitView("p1", ["t1", "t2"], "stacked");
+      removeTab("t1");
+
+      expect(
+        useTerminalStore.getState().splitViewsByProjectId.p1,
+      ).toBeUndefined();
+      expect(
+        useTerminalStore.getState().tabGroupsByProjectId.p1.activeTabId,
+      ).toBe("t2");
     });
   });
 

@@ -1,6 +1,21 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "@/components/ui/button";
-import { Plus, RotateCcw, Terminal as TerminalIcon, X } from "lucide-react";
+import {
+  Columns2,
+  Plus,
+  RotateCcw,
+  Rows2,
+  Square,
+  Terminal as TerminalIcon,
+  X,
+} from "lucide-react";
 
 import { ContextMenu } from "@/components/ui/context-menu";
 import { dispatchAppCommand, listenForAppCommands } from "@/lib/appCommands";
@@ -10,9 +25,15 @@ import { useProjectStore } from "@/stores/projectStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { cn } from "@/lib/utils";
-import type { TerminalProfile, TerminalTab } from "@/types";
+import type {
+  TerminalProfile,
+  TerminalSplitDirection,
+  TerminalTab,
+} from "@/types";
 
 import { TerminalView } from "./TerminalView";
+
+type TerminalDropZone = "left" | "right" | "top" | "bottom";
 
 /**
  * Terminal workspace: tab strip + terminal area.
@@ -31,7 +52,11 @@ export function TerminalWorkspace() {
   const projects = useProjectStore((s) => s.projects);
   const tabsById = useTerminalStore((s) => s.tabsById);
   const tabGroups = useTerminalStore((s) => s.tabGroupsByProjectId);
+  const splitViews = useTerminalStore((s) => s.splitViewsByProjectId);
   const setActiveTab = useTerminalStore((s) => s.setActiveTab);
+  const setSplitView = useTerminalStore((s) => s.setSplitView);
+  const replaceSplitTab = useTerminalStore((s) => s.replaceSplitTab);
+  const clearSplitView = useTerminalStore((s) => s.clearSplitView);
   const registerTab = useTerminalStore((s) => s.registerTab);
   const updateTab = useTerminalStore((s) => s.updateTab);
   const removeTab = useTerminalStore((s) => s.removeTab);
@@ -39,16 +64,41 @@ export function TerminalWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<TerminalProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState("");
+  const [activePaneIndex, setActivePaneIndex] = useState<0 | 1>(0);
+  const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
+  const [dropZone, setDropZone] = useState<TerminalDropZone | null>(null);
   const [menuPosition, setMenuPosition] = useState<{
     x: number;
     y: number;
   } | null>(null);
   const tabListRef = useRef<HTMLDivElement>(null);
+  const splitTabGroupRef = useRef<HTMLDivElement>(null);
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const pointerDragRef = useRef<{
+    tabId: string;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    started: boolean;
+  } | null>(null);
+  const dropZoneRef = useRef<TerminalDropZone | null>(null);
+  const suppressTabClickRef = useRef(false);
 
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const group = activeProjectId ? tabGroups[activeProjectId] : undefined;
   const tabIds = useMemo(() => group?.tabIds ?? [], [group]);
   const activeTabId = group?.activeTabId ?? null;
+  const splitView = activeProjectId ? splitViews[activeProjectId] : undefined;
+  const validSplitView =
+    splitView &&
+    splitView.tabIds[0] !== splitView.tabIds[1] &&
+    splitView.tabIds.every((id) => tabIds.includes(id))
+      ? splitView
+      : undefined;
+
+  useEffect(() => {
+    setActivePaneIndex(0);
+  }, [activeProjectId]);
 
   useEffect(() => {
     if (!activeTabId) return;
@@ -69,7 +119,7 @@ export function TerminalWorkspace() {
             : await profileService.list(projectId);
         if (availableProfiles.length === 0) {
           setError("This project has no terminal profiles yet.");
-          return;
+          return null;
         }
         const profile =
           availableProfiles.find((p) => p.id === preferredProfileId) ??
@@ -90,12 +140,255 @@ export function TerminalWorkspace() {
           lastActivatedAt: Date.now(),
         };
         registerTab(tab);
+        return tab.id;
       } catch (e) {
         const err = e as { message?: string };
         setError(err.message ?? "Failed to start terminal");
+        return null;
       }
     },
     [activeProjectId, profiles, registerTab],
+  );
+
+  const handleSplitTerminal = useCallback(
+    async (direction: TerminalSplitDirection) => {
+      if (!activeProjectId) return;
+      const sourceTabId =
+        validSplitView?.tabIds[activePaneIndex] ?? activeTabId;
+      if (!sourceTabId) return;
+
+      const newTabId = await handleNewTerminal(
+        activeProjectId,
+        selectedProfileId,
+      );
+      if (!newTabId) return;
+      setSplitView(activeProjectId, [sourceTabId, newTabId], direction);
+      setActivePaneIndex(1);
+      setActiveTab(activeProjectId, newTabId);
+    },
+    [
+      activePaneIndex,
+      activeProjectId,
+      activeTabId,
+      handleNewTerminal,
+      selectedProfileId,
+      setActiveTab,
+      setSplitView,
+      validSplitView,
+    ],
+  );
+
+  const handleSelectTab = useCallback(
+    (tabId: string) => {
+      if (!activeProjectId) return;
+      if (validSplitView) {
+        const paneIndex = validSplitView.tabIds.indexOf(tabId);
+        if (paneIndex === 0 || paneIndex === 1) {
+          setActivePaneIndex(paneIndex);
+        } else {
+          replaceSplitTab(activeProjectId, activePaneIndex, tabId);
+        }
+      }
+      setActiveTab(activeProjectId, tabId);
+    },
+    [
+      activePaneIndex,
+      activeProjectId,
+      replaceSplitTab,
+      setActiveTab,
+      validSplitView,
+    ],
+  );
+
+  const finishTabDrag = useCallback(() => {
+    pointerDragRef.current = null;
+    dropZoneRef.current = null;
+    setDraggedTabId(null);
+    setDropZone(null);
+  }, []);
+
+  const getDropAnchorTabId = useCallback(
+    (sourceTabId: string) => {
+      const focusedTabId =
+        validSplitView?.tabIds[activePaneIndex] ?? activeTabId;
+      if (focusedTabId && focusedTabId !== sourceTabId) return focusedTabId;
+      return tabIds.find((tabId) => tabId !== sourceTabId) ?? null;
+    },
+    [activePaneIndex, activeTabId, tabIds, validSplitView],
+  );
+
+  const canSplitWithTab = useCallback(
+    (sourceTabId: string | null) =>
+      Boolean(
+        sourceTabId &&
+        activeProjectId &&
+        tabsById[sourceTabId]?.projectId === activeProjectId &&
+        getDropAnchorTabId(sourceTabId),
+      ),
+    [activeProjectId, getDropAnchorTabId, tabsById],
+  );
+
+  const getPointerDropZone = useCallback(
+    (clientX: number, clientY: number): TerminalDropZone | null => {
+      const rect = workspaceRef.current?.getBoundingClientRect();
+      if (!rect || !rect.width || !rect.height) return null;
+      if (
+        clientX < rect.left ||
+        clientX > rect.right ||
+        clientY < rect.top ||
+        clientY > rect.bottom
+      ) {
+        return null;
+      }
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
+      const horizontalEdge = Math.min(x, rect.width - x) / rect.width;
+      const verticalEdge = Math.min(y, rect.height - y) / rect.height;
+      return horizontalEdge < verticalEdge
+        ? x < rect.width / 2
+          ? "left"
+          : "right"
+        : y < rect.height / 2
+          ? "top"
+          : "bottom";
+    },
+    [],
+  );
+
+  const handleTabPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>, tabId: string) => {
+      if (
+        event.button !== 0 ||
+        (event.target instanceof Element &&
+          event.target.closest("[data-tab-action]"))
+      ) {
+        return;
+      }
+      pointerDragRef.current = {
+        tabId,
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        started: false,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+    },
+    [],
+  );
+
+  const handleTabPointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      const drag = pointerDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      if (!drag.started) {
+        const moved = Math.hypot(
+          event.clientX - drag.startX,
+          event.clientY - drag.startY,
+        );
+        if (moved < 6 || !canSplitWithTab(drag.tabId)) return;
+        drag.started = true;
+        setDraggedTabId(drag.tabId);
+      }
+
+      const nextDropZone = getPointerDropZone(event.clientX, event.clientY);
+      dropZoneRef.current = nextDropZone;
+      setDropZone(nextDropZone);
+      event.preventDefault();
+    },
+    [canSplitWithTab, getPointerDropZone],
+  );
+
+  const handleTabPointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      const drag = pointerDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      if (!drag.started) {
+        finishTabDrag();
+        return;
+      }
+
+      suppressTabClickRef.current = true;
+      const sourceTabId = drag.tabId;
+      const anchorTabId = getDropAnchorTabId(sourceTabId);
+      const targetDropZone = dropZoneRef.current;
+      const tabListRect = tabListRef.current?.getBoundingClientRect();
+      const splitGroupRect = splitTabGroupRef.current?.getBoundingClientRect();
+      const releasedInTabList =
+        tabListRect &&
+        event.clientX >= tabListRect.left &&
+        event.clientX <= tabListRect.right &&
+        event.clientY >= tabListRect.top &&
+        event.clientY <= tabListRect.bottom;
+      const releasedInSplitGroup =
+        splitGroupRect &&
+        event.clientX >= splitGroupRect.left &&
+        event.clientX <= splitGroupRect.right &&
+        event.clientY >= splitGroupRect.top &&
+        event.clientY <= splitGroupRect.bottom;
+      if (
+        activeProjectId &&
+        anchorTabId &&
+        targetDropZone &&
+        canSplitWithTab(sourceTabId)
+      ) {
+        const sourceFirst =
+          targetDropZone === "left" || targetDropZone === "top";
+        const tabPair: [string, string] = sourceFirst
+          ? [sourceTabId, anchorTabId]
+          : [anchorTabId, sourceTabId];
+        const direction: TerminalSplitDirection =
+          targetDropZone === "left" || targetDropZone === "right"
+            ? "side-by-side"
+            : "stacked";
+        setSplitView(activeProjectId, tabPair, direction);
+        setActivePaneIndex(sourceFirst ? 0 : 1);
+        setActiveTab(activeProjectId, sourceTabId);
+      } else if (
+        activeProjectId &&
+        validSplitView?.tabIds.includes(sourceTabId) &&
+        releasedInTabList &&
+        !releasedInSplitGroup
+      ) {
+        // A grouped tab dragged back into the normal tab strip dissolves the
+        // split. Both sessions remain open as ordinary tabs.
+        clearSplitView(activeProjectId);
+        setActiveTab(activeProjectId, sourceTabId);
+      }
+      finishTabDrag();
+    },
+    [
+      activeProjectId,
+      canSplitWithTab,
+      clearSplitView,
+      finishTabDrag,
+      getDropAnchorTabId,
+      setActiveTab,
+      setSplitView,
+      validSplitView,
+    ],
+  );
+
+  const handleTabPointerCancel = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      const drag = pointerDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      finishTabDrag();
+    },
+    [finishTabDrag],
+  );
+
+  const handleTabClick = useCallback(
+    (tabId: string) => {
+      if (suppressTabClickRef.current) {
+        suppressTabClickRef.current = false;
+        return;
+      }
+      handleSelectTab(tabId);
+    },
+    [handleSelectTab],
   );
 
   useEffect(() => {
@@ -188,15 +481,35 @@ export function TerminalWorkspace() {
     [confirmCloseTerminal, removeTab, tabsById],
   );
 
+  const handleCloseSplitGroup = useCallback(() => {
+    if (!validSplitView) return;
+    const groupTabs = validSplitView.tabIds
+      .map((tabId) => tabsById[tabId])
+      .filter((tab): tab is TerminalTab => Boolean(tab));
+    const hasRunningTerminal = groupTabs.some((tab) =>
+      ["starting", "connecting", "initializing", "running"].includes(
+        tab.status,
+      ),
+    );
+    if (
+      confirmCloseTerminal &&
+      hasRunningTerminal &&
+      !window.confirm("Close both terminals in this split group?")
+    ) {
+      return;
+    }
+    groupTabs.forEach((tab) => removeTab(tab.id));
+  }, [confirmCloseTerminal, removeTab, tabsById, validSplitView]);
+
   const selectRelativeTab = useCallback(
     (direction: 1 | -1) => {
       if (!activeProjectId || tabIds.length < 2 || !activeTabId) return;
       const currentIndex = tabIds.indexOf(activeTabId);
       const nextIndex =
         (currentIndex + direction + tabIds.length) % tabIds.length;
-      setActiveTab(activeProjectId, tabIds[nextIndex]);
+      handleSelectTab(tabIds[nextIndex]);
     },
-    [activeProjectId, activeTabId, setActiveTab, tabIds],
+    [activeProjectId, activeTabId, handleSelectTab, tabIds],
   );
 
   useEffect(() => {
@@ -246,7 +559,7 @@ export function TerminalWorkspace() {
           break;
         case "select-tab": {
           const tabId = tabIds[shortcut.index];
-          if (activeProjectId && tabId) setActiveTab(activeProjectId, tabId);
+          if (activeProjectId && tabId) handleSelectTab(tabId);
           break;
         }
         case "copy-terminal":
@@ -266,11 +579,91 @@ export function TerminalWorkspace() {
     tabIds,
     handleCloseTab,
     handleNewTerminal,
+    handleSelectTab,
     selectRelativeTab,
-    setActiveTab,
   ]);
 
   const hasAnyTab = Object.keys(tabsById).length > 0;
+
+  const renderTerminalTab = (id: string) => {
+    const tab = tabsById[id];
+    if (!tab) return null;
+    return (
+      <button
+        key={id}
+        type="button"
+        role="tab"
+        aria-selected={id === activeTabId}
+        data-active={id === activeTabId}
+        data-dragging={id === draggedTabId}
+        onClick={() => handleTabClick(id)}
+        onPointerDown={(event) => handleTabPointerDown(event, id)}
+        onPointerMove={handleTabPointerMove}
+        onPointerUp={handleTabPointerUp}
+        onPointerCancel={handleTabPointerCancel}
+        className={cn(
+          "group flex shrink-0 cursor-grab items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground active:cursor-grabbing data-[dragging=true]:opacity-50",
+          id === activeTabId && "bg-accent text-accent-foreground",
+        )}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          handleSelectTab(id);
+          setMenuPosition({ x: event.clientX, y: event.clientY });
+        }}
+      >
+        <div className="flex flex-col items-start">
+          <span className="max-w-[160px] truncate">{tab.title}</span>
+          {tab.status === "exited" || tab.status === "error" ? (
+            <span className="text-[10px] text-danger">
+              {tab.status === "error"
+                ? "Connection error"
+                : `Exited (${tab.exitCode ?? "?"})`}
+            </span>
+          ) : null}
+        </div>
+        {tab.status === "exited" || tab.status === "error" ? (
+          <span
+            role="button"
+            tabIndex={0}
+            data-tab-action
+            onClick={(event) => {
+              event.stopPropagation();
+              void handleRestart(id);
+            }}
+            className="opacity-50 hover:opacity-100"
+            aria-label={
+              projects.find((project) => project.id === tab.projectId)?.type ===
+              "ssh"
+                ? "Reconnect SSH terminal"
+                : "Restart tab"
+            }
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+          </span>
+        ) : null}
+        <span
+          role="button"
+          tabIndex={0}
+          data-tab-action
+          onClick={(event) => {
+            event.stopPropagation();
+            void handleCloseTab(id);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.stopPropagation();
+              void handleCloseTab(id);
+            }
+          }}
+          className="opacity-50 hover:opacity-100"
+          aria-label="Close tab"
+        >
+          <X className="h-3.5 w-3.5" />
+        </span>
+      </button>
+    );
+  };
 
   return (
     <section
@@ -302,80 +695,37 @@ export function TerminalWorkspace() {
               {activeProject ? "No terminals open" : "Select a project"}
             </span>
           ) : (
-            tabIds.map((id) => {
-              const tab = tabsById[id];
-              if (!tab) return null;
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  role="tab"
-                  aria-selected={id === activeTabId}
-                  data-active={id === activeTabId}
-                  onClick={() =>
-                    activeProjectId && setActiveTab(activeProjectId, id)
-                  }
-                  className={cn(
-                    "group flex shrink-0 items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-                    id === activeTabId && "bg-accent text-accent-foreground",
-                  )}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    if (activeProjectId) setActiveTab(activeProjectId, id);
-                    setMenuPosition({ x: event.clientX, y: event.clientY });
-                  }}
+            <>
+              {validSplitView ? (
+                <div
+                  ref={splitTabGroupRef}
+                  role="group"
+                  aria-label="Split terminal group"
+                  className="flex shrink-0 items-center gap-1 rounded-lg border border-primary/60 bg-accent/40 p-1 shadow-sm"
                 >
-                  <div className="flex flex-col items-start">
-                    <span className="max-w-[160px] truncate">{tab.title}</span>
-                    {tab.status === "exited" || tab.status === "error" ? (
-                      <span className="text-[10px] text-danger">
-                        {tab.status === "error"
-                          ? "Connection error"
-                          : `Exited (${tab.exitCode ?? "?"})`}
-                      </span>
-                    ) : null}
-                  </div>
-                  {tab.status === "exited" || tab.status === "error" ? (
-                    <span
-                      role="button"
-                      tabIndex={0}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void handleRestart(id);
-                      }}
-                      className="opacity-50 hover:opacity-100"
-                      aria-label={
-                        projects.find((project) => project.id === tab.projectId)
-                          ?.type === "ssh"
-                          ? "Reconnect SSH terminal"
-                          : "Restart tab"
-                      }
-                    >
-                      <RotateCcw className="h-3.5 w-3.5" />
-                    </span>
-                  ) : null}
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void handleCloseTab(id);
+                  <span className="px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Split
+                  </span>
+                  {validSplitView.tabIds.map(renderTerminalTab)}
+                  <button
+                    type="button"
+                    className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-destructive/15 hover:text-destructive"
+                    aria-label="Close split group"
+                    title="Close both terminals"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleCloseSplitGroup();
                     }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.stopPropagation();
-                        void handleCloseTab(id);
-                      }
-                    }}
-                    className="opacity-50 hover:opacity-100"
-                    aria-label="Close tab"
                   >
                     <X className="h-3.5 w-3.5" />
-                  </span>
-                </button>
-              );
-            })
+                  </button>
+                </div>
+              ) : null}
+              {tabIds
+                .filter((id) => !validSplitView?.tabIds.includes(id))
+                .map(renderTerminalTab)}
+            </>
           )}
         </div>
         {activeProject && profiles.length > 1 ? (
@@ -392,6 +742,18 @@ export function TerminalWorkspace() {
             ))}
           </select>
         ) : null}
+        {validSplitView ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Exit split view"
+            title="Exit split view"
+            className="h-7 w-7 text-muted-foreground"
+            onClick={() => activeProjectId && clearSplitView(activeProjectId)}
+          >
+            <Square className="h-3.5 w-3.5" />
+          </Button>
+        ) : null}
         <Button
           variant="ghost"
           size="icon"
@@ -407,7 +769,23 @@ export function TerminalWorkspace() {
         </Button>
       </div>
 
-      <div className="relative flex-1 bg-background">
+      <div ref={workspaceRef} className="relative flex-1 bg-background">
+        {draggedTabId && dropZone ? (
+          <div
+            className={cn(
+              "pointer-events-none absolute z-30 flex items-center justify-center rounded-md border-2 border-primary bg-primary/10 text-xs font-medium text-primary backdrop-blur-[1px]",
+              dropZone === "left" &&
+                "bottom-2 left-2 top-2 w-[calc(50%-0.5rem)]",
+              dropZone === "right" &&
+                "bottom-2 right-2 top-2 w-[calc(50%-0.5rem)]",
+              dropZone === "top" && "left-2 right-2 top-2 h-[calc(50%-0.5rem)]",
+              dropZone === "bottom" &&
+                "bottom-2 left-2 right-2 h-[calc(50%-0.5rem)]",
+            )}
+          >
+            Drop to split {dropZone}
+          </div>
+        ) : null}
         {activeProject && hasAnyTab ? (
           <>
             {error ? (
@@ -416,21 +794,35 @@ export function TerminalWorkspace() {
               </div>
             ) : null}
             {/*
-              Render EVERY project's tabs, not just the active project's.
-              Switching projects only flips which container is visible.
+              Every TerminalView stays in this same keyed list. Only its CSS
+              bounds change when entering or leaving a split, so a layout
+              change never disposes/recreates an xterm instance or its PTY.
             */}
             {Object.values(tabsById).map((tab) => {
-              const tabGroup = tabGroups[tab.projectId];
-              const visible =
-                tab.projectId === activeProjectId &&
-                tabGroup?.activeTabId === tab.id;
+              const paneIndex = validSplitView?.tabIds.indexOf(tab.id) ?? -1;
+              const isSplitPane =
+                tab.projectId === activeProjectId && paneIndex !== -1;
+              const visible = isSplitPane || tab.id === activeTabId;
+              const panePosition =
+                paneIndex === 0
+                  ? validSplitView?.direction === "side-by-side"
+                    ? "left-0 top-0 h-full w-1/2"
+                    : "left-0 right-0 top-0 h-1/2"
+                  : paneIndex === 1
+                    ? validSplitView?.direction === "side-by-side"
+                      ? "right-0 top-0 h-full w-1/2 border-l border-border"
+                      : "bottom-0 left-0 right-0 h-1/2 border-t border-border"
+                    : "inset-0";
               return (
                 <div
                   key={tab.id}
                   className={cn(
-                    "absolute inset-0",
-                    visible ? "block" : "hidden",
+                    "absolute min-h-0 min-w-0",
+                    visible ? panePosition : "hidden",
                   )}
+                  onMouseDown={() => {
+                    if (visible) handleSelectTab(tab.id);
+                  }}
                 >
                   <TerminalView
                     pending={{
@@ -438,7 +830,15 @@ export function TerminalWorkspace() {
                       profileId: tab.profileId,
                     }}
                     active={visible}
+                    focused={
+                      isSplitPane
+                        ? activePaneIndex === paneIndex
+                        : tab.id === activeTabId
+                    }
                     defaultTitle={tab.defaultTitle}
+                    onFocus={() => {
+                      if (visible) handleSelectTab(tab.id);
+                    }}
                     onSessionId={(sessionId) =>
                       handleSessionId(tab.id, sessionId)
                     }
@@ -473,6 +873,28 @@ export function TerminalWorkspace() {
               onSelect: () =>
                 activeProject && void handleNewTerminal(activeProject.id),
             },
+            {
+              label: "Split terminal side by side",
+              icon: Columns2,
+              disabled: !activeProject || !activeTabId,
+              onSelect: () => void handleSplitTerminal("side-by-side"),
+            },
+            {
+              label: "Split terminal top and bottom",
+              icon: Rows2,
+              disabled: !activeProject || !activeTabId,
+              onSelect: () => void handleSplitTerminal("stacked"),
+            },
+            ...(validSplitView
+              ? [
+                  {
+                    label: "Exit split view",
+                    icon: Square,
+                    onSelect: () =>
+                      activeProjectId && clearSplitView(activeProjectId),
+                  },
+                ]
+              : []),
             {
               label: "Close active terminal",
               shortcut: "Ctrl+Shift+W",

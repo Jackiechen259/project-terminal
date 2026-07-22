@@ -13,12 +13,18 @@
 
 import { create } from "zustand";
 
-import type { ProjectTabGroup, TerminalTab } from "@/types";
+import type {
+  ProjectTabGroup,
+  TerminalSplitDirection,
+  TerminalSplitView,
+  TerminalTab,
+} from "@/types";
 
 export interface TerminalStoreState {
   activeProjectId: string | null;
   tabsById: Record<string, TerminalTab>;
   tabGroupsByProjectId: Record<string, ProjectTabGroup>;
+  splitViewsByProjectId: Record<string, TerminalSplitView>;
 
   /** Select a project and restore its last active tab. No PTY teardown. */
   setActiveProject: (projectId: string | null) => void;
@@ -34,6 +40,16 @@ export interface TerminalStoreState {
 
   /** Activate a tab within its project group. */
   setActiveTab: (projectId: string, tabId: string) => void;
+
+  setSplitView: (
+    projectId: string,
+    tabIds: [string, string],
+    direction: TerminalSplitDirection,
+  ) => void;
+
+  replaceSplitTab: (projectId: string, paneIndex: 0 | 1, tabId: string) => void;
+
+  clearSplitView: (projectId: string) => void;
 
   /** Tabs visible for the active project. */
   visibleTabs: () => TerminalTab[];
@@ -52,6 +68,7 @@ export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
   activeProjectId: null,
   tabsById: {},
   tabGroupsByProjectId: {},
+  splitViewsByProjectId: {},
 
   setActiveProject: (projectId) => set({ activeProjectId: projectId }),
 
@@ -79,9 +96,12 @@ export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
     for (const tabId of group.tabIds) delete tabsById[tabId];
     const tabGroupsByProjectId = { ...get().tabGroupsByProjectId };
     delete tabGroupsByProjectId[projectId];
+    const splitViewsByProjectId = { ...(get().splitViewsByProjectId ?? {}) };
+    delete splitViewsByProjectId[projectId];
     set({
       tabsById,
       tabGroupsByProjectId,
+      splitViewsByProjectId,
       activeProjectId:
         get().activeProjectId === projectId ? null : get().activeProjectId,
     });
@@ -118,14 +138,27 @@ export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
         ? (remainingIds[removedIdx] ?? remainingIds[removedIdx - 1] ?? null)
         : group.activeTabId;
 
+    const splitView = get().splitViewsByProjectId?.[tab.projectId];
+    const splitIncludesTab = splitView?.tabIds.includes(tabId) ?? false;
+    const otherSplitTabId = splitIncludesTab
+      ? splitView!.tabIds[splitView!.tabIds[0] === tabId ? 1 : 0]
+      : null;
     const updatedGroup: ProjectTabGroup = {
       ...group,
       tabIds: remainingIds,
-      activeTabId: newActiveId,
+      activeTabId:
+        splitIncludesTab &&
+        otherSplitTabId &&
+        remainingIds.includes(otherSplitTabId)
+          ? otherSplitTabId
+          : newActiveId,
     };
 
     const nextTabsById = { ...get().tabsById };
     delete nextTabsById[tabId];
+
+    const splitViewsByProjectId = { ...(get().splitViewsByProjectId ?? {}) };
+    if (splitIncludesTab) delete splitViewsByProjectId[tab.projectId];
 
     set({
       tabsById: nextTabsById,
@@ -133,6 +166,7 @@ export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
         ...get().tabGroupsByProjectId,
         [tab.projectId]: updatedGroup,
       },
+      splitViewsByProjectId,
     });
   },
 
@@ -157,6 +191,50 @@ export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
         [projectId]: { ...group, activeTabId: tabId },
       },
     });
+  },
+
+  setSplitView: (projectId, tabIds, direction) => {
+    const group = get().tabGroupsByProjectId[projectId];
+    if (
+      !group ||
+      tabIds[0] === tabIds[1] ||
+      !tabIds.every((tabId) => group.tabIds.includes(tabId))
+    ) {
+      return;
+    }
+    set({
+      splitViewsByProjectId: {
+        ...(get().splitViewsByProjectId ?? {}),
+        [projectId]: { direction, tabIds },
+      },
+    });
+  },
+
+  replaceSplitTab: (projectId, paneIndex, tabId) => {
+    const splitView = get().splitViewsByProjectId?.[projectId];
+    const group = get().tabGroupsByProjectId[projectId];
+    if (!splitView || !group?.tabIds.includes(tabId)) return;
+
+    const otherIndex: 0 | 1 = paneIndex === 0 ? 1 : 0;
+    const nextTabIds = [...splitView.tabIds] as [string, string];
+    if (nextTabIds[otherIndex] === tabId) {
+      [nextTabIds[0], nextTabIds[1]] = [nextTabIds[1], nextTabIds[0]];
+    } else {
+      nextTabIds[paneIndex] = tabId;
+    }
+    set({
+      splitViewsByProjectId: {
+        ...(get().splitViewsByProjectId ?? {}),
+        [projectId]: { ...splitView, tabIds: nextTabIds },
+      },
+    });
+  },
+
+  clearSplitView: (projectId) => {
+    if (!get().splitViewsByProjectId?.[projectId]) return;
+    const splitViewsByProjectId = { ...(get().splitViewsByProjectId ?? {}) };
+    delete splitViewsByProjectId[projectId];
+    set({ splitViewsByProjectId });
   },
 
   visibleTabs: () => {
