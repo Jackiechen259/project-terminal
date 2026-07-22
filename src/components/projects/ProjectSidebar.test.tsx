@@ -5,6 +5,20 @@ import { useProjectStore } from "@/stores/projectStore";
 import { useCollectionStore } from "@/stores/collectionStore";
 import { ProjectSidebar } from "./ProjectSidebar";
 
+const terminalState = vi.hoisted(() => {
+  const state = {
+    activeProjectId: null as string | null,
+    tabGroupsByProjectId: {} as Record<string, unknown>,
+    tabsById: {} as Record<string, unknown>,
+    setActiveProject: vi.fn(),
+    removeProjectTabs: vi.fn(),
+  };
+  state.setActiveProject.mockImplementation((projectId: string | null) => {
+    state.activeProjectId = projectId;
+  });
+  return state;
+});
+
 // The sidebar composes many Tauri-backed stores. For this test we drive the
 // project and collection stores directly and stub the rest so the rendering
 // surface stays focused on collection grouping + drag and drop.
@@ -25,14 +39,9 @@ vi.mock("@/stores/settingsStore", () => ({
   ),
 }));
 vi.mock("@/stores/terminalStore", () => ({
-  useTerminalStore: vi.fn((selector: (s: unknown) => unknown) =>
-    selector({
-      activeProjectId: null,
-      tabGroupsByProjectId: {},
-      tabsById: {},
-      setActiveProject: vi.fn(),
-      removeProjectTabs: vi.fn(),
-    }),
+  useTerminalStore: Object.assign(
+    vi.fn((selector: (s: unknown) => unknown) => selector(terminalState)),
+    { getState: () => terminalState },
   ),
 }));
 vi.mock("@/stores/sshStore", () => ({
@@ -79,6 +88,11 @@ const sampleProjects = [
 
 beforeEach(() => {
   localStorage.clear();
+  terminalState.activeProjectId = null;
+  terminalState.tabGroupsByProjectId = {};
+  terminalState.tabsById = {};
+  terminalState.setActiveProject.mockClear();
+  terminalState.removeProjectTabs.mockClear();
   useCollectionStore.setState({
     collections: [],
     collapsed: {},
@@ -108,6 +122,23 @@ describe("ProjectSidebar collections", () => {
   it("renders the new-collection button", () => {
     render(<ProjectSidebar />);
     expect(screen.getByLabelText("New collection")).toBeTruthy();
+  });
+
+  it("selects another terminal project before deleting the active project", async () => {
+    const deleteProject = vi.fn(async () => {
+      // Project removal must never leave TerminalWorkspace without an active
+      // project while terminals in other projects are still mounted.
+      expect(terminalState.activeProjectId).toBe("p2");
+    });
+    terminalState.activeProjectId = "p1";
+    useProjectStore.setState({ deleteProject });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<ProjectSidebar />);
+    fireEvent.click(screen.getAllByLabelText("Remove project")[0]);
+
+    await waitFor(() => expect(deleteProject).toHaveBeenCalledWith("p1"));
+    expect(terminalState.removeProjectTabs).toHaveBeenCalledWith("p1");
   });
 
   it("shows a collection group and groups its projects", async () => {

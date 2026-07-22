@@ -948,6 +948,7 @@ function ProjectRow({
     [allTabs, projectGroup],
   );
   const removeProjectTabs = useTerminalStore((s) => s.removeProjectTabs);
+  const setActiveProject = useTerminalStore((s) => s.setActiveProject);
   const [menuPosition, setMenuPosition] = useState<{
     x: number;
     y: number;
@@ -956,16 +957,37 @@ function ProjectRow({
 
   async function removeProject() {
     if (window.confirm(`Remove project "${project.name}"?`)) {
+      let switchedTerminalProject = false;
+      let nextProjectId: string | null = null;
       try {
         await Promise.all(
           projectTabs
             .filter((tab) => tab.sessionId)
             .map((tab) => terminalService.close(tab.sessionId)),
         );
+        // Switch the terminal workspace before removing the active project
+        // from the project store. Otherwise TerminalWorkspace briefly has no
+        // active project and unmounts every TerminalView, which restarts PTYs
+        // belonging to the projects that were not deleted.
+        if (useTerminalStore.getState().activeProjectId === project.id) {
+          const remaining = useProjectStore
+            .getState()
+            .projects.filter((candidate) => candidate.id !== project.id);
+          nextProjectId = remaining[0]?.id ?? null;
+          setActiveProject(nextProjectId);
+          switchedTerminalProject = true;
+        }
         await deleteProject(project.id);
         removeProjectTabs(project.id);
       } catch {
-        // Keep state intact when persistence fails, so the user can recover.
+        // Keep the existing project selected if persistence failed. Do not
+        // undo a newer selection made by the user while the request ran.
+        if (
+          switchedTerminalProject &&
+          useTerminalStore.getState().activeProjectId === nextProjectId
+        ) {
+          setActiveProject(project.id);
+        }
       }
     }
   }
