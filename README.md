@@ -263,7 +263,7 @@ src-tauri/target/release/bundle/
 | `pnpm lint` | Run ESLint |
 | `pnpm format` | Format frontend files with Prettier |
 | `pnpm format:check` | Check frontend formatting |
-
+| `pnpm bump` | Bump and sync project version across package and Tauri config files |
 Rust checks:
 
 ```powershell
@@ -299,6 +299,7 @@ project-terminal/
 │   ├── capabilities/            Tauri permission configuration
 │   ├── Cargo.toml
 │   └── tauri.conf.json
+├── scripts/                     Release and version management scripts
 ├── .github/workflows/release.yml
 ├── package.json
 └── README.md
@@ -308,17 +309,28 @@ project-terminal/
 
 The GitHub Actions release workflow runs when a tag beginning with `v` is pushed.
 
-Before publishing a release, keep these versions identical:
-
-- `package.json`
-- `src-tauri/Cargo.toml`
-- `src-tauri/tauri.conf.json`
-
-Then create and push the matching tag:
+Before publishing a release, update and synchronize the version across `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and `src-tauri/Cargo.lock` using the bump script:
 
 ```powershell
-git tag v0.2.1
-git push origin v0.2.1
+# Bump semver version (patch, minor, major, or prerelease)
+pnpm bump patch
+pnpm bump minor
+pnpm bump prerelease beta
+
+# Or set an explicit version
+pnpm bump 0.3.0
+
+# Preview changes without writing
+pnpm bump patch --dry-run
+```
+
+Then commit the version update, tag the release, and push to GitHub:
+
+```powershell
+git add -A
+git commit -m "chore: release v0.3.0"
+git tag v0.3.0
+git push --follow-tags
 ```
 
 The workflow builds Windows and Linux packages, signs updater artifacts, creates the GitHub Release, and publishes update metadata.
