@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 
 import { listenForAppCommands } from "@/lib/appCommands";
+import { TerminalInputQueue } from "@/lib/terminalInputQueue";
 import { getTerminalTheme } from "@/lib/terminalThemes";
 import { terminalService } from "@/services";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -122,6 +124,7 @@ export function TerminalView({
 
   useEffect(() => {
     const term = new Terminal({
+      allowProposedApi: true,
       cursorBlink,
       cursorStyle: "block",
       scrollback: 10_000,
@@ -134,6 +137,7 @@ export function TerminalView({
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
+    term.loadAddon(new UnicodeGraphemesAddon());
     term.loadAddon(new WebLinksAddon());
     term.open(containerRef.current!);
     termRef.current = term;
@@ -190,10 +194,8 @@ export function TerminalView({
       }
     };
 
-    const disposable = term.onData((data) => {
-      const sid = sessionIdRef.current;
-      if (sid) void terminalService.write(sid, data);
-    });
+    const inputQueue = new TerminalInputQueue(terminalService.write);
+    const disposable = term.onData((data) => inputQueue.send(data));
     const titleDisposable = term.onTitleChange((nextTitle) => {
       const title = resolveTerminalTabTitle(nextTitle, defaultTitle);
       if (title) onTitleChangeRef.current?.(title);
@@ -233,6 +235,7 @@ export function TerminalView({
           return;
         }
         sessionIdRef.current = sessionId;
+        inputQueue.attach(sessionId);
         onSessionId?.(sessionId);
         const statusTimer = window.setInterval(() => {
           if (reportedExitRef.current) return;
@@ -268,6 +271,7 @@ export function TerminalView({
 
     return () => {
       cancelled = true;
+      inputQueue.dispose();
       disposable.dispose();
       titleDisposable.dispose();
       ro.disconnect();
