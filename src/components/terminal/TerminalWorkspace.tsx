@@ -66,6 +66,10 @@ export function TerminalWorkspace() {
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [activePaneIndex, setActivePaneIndex] = useState<0 | 1>(0);
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
+  const [dragPosition, setDragPosition] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
   const [dropZone, setDropZone] = useState<TerminalDropZone | null>(null);
   const [menuPosition, setMenuPosition] = useState<{
     x: number;
@@ -204,6 +208,7 @@ export function TerminalWorkspace() {
     pointerDragRef.current = null;
     dropZoneRef.current = null;
     setDraggedTabId(null);
+    setDragPosition(null);
     setDropZone(null);
   }, []);
 
@@ -290,6 +295,7 @@ export function TerminalWorkspace() {
         setDraggedTabId(drag.tabId);
       }
 
+      setDragPosition({ x: event.clientX, y: event.clientY });
       const nextDropZone = getPointerDropZone(event.clientX, event.clientY);
       dropZoneRef.current = nextDropZone;
       setDropZone(nextDropZone);
@@ -673,6 +679,16 @@ export function TerminalWorkspace() {
         setMenuPosition({ x: event.clientX, y: event.clientY });
       }}
     >
+      {draggedTabId && dragPosition && tabsById[draggedTabId] ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed z-[60] flex max-w-56 -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-md border border-primary/70 bg-surface px-3 py-2 text-xs text-foreground shadow-xl shadow-black/40 animate-in fade-in-0 zoom-in-95 duration-150"
+          style={{ left: dragPosition.x, top: dragPosition.y }}
+        >
+          <TerminalIcon className="h-3.5 w-3.5 shrink-0 text-primary" />
+          <span className="truncate">{tabsById[draggedTabId].title}</span>
+        </div>
+      ) : null}
       <div className="flex h-11 min-w-0 items-center gap-1 border-b border-border bg-surface px-2">
         <div
           ref={tabListRef}
@@ -773,7 +789,7 @@ export function TerminalWorkspace() {
         {draggedTabId && dropZone ? (
           <div
             className={cn(
-              "pointer-events-none absolute z-30 flex items-center justify-center rounded-md border-2 border-primary bg-primary/10 text-xs font-medium text-primary backdrop-blur-[1px]",
+              "pointer-events-none absolute z-30 flex items-center justify-center rounded-md border-2 border-primary bg-primary/10 text-xs font-medium text-primary backdrop-blur-[1px] transition-all duration-150 ease-out",
               dropZone === "left" &&
                 "bottom-2 left-2 top-2 w-[calc(50%-0.5rem)]",
               dropZone === "right" &&
