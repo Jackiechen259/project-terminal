@@ -100,9 +100,15 @@ pub struct TerminalProfile {
     pub remote_shell_command: Option<String>,
 
     pub is_default: bool,
+    #[serde(default = "default_true")]
+    pub show_in_context_menu: bool,
 
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl TerminalProfile {
@@ -172,6 +178,7 @@ mod tests {
             wsl_working_directory: None,
             remote_shell_command: None,
             is_default: true,
+            show_in_context_menu: true,
             created_at: now(),
             updated_at: now(),
         }
@@ -183,6 +190,7 @@ mod tests {
         assert!(json.contains("\"shellType\":\"powershell\""));
         assert!(json.contains("\"environmentType\":\"none\""));
         assert!(json.contains("\"isDefault\":true"));
+        assert!(json.contains("\"showInContextMenu\":true"));
         assert!(json.contains("\"projectId\":\"p1\""));
         // skipped optional fields
         assert!(!json.contains("conda"));
@@ -213,6 +221,7 @@ mod tests {
         assert_eq!(parsed.project_id, "p-fe");
         assert_eq!(parsed.shell_type, ShellType::Powershell);
         assert_eq!(parsed.environment_type, EnvironmentType::Conda);
+        assert!(parsed.show_in_context_menu);
         let conda = parsed.conda.unwrap();
         assert_eq!(conda.activation_mode, CondaActivationMode::ShellHook);
         assert_eq!(conda.environment_name.as_deref(), Some("smolvla"));

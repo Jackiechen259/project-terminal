@@ -59,6 +59,12 @@ pub struct ProfileInput {
 
     #[serde(default)]
     pub is_default: bool,
+    #[serde(default = "default_true")]
+    pub show_in_context_menu: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn build_profile_from_input(input: ProfileInput, id: String) -> AppResult<TerminalProfile> {
@@ -81,6 +87,7 @@ fn build_profile_from_input(input: ProfileInput, id: String) -> AppResult<Termin
         wsl_working_directory: input.wsl_working_directory,
         remote_shell_command: input.remote_shell_command,
         is_default: input.is_default,
+        show_in_context_menu: input.show_in_context_menu,
         created_at: now,
         updated_at: now,
     };
@@ -139,6 +146,7 @@ pub fn update_terminal_profile_inner(
         wsl_working_directory: input.wsl_working_directory,
         remote_shell_command: input.remote_shell_command,
         is_default: input.is_default,
+        show_in_context_menu: input.show_in_context_menu,
         created_at: existing.created_at,
         updated_at: Utc::now(),
     };
@@ -243,6 +251,7 @@ mod tests {
             wsl_working_directory: None,
             remote_shell_command: None,
             is_default: false,
+            show_in_context_menu: true,
         }
     }
 

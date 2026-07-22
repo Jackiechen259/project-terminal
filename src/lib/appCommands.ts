@@ -1,6 +1,7 @@
 export type AppCommand =
   | { type: "new-terminal"; projectId: string }
   | { type: "copy-terminal" }
+  | { type: "profiles-changed"; projectId: string }
   | { type: "open-settings"; section?: "general" | "profiles" | "templates" };
 
 const APP_COMMAND_EVENT = "project-terminal:command";

@@ -98,6 +98,7 @@ export interface TerminalProfile {
   remoteShellCommand?: string;
 
   isDefault: boolean;
+  showInContextMenu: boolean;
 
   createdAt: string;
   updatedAt: string;

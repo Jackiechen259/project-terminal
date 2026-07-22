@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ChevronLeft,
+  EyeOff,
   LayoutTemplate,
   Plus,
   Settings,
   SlidersHorizontal,
+  Sparkles,
   SquareTerminal,
   Trash2,
 } from "lucide-react";
@@ -26,7 +28,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { listenForAppCommands } from "@/lib/appCommands";
+import { dispatchAppCommand, listenForAppCommands } from "@/lib/appCommands";
+import {
+  BUILT_IN_PROFILE_PRESETS,
+  type BuiltInProfilePreset,
+  hasMaterializedPreset,
+} from "@/lib/profilePresets";
 import { cn } from "@/lib/utils";
 import type { ProfileInput, TemplateInput } from "@/services";
 import { useProfileStore } from "@/stores/profileStore";
@@ -47,6 +54,7 @@ type SettingsSection = "general" | "profiles" | "templates";
 
 type ProfileDraft = {
   id?: string;
+  builtInPresetId?: string;
   name: string;
   shellType: ShellType;
   shellExecutable: string;
@@ -65,6 +73,7 @@ type ProfileDraft = {
   wslWorkingDirectory: string;
   remoteShellCommand: string;
   isDefault: boolean;
+  showInContextMenu: boolean;
 };
 const LOCAL_SHELLS: Array<{ value: ShellType; label: string }> = [
   { value: "powershell", label: "PowerShell" },
@@ -134,6 +143,7 @@ function blankTemplateDraft(): ProfileDraft {
     wslWorkingDirectory: "",
     remoteShellCommand: "",
     isDefault: false,
+    showInContextMenu: true,
   };
 }
 
@@ -162,6 +172,7 @@ function draftFromTemplate(template: ProfileTemplate): ProfileDraft {
     wslWorkingDirectory: template.wslWorkingDirectory ?? "",
     remoteShellCommand: template.remoteShellCommand ?? "",
     isDefault: false,
+    showInContextMenu: true,
   };
 }
 
@@ -185,6 +196,19 @@ function blankDraft(projectType: "local" | "ssh" | "wsl"): ProfileDraft {
     wslWorkingDirectory: "",
     remoteShellCommand: "",
     isDefault: false,
+    showInContextMenu: true,
+  };
+}
+
+function draftFromBuiltInPreset(
+  preset: BuiltInProfilePreset,
+  projectType: "local" | "ssh" | "wsl",
+): ProfileDraft {
+  return {
+    ...blankDraft(projectType),
+    builtInPresetId: preset.id,
+    name: preset.name,
+    startupCommands: preset.startupCommands.join("\n"),
   };
 }
 
@@ -213,6 +237,7 @@ function draftFromProfile(profile: TerminalProfile): ProfileDraft {
     wslWorkingDirectory: profile.wslWorkingDirectory ?? "",
     remoteShellCommand: profile.remoteShellCommand ?? "",
     isDefault: profile.isDefault,
+    showInContextMenu: profile.showInContextMenu ?? true,
   };
 }
 
@@ -281,6 +306,13 @@ export function SettingsDialog() {
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === projectId) ?? null,
     [projects, projectId],
+  );
+  const uncreatedBuiltInPresets = useMemo(
+    () =>
+      BUILT_IN_PROFILE_PRESETS.filter(
+        (preset) => !hasMaterializedPreset(profiles, preset),
+      ),
+    [profiles],
   );
 
   useEffect(() => {
@@ -378,12 +410,22 @@ export function SettingsDialog() {
         wslWorkingDirectory: optional(editing.wslWorkingDirectory),
         remoteShellCommand: optional(editing.remoteShellCommand),
         isDefault: editing.isDefault,
+        showInContextMenu: editing.showInContextMenu,
       };
       setSaving(true);
       setError(null);
-      if (editing.id) await updateProfile(input);
-      else await createProfile(input);
-      setEditing(null);
+      const savedProfile = editing.id
+        ? await updateProfile(input)
+        : await createProfile(input);
+      dispatchAppCommand({
+        type: "profiles-changed",
+        projectId: selectedProject.id,
+      });
+      setEditing(
+        savedProfile.showInContextMenu === false
+          ? draftFromProfile(savedProfile)
+          : null,
+      );
     } catch (cause) {
       const message =
         cause instanceof Error
@@ -404,6 +446,7 @@ export function SettingsDialog() {
     try {
       setError(null);
       await deleteProfile(profile.id, projectId);
+      dispatchAppCommand({ type: "profiles-changed", projectId });
       if (editing?.id === profile.id) setEditing(null);
     } catch (cause) {
       setError(
@@ -588,6 +631,12 @@ export function SettingsDialog() {
                         <span className="min-w-0 flex-1 truncate">
                           {profile.name}
                         </span>
+                        {profile.showInContextMenu === false ? (
+                          <EyeOff
+                            className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                            aria-label="Hidden from + menu"
+                          />
+                        ) : null}
                         {profile.isDefault ? (
                           <Check
                             className="h-3.5 w-3.5 shrink-0 text-ok"
@@ -596,7 +645,39 @@ export function SettingsDialog() {
                         ) : null}
                       </button>
                     ))}
-                  {!loading && selectedProject && !profiles.length ? (
+                  {!loading &&
+                    selectedProject &&
+                    uncreatedBuiltInPresets.map((preset) => (
+                      <button
+                        key={`built-in-${preset.id}`}
+                        type="button"
+                        onClick={() => {
+                          setEditing(
+                            draftFromBuiltInPreset(
+                              preset,
+                              selectedProject.type,
+                            ),
+                          );
+                          setError(null);
+                        }}
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent",
+                          editing?.builtInPresetId === preset.id && "bg-accent",
+                        )}
+                      >
+                        <Sparkles
+                          className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                          aria-label="Built-in profile"
+                        />
+                        <span className="min-w-0 flex-1 truncate">
+                          {preset.name}
+                        </span>
+                      </button>
+                    ))}
+                  {!loading &&
+                  selectedProject &&
+                  !profiles.length &&
+                  !uncreatedBuiltInPresets.length ? (
                     <p className="px-2 py-3 text-xs text-muted-foreground">
                       No profiles yet.
                     </p>
@@ -682,6 +763,7 @@ export function SettingsDialog() {
                   setTemplateError(null);
                 }}
                 onSave={() => void saveTemplate()}
+                showProjectOptions={false}
                 onDelete={
                   editingTemplate.id
                     ? () => {
@@ -737,6 +819,7 @@ function ProfileForm({
   onCancel,
   onSave,
   onDelete,
+  showProjectOptions = true,
 }: {
   draft: ProfileDraft;
   projectType: "local" | "ssh" | "wsl";
@@ -746,6 +829,7 @@ function ProfileForm({
   onCancel: () => void;
   onSave: () => void;
   onDelete?: () => void;
+  showProjectOptions?: boolean;
 }) {
   const platformInfo = usePlatformStore((state) => state.info);
   const update = <K extends keyof ProfileDraft>(
@@ -765,10 +849,16 @@ function ProfileForm({
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
         <h2 className="text-base font-semibold">
-          {draft.id ? "Edit profile" : "New profile"}
+          {draft.id
+            ? "Edit profile"
+            : draft.builtInPresetId
+              ? "Set up built-in profile"
+              : "New profile"}
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          This profile is used only by the selected project.
+          {draft.builtInPresetId
+            ? "Save to customize this built-in profile for the selected project."
+            : "This profile is used only by the selected project."}
         </p>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
@@ -1001,11 +1091,20 @@ function ProfileForm({
           placeholder="PYTHONUTF8=1"
         />
       </Field>
-      <Checkbox
-        checked={draft.isDefault}
-        onChange={(checked) => update("isDefault", checked)}
-        label="Use this as the default profile for new terminals"
-      />
+      {showProjectOptions ? (
+        <div className="space-y-3">
+          <Checkbox
+            checked={draft.showInContextMenu}
+            onChange={(checked) => update("showInContextMenu", checked)}
+            label="Show this profile in the + button context menu"
+          />
+          <Checkbox
+            checked={draft.isDefault}
+            onChange={(checked) => update("isDefault", checked)}
+            label="Use this as the default profile for new terminals"
+          />
+        </div>
+      ) : null}
       {error ? (
         <div
           role="alert"

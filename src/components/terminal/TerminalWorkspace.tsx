@@ -8,6 +8,13 @@ import {
 } from "react";
 import { Button } from "@/components/ui/button";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Boxes,
   Columns2,
   LayoutTemplate,
@@ -26,8 +33,16 @@ import {
   ContextMenu,
   type ContextMenuItem,
 } from "@/components/ui/context-menu";
+import { joinContextMenuSections } from "@/components/ui/context-menu-items";
 import { dispatchAppCommand, listenForAppCommands } from "@/lib/appCommands";
 import { getAppShortcut, isBrowserShortcut } from "@/lib/keyboardShortcuts";
+import {
+  BUILT_IN_PROFILE_PRESETS,
+  findProfileByName,
+  isProfileShownInContextMenu,
+  normalizedProfileName,
+  uniqueProfilesByName,
+} from "@/lib/profilePresets";
 import {
   environmentService,
   profileService,
@@ -53,35 +68,11 @@ type TerminalDropZone = "left" | "right" | "top" | "bottom";
 type TabDropPosition = "before" | "after";
 type TabDropTarget = { tabId: string; position: TabDropPosition };
 
-/** Quick-launch preset: creates a profile on first use, then reuses it. */
-interface PresetTemplate {
-  name: string;
-  icon: typeof Sparkles;
-  configure: (base: ProfileInput) => void;
-}
-
 /** Detected Conda environment available as a quick-launch target. */
 interface CondaEnvOption {
   name: string;
   condaExecutable: string;
 }
-
-const PRESET_TEMPLATES: PresetTemplate[] = [
-  {
-    name: "Codex CLI",
-    icon: Sparkles,
-    configure: (base) => {
-      base.startupCommands = ["codex"];
-    },
-  },
-  {
-    name: "Oh My Pi",
-    icon: Sparkles,
-    configure: (base) => {
-      base.startupCommands = ["omp"];
-    },
-  },
-];
 
 /**
  * Terminal workspace: tab strip + terminal area.
@@ -150,6 +141,23 @@ export function TerminalWorkspace() {
   const suppressTabClickRef = useRef(false);
 
   const activeProject = projects.find((p) => p.id === activeProjectId);
+  const selectedProfile = profiles.find(
+    (profile) => profile.id === selectedProfileId,
+  );
+  const contextMenuProfiles = useMemo(
+    () => uniqueProfilesByName(profiles.filter(isProfileShownInContextMenu)),
+    [profiles],
+  );
+  const applyProfiles = useCallback((nextProfiles: TerminalProfile[]) => {
+    setProfiles(nextProfiles);
+    setSelectedProfileId((current) =>
+      nextProfiles.some((profile) => profile.id === current)
+        ? current
+        : (nextProfiles.find((profile) => profile.isDefault)?.id ??
+          nextProfiles[0]?.id ??
+          ""),
+    );
+  }, []);
   const group = activeProjectId ? tabGroups[activeProjectId] : undefined;
   const tabIds = useMemo(() => group?.tabIds ?? [], [group]);
   const activeTabId = group?.activeTabId ?? null;
@@ -545,14 +553,7 @@ export function TerminalWorkspace() {
       .list(activeProjectId)
       .then((nextProfiles) => {
         if (cancelled) return;
-        setProfiles(nextProfiles);
-        setSelectedProfileId((current) =>
-          nextProfiles.some((profile) => profile.id === current)
-            ? current
-            : (nextProfiles.find((profile) => profile.isDefault)?.id ??
-              nextProfiles[0]?.id ??
-              ""),
-        );
+        applyProfiles(nextProfiles);
       })
       .catch((cause) => {
         if (!cancelled)
@@ -564,7 +565,7 @@ export function TerminalWorkspace() {
     return () => {
       cancelled = true;
     };
-  }, [activeProjectId]);
+  }, [activeProjectId, applyProfiles]);
 
   // Detect Conda environments for quick-launch in the + button menu. Only
   // runs for local/WSL projects where a Conda install is reachable from the
@@ -617,10 +618,7 @@ export function TerminalWorkspace() {
       if (!activeProjectId) return null;
       setError(null);
       try {
-        const existing =
-          profiles.length > 0
-            ? profiles.find((p) => p.name === presetName)
-            : undefined;
+        const existing = findProfileByName(profiles, presetName);
         let profile: TerminalProfile;
         if (existing) {
           profile = existing;
@@ -634,6 +632,7 @@ export function TerminalWorkspace() {
               project?.type === "ssh" ? "remote-default" : "powershell",
             environmentType: "none",
             isDefault: false,
+            showInContextMenu: true,
           };
           configure(base);
           profile = await profileService.create(base);
@@ -662,19 +661,22 @@ export function TerminalWorkspace() {
     [activeProjectId, profiles, projects, registerTab],
   );
 
-  // Quick-launch a terminal from a saved profile template. Creates a concrete
-  // TerminalProfile for the active project from the template, then opens a tab.
+  // Quick-launch from a saved template. Reuse a same-name project profile so
+  // repeated launches do not accumulate duplicate profiles.
   const handleLaunchFromTemplate = useCallback(
     async (template: ProfileTemplate): Promise<string | null> => {
       if (!activeProjectId) return null;
       setError(null);
       try {
-        const profile = await templateService.createFromTemplate(
-          template.id,
-          activeProjectId,
-          template.name,
-        );
-        setProfiles((prev) => [...prev, profile]);
+        const existing = findProfileByName(profiles, template.name);
+        const profile =
+          existing ??
+          (await templateService.createFromTemplate(
+            template.id,
+            activeProjectId,
+            template.name,
+          ));
+        if (!existing) setProfiles((prev) => [...prev, profile]);
         const tab: TerminalTab = {
           id: crypto.randomUUID(),
           sessionId: "",
@@ -695,7 +697,7 @@ export function TerminalWorkspace() {
         return null;
       }
     },
-    [activeProjectId, registerTab],
+    [activeProjectId, profiles, registerTab],
   );
 
   function handleSessionId(tabId: string, sessionId: string) {
@@ -791,9 +793,22 @@ export function TerminalWorkspace() {
     return listenForAppCommands((command) => {
       if (command.type === "new-terminal") {
         void handleNewTerminal(command.projectId);
+      } else if (
+        command.type === "profiles-changed" &&
+        command.projectId === activeProjectId
+      ) {
+        void profileService
+          .list(command.projectId)
+          .then(applyProfiles)
+          .catch((cause) =>
+            setError(
+              (cause as { message?: string }).message ??
+                "Failed to refresh terminal profiles",
+            ),
+          );
       }
     });
-  }, [handleNewTerminal]);
+  }, [activeProjectId, applyProfiles, handleNewTerminal]);
 
   useEffect(() => {
     const isEditableControl = (target: EventTarget | null) => {
@@ -949,6 +964,82 @@ export function TerminalWorkspace() {
     );
   };
 
+  const profileMenuItems: ContextMenuItem[] = contextMenuProfiles.map(
+    (profile) => ({
+      label: profile.name,
+      icon: profile.isDefault ? Star : TerminalIcon,
+      onSelect: () => {
+        if (activeProjectId)
+          void handleNewTerminal(activeProjectId, profile.id);
+      },
+    }),
+  );
+
+  // Quick-launch sources are ordered by priority and claimed by normalized
+  // name. A materialized profile wins over built-ins, templates and Conda;
+  // built-ins then win over later same-name sources.
+  const claimedQuickLaunchNames = new Set(
+    profiles.map((profile) => normalizedProfileName(profile.name)),
+  );
+  const quickLaunchItems: ContextMenuItem[] = [];
+  const addQuickLaunchItem = (name: string, item: ContextMenuItem) => {
+    const key = normalizedProfileName(name);
+    if (claimedQuickLaunchNames.has(key)) return;
+    claimedQuickLaunchNames.add(key);
+    quickLaunchItems.push(item);
+  };
+
+  for (const preset of BUILT_IN_PROFILE_PRESETS) {
+    addQuickLaunchItem(preset.name, {
+      label: preset.name,
+      icon: Sparkles,
+      onSelect: () =>
+        void handleQuickLaunch(preset.name, (base) => {
+          base.startupCommands = [...preset.startupCommands];
+        }),
+    });
+  }
+  for (const template of templateList) {
+    addQuickLaunchItem(template.name, {
+      label: template.name,
+      icon: LayoutTemplate,
+      onSelect: () => void handleLaunchFromTemplate(template),
+    });
+  }
+  for (const env of condaEnvs) {
+    const name = `Conda: ${env.name}`;
+    addQuickLaunchItem(name, {
+      label: name,
+      icon: Boxes,
+      onSelect: () =>
+        void handleQuickLaunch(name, (base) => {
+          base.environmentType = "conda";
+          base.conda = {
+            condaExecutable: env.condaExecutable,
+            environmentName: env.name,
+            activationMode: "shell-hook",
+            autoActivate: true,
+          };
+        }),
+    });
+  }
+
+  const plusMenuItems = joinContextMenuSections(
+    profileMenuItems,
+    quickLaunchItems,
+    [
+      {
+        label: "Manage profiles…",
+        icon: Settings2,
+        onSelect: () =>
+          dispatchAppCommand({
+            type: "open-settings",
+            section: "profiles",
+          }),
+      },
+    ],
+  );
+
   return (
     <section
       className="flex min-w-0 flex-1 flex-col"
@@ -1023,18 +1114,43 @@ export function TerminalWorkspace() {
           )}
         </div>
         {activeProject && profiles.length > 1 ? (
-          <select
-            aria-label="Terminal profile"
-            className="h-7 max-w-44 shrink-0 rounded border border-border bg-background px-2 text-xs"
+          <Select
             value={selectedProfileId}
-            onChange={(event) => setSelectedProfileId(event.target.value)}
+            onValueChange={setSelectedProfileId}
           >
-            {profiles.map((profile) => (
-              <option key={profile.id} value={profile.id}>
-                {profile.name}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger
+              aria-label="Terminal profile"
+              title="Profile used by the + button"
+              className="group h-7 w-36 shrink-0 gap-1.5 rounded-md border-border/70 bg-background/70 px-2 text-xs font-medium shadow-sm transition-all hover:border-primary/40 hover:bg-accent/50 focus:ring-1 focus:ring-primary/50 focus:ring-offset-0 [&>svg:last-child]:h-3.5 [&>svg:last-child]:w-3.5 [&>svg:last-child]:transition-transform data-[state=open]:border-primary/50 data-[state=open]:bg-accent/60 data-[state=open]:[&>svg:last-child]:rotate-180"
+            >
+              {selectedProfile?.isDefault ? (
+                <Star className="h-3.5 w-3.5 shrink-0 fill-primary/20 text-primary" />
+              ) : (
+                <TerminalIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
+              )}
+              <SelectValue placeholder="Choose profile">
+                <span className="block truncate">
+                  {selectedProfile?.name ?? "Choose profile"}
+                </span>
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent
+              align="end"
+              sideOffset={6}
+              className="min-w-44 rounded-lg border-border/80 bg-popover/95 shadow-xl backdrop-blur-md"
+            >
+              {profiles.map((profile) => (
+                <SelectItem
+                  key={profile.id}
+                  value={profile.id}
+                  textValue={profile.name}
+                  className="my-0.5 rounded-md py-1.5 pl-8 pr-2 text-xs focus:bg-accent/80"
+                >
+                  <span className="block truncate">{profile.name}</span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         ) : null}
         {validSplitView ? (
           <Button
@@ -1214,64 +1330,7 @@ export function TerminalWorkspace() {
         <ContextMenu
           position={plusMenuPosition}
           onClose={() => setPlusMenuPosition(null)}
-          items={[
-            ...profiles.map((profile): ContextMenuItem => ({
-              label: profile.name,
-              icon: profile.isDefault ? Star : TerminalIcon,
-              onSelect: () => {
-                if (activeProjectId)
-                  void handleNewTerminal(activeProjectId, profile.id);
-              },
-            })),
-            ...(profiles.length > 0
-              ? ([{ separator: true }] as ContextMenuItem[])
-              : []),
-            ...PRESET_TEMPLATES.map((preset): ContextMenuItem => ({
-              label: preset.name,
-              icon: preset.icon,
-              onSelect: () =>
-                void handleQuickLaunch(preset.name, preset.configure),
-            })),
-            ...(templateList.length > 0
-              ? ([
-                  { separator: true } as ContextMenuItem,
-                  ...templateList.map((template): ContextMenuItem => ({
-                    label: template.name,
-                    icon: LayoutTemplate,
-                    onSelect: () => void handleLaunchFromTemplate(template),
-                  })),
-                ] as ContextMenuItem[])
-              : []),
-            ...(condaEnvs.length > 0
-              ? ([
-                  { separator: true } as ContextMenuItem,
-                  ...condaEnvs.map((env): ContextMenuItem => ({
-                    label: `Conda: ${env.name}`,
-                    icon: Boxes,
-                    onSelect: () =>
-                      void handleQuickLaunch(`Conda: ${env.name}`, (base) => {
-                        base.environmentType = "conda";
-                        base.conda = {
-                          condaExecutable: env.condaExecutable,
-                          environmentName: env.name,
-                          activationMode: "shell-hook",
-                          autoActivate: true,
-                        };
-                      }),
-                  })),
-                ] as ContextMenuItem[])
-              : []),
-            { separator: true } as ContextMenuItem,
-            {
-              label: "Manage profiles…",
-              icon: Settings2,
-              onSelect: () =>
-                dispatchAppCommand({
-                  type: "open-settings",
-                  section: "profiles",
-                }),
-            },
-          ]}
+          items={plusMenuItems}
         />
       ) : null}
     </section>

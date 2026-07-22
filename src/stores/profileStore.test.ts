@@ -35,6 +35,7 @@ describe("profileStore", () => {
           shellType: "powershell",
           environmentType: "none",
           isDefault: true,
+          showInContextMenu: true,
           createdAt: "2026-01-01T00:00:00Z",
           updatedAt: "2026-01-01T00:00:00Z",
         },
@@ -72,6 +73,7 @@ describe("profileStore", () => {
               shellType: "powershell",
               environmentType: "none",
               isDefault: true,
+              showInContextMenu: true,
               createdAt: "2026-01-01T00:00:00Z",
               updatedAt: "2026-01-01T00:00:00Z",
             },
@@ -85,6 +87,7 @@ describe("profileStore", () => {
         shellType: "powershell",
         environmentType: "none",
         isDefault: true,
+        showInContextMenu: true,
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
       });
@@ -94,6 +97,7 @@ describe("profileStore", () => {
         shellType: "powershell",
         environmentType: "none",
         isDefault: true,
+        showInContextMenu: true,
       });
       const list = useProfileStore.getState().byProjectId["proj-a"];
       expect(list).toHaveLength(2);
@@ -114,6 +118,7 @@ describe("profileStore", () => {
               shellType: "powershell",
               environmentType: "none",
               isDefault: false,
+              showInContextMenu: true,
               createdAt: "",
               updatedAt: "",
             },
@@ -124,6 +129,7 @@ describe("profileStore", () => {
               shellType: "powershell",
               environmentType: "none",
               isDefault: true,
+              showInContextMenu: true,
               createdAt: "",
               updatedAt: "",
             },

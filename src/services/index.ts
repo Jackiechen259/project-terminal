@@ -86,6 +86,7 @@ export interface ProfileInput {
   wslWorkingDirectory?: string;
   remoteShellCommand?: string;
   isDefault: boolean;
+  showInContextMenu: boolean;
 }
 
 export interface TemplateInput {

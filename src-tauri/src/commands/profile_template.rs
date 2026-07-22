@@ -181,6 +181,7 @@ pub fn create_profile_from_template_inner(
         wsl_working_directory: template.wsl_working_directory,
         remote_shell_command: template.remote_shell_command,
         is_default: false,
+        show_in_context_menu: true,
         created_at: now,
         updated_at: now,
     };
@@ -281,4 +282,3 @@ mod tests {
         assert!(!profile.is_default);
     }
 }
-

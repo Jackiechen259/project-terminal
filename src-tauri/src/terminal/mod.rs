@@ -229,6 +229,7 @@ mod tests {
             wsl_working_directory: None,
             remote_shell_command: None,
             is_default: false,
+            show_in_context_menu: true,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
