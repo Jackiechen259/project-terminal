@@ -1,6 +1,14 @@
 import { useEffect, useState } from "react";
 import type { MouseEvent } from "react";
-import { Copy, Minus, Square, Terminal, X } from "lucide-react";
+import {
+  Copy,
+  Minus,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Square,
+  Terminal,
+  X,
+} from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 /**
@@ -8,7 +16,13 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
  * window actions here means the chrome follows the rest of the dark UI rather
  * than Windows' light title bar.
  */
-export function WindowTitleBar() {
+export function WindowTitleBar({
+  sidebarCollapsed = false,
+  onToggleSidebar,
+}: {
+  sidebarCollapsed?: boolean;
+  onToggleSidebar?: () => void;
+}) {
   const [isMaximized, setIsMaximized] = useState(false);
 
   useEffect(() => {
@@ -44,6 +58,24 @@ export function WindowTitleBar() {
       onDoubleClick={toggleMaximize}
     >
       <div className="flex min-w-0 flex-1 items-center gap-2 px-3">
+        {onToggleSidebar ? (
+          <button
+            type="button"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={sidebarCollapsed ? "Show projects sidebar" : "Hide projects sidebar"}
+            aria-expanded={!sidebarCollapsed}
+            title={sidebarCollapsed ? "Show projects sidebar" : "Hide projects sidebar"}
+            onMouseDown={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => event.stopPropagation()}
+            onClick={onToggleSidebar}
+          >
+            {sidebarCollapsed ? (
+              <PanelLeftOpen className="h-4 w-4" />
+            ) : (
+              <PanelLeftClose className="h-4 w-4" />
+            )}
+          </button>
+        ) : null}
         <span className="flex h-5 w-5 items-center justify-center rounded-[5px] bg-[hsl(210_75%_56%)] text-white shadow-[0_0_12px_hsl(210_75%_56%_/_0.26)]">
           <Terminal className="h-3.5 w-3.5" strokeWidth={2.4} />
         </span>
