@@ -6,7 +6,7 @@ export interface BuiltInProfilePreset {
   startupCommands: string[];
 }
 
-/** Profiles that are always offered as built-in quick-launch choices. */
+/** Templates that are always offered as built-in quick-launch choices. */
 export const BUILT_IN_PROFILE_PRESETS: BuiltInProfilePreset[] = [
   {
     id: "codex-cli",
@@ -20,12 +20,12 @@ export const BUILT_IN_PROFILE_PRESETS: BuiltInProfilePreset[] = [
   },
 ];
 
-/** A built-in preset is materialized after its project profile is created. */
+/** A built-in preset is materialized when a same-name saved item exists. */
 export function hasMaterializedPreset(
-  profiles: Pick<TerminalProfile, "name">[],
+  items: Pick<TerminalProfile, "name">[],
   preset: BuiltInProfilePreset,
 ) {
-  return Boolean(findProfileByName(profiles, preset.name));
+  return Boolean(findProfileByName(items, preset.name));
 }
 
 export function normalizedProfileName(name: string) {

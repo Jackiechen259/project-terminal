@@ -9,7 +9,7 @@ import {
 } from "./profilePresets";
 
 describe("built-in profile presets", () => {
-  it("defines the two quick-launch profiles shown in settings", () => {
+  it("defines the two built-in templates shown in settings", () => {
     expect(BUILT_IN_PROFILE_PRESETS).toEqual([
       {
         id: "codex-cli",
@@ -24,7 +24,7 @@ describe("built-in profile presets", () => {
     ]);
   });
 
-  it("recognizes a preset after its project profile has been created", () => {
+  it("recognizes a preset after a same-name item has been created", () => {
     const preset = BUILT_IN_PROFILE_PRESETS[0];
 
     expect(hasMaterializedPreset([], preset)).toBe(false);

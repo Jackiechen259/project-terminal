@@ -314,12 +314,12 @@ export function SettingsDialog() {
     () => projects.find((project) => project.id === projectId) ?? null,
     [projects, projectId],
   );
-  const uncreatedBuiltInPresets = useMemo(
+  const uncreatedBuiltInTemplates = useMemo(
     () =>
       BUILT_IN_PROFILE_PRESETS.filter(
-        (preset) => !hasMaterializedPreset(profiles, preset),
+        (preset) => !hasMaterializedPreset(templates, preset),
       ),
-    [profiles],
+    [templates],
   );
 
   useEffect(() => {
@@ -655,39 +655,7 @@ export function SettingsDialog() {
                         ) : null}
                       </button>
                     ))}
-                  {!loading &&
-                    selectedProject &&
-                    uncreatedBuiltInPresets.map((preset) => (
-                      <button
-                        key={`built-in-${preset.id}`}
-                        type="button"
-                        onClick={() => {
-                          setEditing(
-                            draftFromBuiltInPreset(
-                              preset,
-                              selectedProject.type,
-                            ),
-                          );
-                          setError(null);
-                        }}
-                        className={cn(
-                          "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent",
-                          editing?.builtInPresetId === preset.id && "bg-accent",
-                        )}
-                      >
-                        <Sparkles
-                          className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
-                          aria-label={t("Built-in profile")}
-                        />
-                        <span className="min-w-0 flex-1 truncate">
-                          {preset.name}
-                        </span>
-                      </button>
-                    ))}
-                  {!loading &&
-                  selectedProject &&
-                  !profiles.length &&
-                  !uncreatedBuiltInPresets.length ? (
+                  {!loading && selectedProject && !profiles.length ? (
                     <p className="px-2 py-3 text-xs text-muted-foreground">
                       {t("No profiles yet.")}
                     </p>
@@ -714,6 +682,31 @@ export function SettingsDialog() {
                   {t("Templates")}
                 </span>
                 <div className="app-scrollbar min-h-0 flex-1 space-y-1 overflow-y-auto">
+                  {uncreatedBuiltInTemplates.map((preset) => (
+                    <button
+                      key={`built-in-${preset.id}`}
+                      type="button"
+                      onClick={() => {
+                        setEditingTemplate(
+                          draftFromBuiltInPreset(preset, "local"),
+                        );
+                        setTemplateError(null);
+                      }}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent",
+                        editingTemplate?.builtInPresetId === preset.id &&
+                          "bg-accent",
+                      )}
+                    >
+                      <Sparkles
+                        className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                        aria-label={t("Built-in template")}
+                      />
+                      <span className="min-w-0 flex-1 truncate">
+                        {preset.name}
+                      </span>
+                    </button>
+                  ))}
                   {templates.map((template) => (
                     <button
                       key={template.id}
@@ -733,7 +726,8 @@ export function SettingsDialog() {
                       </span>
                     </button>
                   ))}
-                  {templates.length === 0 ? (
+                  {templates.length === 0 &&
+                  uncreatedBuiltInTemplates.length === 0 ? (
                     <p className="px-2 py-3 text-xs text-muted-foreground">
                       {t("No templates yet.")}
                     </p>
@@ -810,7 +804,9 @@ export function SettingsDialog() {
               />
             ) : (
               <div className="flex h-full min-h-52 items-center justify-center text-center text-sm text-muted-foreground">
-                {t("Select a profile to edit it, or create a new one.")}
+                {section === "templates"
+                  ? t("Select a template to edit it, or create a new one.")
+                  : t("Select a profile to edit it, or create a new one.")}
               </div>
             )}
           </main>
@@ -855,23 +851,34 @@ function ProfileForm({
     draft.environmentType !== "none" &&
     draft.environmentType !== "conda" &&
     draft.environmentType !== "custom";
+  const isTemplate = !showProjectOptions;
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
         <h2 className="text-base font-semibold">
           {draft.id
-            ? t("Edit profile")
+            ? t(isTemplate ? "Edit template" : "Edit profile")
             : draft.builtInPresetId
-              ? t("Set up built-in profile")
-              : t("New profile")}
+              ? t(
+                  isTemplate
+                    ? "Customize built-in template"
+                    : "Set up built-in profile",
+                )
+              : t(isTemplate ? "New template" : "New profile")}
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
           {draft.builtInPresetId
             ? t(
-                "Save to customize this built-in profile for the selected project.",
+                isTemplate
+                  ? "Save to customize this built-in template."
+                  : "Save to customize this built-in profile for the selected project.",
               )
-            : t("This profile is used only by the selected project.")}
+            : t(
+                isTemplate
+                  ? "This template can be used by any project."
+                  : "This profile is used only by the selected project.",
+              )}
         </p>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
@@ -1143,7 +1150,8 @@ function ProfileForm({
               onClick={onDelete}
               disabled={saving}
             >
-              <Trash2 className="h-4 w-4" /> {t("Delete profile")}
+              <Trash2 className="h-4 w-4" />
+              {t(isTemplate ? "Delete template" : "Delete profile")}
             </Button>
           ) : null}
         </div>
@@ -1152,7 +1160,9 @@ function ProfileForm({
             <ChevronLeft className="h-4 w-4" /> {t("Cancel")}
           </Button>
           <Button onClick={onSave} disabled={saving}>
-            {saving ? t("Saving…") : t("Save profile")}
+            {saving
+              ? t("Saving…")
+              : t(isTemplate ? "Save template" : "Save profile")}
           </Button>
         </div>
       </div>

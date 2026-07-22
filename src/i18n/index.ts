@@ -85,6 +85,8 @@ const zhCN: Record<string, string> = {
     "偏好设置保存在本地并自动应用。",
   "Select a profile to edit it, or create a new one.":
     "选择一个配置进行编辑，或创建新配置。",
+  "Select a template to edit it, or create a new one.":
+    "选择一个模板进行编辑，或创建新模板。",
 };
 
 const zhCNWorkspace: Record<string, string> = {
@@ -279,8 +281,11 @@ const zhCNWorkspace: Record<string, string> = {
   "This profile is used only by the selected project.":
     "此配置仅供所选项目使用。",
   "Edit profile": "编辑配置",
+  "Edit template": "编辑模板",
   "Set up built-in profile": "设置内置配置",
+  "Customize built-in template": "自定义内置模板",
   "Delete profile": "删除配置",
+  "Delete template": "删除模板",
   Save: "保存",
   "e.g. Python environment": "例如 Python 环境",
   "Optional label": "可选标签",
@@ -288,14 +293,18 @@ const zhCNWorkspace: Record<string, string> = {
   "Hidden from + menu": "已从 + 菜单隐藏",
   "Default profile": "默认配置",
   "Built-in profile": "内置配置",
+  "Built-in template": "内置模板",
   "e.g. /usr/bin/bash": "例如 /usr/bin/bash",
   "e.g. C:\\Tools\\shell.exe": "例如 C:\\Tools\\shell.exe",
   "e.g. my-env": "例如 my-env",
   "e.g. .venv": "例如 .venv",
   "Terminal profile": "终端配置",
   "Save profile": "保存配置",
+  "Save template": "保存模板",
   "Save to customize this built-in profile for the selected project.":
     "保存后即可为所选项目自定义此内置配置。",
+  "Save to customize this built-in template.": "保存后即可自定义此内置模板。",
+  "This template can be used by any project.": "此模板可用于任意项目。",
   "Activate this Conda environment when the terminal opens":
     "终端打开时激活此 Conda 环境",
   "The application only activates an existing environment; it never changes it.":

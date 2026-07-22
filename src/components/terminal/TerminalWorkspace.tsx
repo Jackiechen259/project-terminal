@@ -980,8 +980,8 @@ export function TerminalWorkspace() {
   );
 
   // Quick-launch sources are ordered by priority and claimed by normalized
-  // name. A materialized profile wins over built-ins, templates and Conda;
-  // built-ins then win over later same-name sources.
+  // name. A materialized profile wins over templates, built-ins and Conda;
+  // saved templates then win over same-name built-ins so customizations apply.
   const claimedQuickLaunchNames = new Set(
     profiles.map((profile) => normalizedProfileName(profile.name)),
   );
@@ -993,6 +993,13 @@ export function TerminalWorkspace() {
     quickLaunchItems.push(item);
   };
 
+  for (const template of templateList) {
+    addQuickLaunchItem(template.name, {
+      label: template.name,
+      icon: LayoutTemplate,
+      onSelect: () => void handleLaunchFromTemplate(template),
+    });
+  }
   for (const preset of BUILT_IN_PROFILE_PRESETS) {
     addQuickLaunchItem(preset.name, {
       label: preset.name,
@@ -1001,13 +1008,6 @@ export function TerminalWorkspace() {
         void handleQuickLaunch(preset.name, (base) => {
           base.startupCommands = [...preset.startupCommands];
         }),
-    });
-  }
-  for (const template of templateList) {
-    addQuickLaunchItem(template.name, {
-      label: template.name,
-      icon: LayoutTemplate,
-      onSelect: () => void handleLaunchFromTemplate(template),
     });
   }
   for (const env of condaEnvs) {
