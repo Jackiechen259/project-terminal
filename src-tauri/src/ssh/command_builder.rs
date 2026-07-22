@@ -49,6 +49,23 @@ pub fn build_ssh_test_argv(connection: &SshConnection) -> SshCommand {
     SshCommand { args }
 }
 
+/// Build a non-interactive SSH invocation for a short remote query such as a
+/// directory listing. It deliberately never prompts for credentials, because
+/// the directory picker has no terminal attached for answering prompts.
+pub fn build_ssh_browse_argv(connection: &SshConnection, remote_command: String) -> SshCommand {
+    let mut args = common_args(connection);
+    args.extend([
+        "-T".to_string(),
+        "-o".to_string(),
+        "BatchMode=yes".to_string(),
+        "-o".to_string(),
+        "NumberOfPasswordPrompts=0".to_string(),
+        connection.host.clone(),
+        remote_command,
+    ]);
+    SshCommand { args }
+}
+
 fn common_args(connection: &SshConnection) -> Vec<String> {
     let mut args = vec![
         "-p".to_string(),
@@ -184,5 +201,16 @@ mod tests {
             command.args[command.args.len() - 2..],
             ["srv.example", "exit"]
         );
+    }
+
+    #[test]
+    fn browse_argv_is_noninteractive_and_keeps_the_remote_command_intact() {
+        let command = build_ssh_browse_argv(&sample(), "pwd".into());
+        assert!(command.args.windows(2).any(|pair| pair == ["-T", "-o"]));
+        assert!(command
+            .args
+            .windows(2)
+            .any(|pair| pair == ["-o", "BatchMode=yes"]));
+        assert_eq!(command.args.last(), Some(&"pwd".to_string()));
     }
 }

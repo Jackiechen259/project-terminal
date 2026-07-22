@@ -26,6 +26,7 @@ import { useSshStore } from "@/stores/sshStore";
 import { usePlatformStore } from "@/stores/platformStore";
 import { environmentService, type ProjectInput } from "@/services";
 import { SshConnectionDialog } from "@/components/ssh/SshConnectionDialog";
+import { RemoteFolderPicker } from "@/components/ssh/RemoteFolderPicker";
 
 type ProjectType = "local" | "ssh" | "wsl";
 
@@ -365,14 +366,21 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
               </div>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="remote-path">Remote path</Label>
-                <Input
-                  id="remote-path"
-                  value={remotePath}
-                  onChange={(event) => setRemotePath(event.target.value)}
-                />
+                <div className="flex gap-2">
+                  <Input
+                    id="remote-path"
+                    value={remotePath}
+                    onChange={(event) => setRemotePath(event.target.value)}
+                  />
+                  <RemoteFolderPicker
+                    connectionId={sshConnectionId}
+                    initialPath={remotePath}
+                    onSelect={setRemotePath}
+                  />
+                </div>
                 <span className="text-xs text-muted-foreground">
-                  The remote working directory. It is used when interactive SSH
-                  terminals are added in Phase 6.
+                  Browse folders after choosing a connection, or type a remote
+                  working directory manually.
                 </span>
               </div>
             </div>

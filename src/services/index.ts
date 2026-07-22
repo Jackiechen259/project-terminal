@@ -44,6 +44,7 @@ const SSH_CMD = {
   update: "update_ssh_connection",
   delete: "delete_ssh_connection",
   test: "test_ssh_connection",
+  listDirectories: "list_remote_directories",
   detect: "detect_ssh_client",
   fingerprint: "read_ssh_host_fingerprint",
 } as const;
@@ -112,6 +113,11 @@ export interface TerminalOutputChunk {
 export interface TerminalSessionStatus {
   status: "starting" | "running" | "exited" | "error";
   exitCode?: number;
+}
+
+export interface RemoteDirectoryListing {
+  path: string;
+  directories: Array<{ name: string; path: string }>;
 }
 
 interface ListResponse<T> {
@@ -186,6 +192,11 @@ export const sshService = {
     invokeOrThrow<SshConnection>(SSH_CMD.update, { input }),
   delete: (id: string) => invokeOrThrow<void>(SSH_CMD.delete, { id }),
   test: (id: string) => invokeOrThrow<string>(SSH_CMD.test, { id }),
+  listDirectories: (connectionId: string, path: string) =>
+    invokeOrThrow<RemoteDirectoryListing>(SSH_CMD.listDirectories, {
+      connectionId,
+      path,
+    }),
   detect: () => invokeOrThrow<string | null>(SSH_CMD.detect),
   fingerprint: (id: string) =>
     invokeOrThrow<string>(SSH_CMD.fingerprint, { id }),

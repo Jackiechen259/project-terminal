@@ -18,6 +18,22 @@ use crate::error::{AppError, AppResult};
 use crate::ssh::SshConnection;
 use crate::state::AppState;
 
+const REMOTE_DIRECTORY_LIMIT: usize = 500;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteDirectoryListing {
+    pub path: String,
+    pub directories: Vec<RemoteDirectoryEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteDirectoryEntry {
+    pub name: String,
+    pub path: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SshConnectionInput {
@@ -223,6 +239,128 @@ pub fn test_ssh_connection_inner(state: &AppState, id: &str) -> AppResult<String
     Err(AppError::SshConnectionFailed(safe_detail))
 }
 
+fn escape_remote_directory_path(path: &str) -> AppResult<String> {
+    let trimmed = path.trim();
+    if trimmed.contains('\0') {
+        return Err(AppError::RemotePathInvalid(
+            "Remote path cannot contain a NUL byte".into(),
+        ));
+    }
+    let path = if trimmed.is_empty() { "~" } else { trimmed };
+    if !path.starts_with('~') {
+        return Ok(crate::terminal::escaping::escape_remote_posix_argument(
+            path,
+        ));
+    }
+
+    let after_tilde = &path[1..];
+    if after_tilde.is_empty() {
+        return Ok("~".into());
+    }
+    if let Some(rest) = after_tilde.strip_prefix('/') {
+        return Ok(format!(
+            "~/{}",
+            crate::terminal::escaping::escape_remote_posix_argument(rest)
+        ));
+    }
+    match after_tilde.find('/') {
+        Some(slash) => Ok(format!(
+            "~{}/{}",
+            &after_tilde[..slash],
+            crate::terminal::escaping::escape_remote_posix_argument(&after_tilde[slash + 1..])
+        )),
+        None => Ok(path.into()),
+    }
+}
+
+fn remote_directory_command(path: &str) -> AppResult<String> {
+    let path = escape_remote_directory_path(path)?;
+    // SSH hands the remote command to the account's login shell. Invoke POSIX
+    // sh explicitly so zsh's `nomatch` option (and similar shell-specific
+    // glob rules) cannot make an empty directory listing fail.
+    let script = format!(
+        "cd -- {path} || exit; printf '%s\\0' \"$PWD\"; count=0; for entry in ./* ./.??*; do [ -d \"$entry\" ] || continue; printf '%s\\0' \"${{entry#./}}\"; count=$((count + 1)); [ \"$count\" -ge {REMOTE_DIRECTORY_LIMIT} ] && break; done"
+    );
+    Ok(format!(
+        "sh -c {}",
+        crate::terminal::escaping::escape_remote_posix_argument(&script)
+    ))
+}
+
+fn parse_remote_directory_listing(output: &[u8]) -> AppResult<RemoteDirectoryListing> {
+    let mut fields = output.split(|byte| *byte == b'\0');
+    let path = fields
+        .next()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            AppError::SshConnectionFailed("Remote directory query returned no path".into())
+        })?;
+    let path = String::from_utf8_lossy(path).into_owned();
+    let directories = fields
+        .filter(|value| !value.is_empty())
+        .map(|value| String::from_utf8_lossy(value).into_owned())
+        .map(|name| RemoteDirectoryEntry {
+            path: if path == "/" {
+                format!("/{name}")
+            } else {
+                format!("{}/{}", path.trim_end_matches('/'), name)
+            },
+            name,
+        })
+        .collect();
+    Ok(RemoteDirectoryListing { path, directories })
+}
+
+pub fn list_remote_directories_inner(
+    state: &AppState,
+    connection_id: &str,
+    path: &str,
+) -> AppResult<RemoteDirectoryListing> {
+    let connection = state.ssh.get(connection_id)?;
+    let client = crate::ssh::detect_ssh_client().ok_or(AppError::SshClientNotFound)?;
+    let command = remote_directory_command(path)?;
+    let ssh_command = crate::ssh::build_ssh_browse_argv(&connection, command);
+    let mut child = Command::new(&client.executable)
+        .args(&ssh_command.args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| AppError::SshConnectionFailed(error.to_string()))?;
+    let timeout = Duration::from_secs(u64::from(connection.connect_timeout_seconds.min(20)) + 5);
+    let deadline = Instant::now() + timeout;
+    loop {
+        if child
+            .try_wait()
+            .map_err(|error| AppError::SshConnectionFailed(error.to_string()))?
+            .is_some()
+        {
+            break;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(AppError::SshConnectionFailed(format!(
+                "Remote directory query timed out after {} seconds",
+                timeout.as_secs()
+            )));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| AppError::SshConnectionFailed(error.to_string()))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(AppError::SshConnectionFailed(if detail.is_empty() {
+            format!("ssh exited with status {}", output.status)
+        } else {
+            detail
+        }));
+    }
+    parse_remote_directory_listing(&output.stdout)
+}
+
 pub fn detect_ssh_client_inner() -> AppResult<Option<String>> {
     Ok(crate::ssh::detect_ssh_client()
         .map(|client| client.executable.to_string_lossy().into_owned()))
@@ -291,6 +429,15 @@ pub fn delete_ssh_connection(state: tauri::State<'_, AppState>, id: String) -> A
 #[tauri::command]
 pub fn test_ssh_connection(state: tauri::State<'_, AppState>, id: String) -> AppResult<String> {
     test_ssh_connection_inner(&state, &id)
+}
+
+#[tauri::command]
+pub fn list_remote_directories(
+    state: tauri::State<'_, AppState>,
+    connection_id: String,
+    path: String,
+) -> AppResult<RemoteDirectoryListing> {
+    list_remote_directories_inner(&state, &connection_id, &path)
 }
 
 #[tauri::command]
@@ -416,5 +563,24 @@ mod tests {
         if let Some(path) = detect_ssh_client_inner().unwrap() {
             assert!(std::path::Path::new(&path).is_file());
         }
+    }
+
+    #[test]
+    fn remote_directory_command_preserves_tilde_expansion_and_escapes_paths() {
+        let tilde_command = remote_directory_command("~/my project").unwrap();
+        assert!(tilde_command.starts_with("sh -c "));
+        assert!(tilde_command.contains("~/"));
+        assert!(tilde_command.contains("my project"));
+
+        let escaped_command = remote_directory_command("/srv/a; rm -rf /").unwrap();
+        assert!(escaped_command.contains("'\"'\"'"));
+    }
+
+    #[test]
+    fn remote_directory_listing_parses_nul_delimited_names() {
+        let listing = parse_remote_directory_listing(b"/srv/app\0src\0.git\0").unwrap();
+        assert_eq!(listing.path, "/srv/app");
+        assert_eq!(listing.directories[0].path, "/srv/app/src");
+        assert_eq!(listing.directories[1].name, ".git");
     }
 }

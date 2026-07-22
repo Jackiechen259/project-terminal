@@ -108,6 +108,7 @@ pub fn run() {
                 commands::ssh::update_ssh_connection,
                 commands::ssh::delete_ssh_connection,
                 commands::ssh::test_ssh_connection,
+                commands::ssh::list_remote_directories,
                 commands::ssh::detect_ssh_client,
                 commands::ssh::read_ssh_host_fingerprint,
                 // Terminal (plan §12.3)

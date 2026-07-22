@@ -25,6 +25,7 @@ import { useSshStore } from "@/stores/sshStore";
 import { usePlatformStore } from "@/stores/platformStore";
 import { environmentService } from "@/services";
 import type { Project } from "@/types";
+import { RemoteFolderPicker } from "@/components/ssh/RemoteFolderPicker";
 
 export function ProjectEditDialog({
   project,
@@ -224,11 +225,18 @@ export function ProjectEditDialog({
               </div>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="edit-remote-path">Remote path</Label>
-                <Input
-                  id="edit-remote-path"
-                  value={remotePath}
-                  onChange={(event) => setRemotePath(event.target.value)}
-                />
+                <div className="flex gap-2">
+                  <Input
+                    id="edit-remote-path"
+                    value={remotePath}
+                    onChange={(event) => setRemotePath(event.target.value)}
+                  />
+                  <RemoteFolderPicker
+                    connectionId={connectionId}
+                    initialPath={remotePath}
+                    onSelect={setRemotePath}
+                  />
+                </div>
               </div>
             </>
           )}
