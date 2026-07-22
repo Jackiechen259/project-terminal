@@ -748,7 +748,9 @@ export function TerminalWorkspace() {
         confirmCloseTerminal &&
         isRunning &&
         !window.confirm(
-          `Close the running terminal "${tab?.title ?? "Terminal"}"?`,
+          t('Close the running terminal "{name}"?', {
+            name: tab?.title ?? t("Terminal"),
+          }),
         )
       ) {
         return;
@@ -757,7 +759,7 @@ export function TerminalWorkspace() {
       // need to remove the tab here.
       removeTab(tabId);
     },
-    [confirmCloseTerminal, removeTab, tabsById],
+    [confirmCloseTerminal, removeTab, t, tabsById],
   );
 
   const handleCloseSplitGroup = useCallback(() => {
@@ -773,12 +775,12 @@ export function TerminalWorkspace() {
     if (
       confirmCloseTerminal &&
       hasRunningTerminal &&
-      !window.confirm("Close both terminals in this split group?")
+      !window.confirm(t("Close both terminals in this split group?"))
     ) {
       return;
     }
     groupTabs.forEach((tab) => removeTab(tab.id));
-  }, [confirmCloseTerminal, removeTab, tabsById, validSplitView]);
+  }, [confirmCloseTerminal, removeTab, t, tabsById, validSplitView]);
 
   const selectRelativeTab = useCallback(
     (direction: 1 | -1) => {
@@ -918,8 +920,8 @@ export function TerminalWorkspace() {
           {tab.status === "exited" || tab.status === "error" ? (
             <span className="text-[10px] text-danger">
               {tab.status === "error"
-                ? "Connection error"
-                : `Exited (${tab.exitCode ?? "?"})`}
+                ? t("Connection error")
+                : t("Exited ({code})", { code: tab.exitCode ?? "?" })}
             </span>
           ) : null}
         </div>
@@ -936,8 +938,8 @@ export function TerminalWorkspace() {
             aria-label={
               projects.find((project) => project.id === tab.projectId)?.type ===
               "ssh"
-                ? "Reconnect SSH terminal"
-                : "Restart tab"
+                ? t("Reconnect SSH terminal")
+                : t("Restart tab")
             }
           >
             <RotateCcw className="h-3.5 w-3.5" />
@@ -1206,7 +1208,7 @@ export function TerminalWorkspace() {
                 "bottom-2 left-2 right-2 h-[calc(50%-0.5rem)]",
             )}
           >
-            Drop to split {dropZone}
+            {t("Drop to split {zone}", { zone: t(dropZone) })}
           </div>
         ) : null}
         {activeProject && hasAnyTab ? (
@@ -1275,11 +1277,11 @@ export function TerminalWorkspace() {
         ) : activeProject ? (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
             <TerminalIcon className="mr-2 h-4 w-4" />
-            {error ?? `No terminals open for ${activeProject.name}.`}
+            {error ?? t("No terminals open for {name}.", { name: activeProject.name })}
           </div>
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            Select or create a project to start a terminal.
+            {t("Select or create a project to start a terminal.")}
           </div>
         )}
       </div>

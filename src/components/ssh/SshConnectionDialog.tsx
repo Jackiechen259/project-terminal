@@ -95,21 +95,32 @@ function draftFrom(connection: SshConnection): Draft {
   };
 }
 
-function positiveNumber(value: string, field: string, maximum = 65535): number {
+function positiveNumber(
+  value: string,
+  field: string,
+  maximum = 65535,
+  t?: (source: string, params?: Record<string, string | number>) => string,
+): number {
   const number = Number(value);
   if (!Number.isInteger(number) || number < 1 || number > maximum) {
     throw new Error(
-      `${field} must be a whole number between 1 and ${maximum}.`,
+      (t ?? ((s: string) => s))(
+        "{field} must be a whole number between 1 and {maximum}.",
+        { field, maximum },
+      ),
     );
   }
   return number;
 }
 
-function toInput(draft: Draft): SshConnectionInput {
+function toInput(
+  draft: Draft,
+  t?: (source: string, params?: Record<string, string | number>) => string,
+): SshConnectionInput {
   const jumpHost = draft.jumpHost.trim()
     ? {
         host: draft.jumpHost.trim(),
-        port: positiveNumber(draft.jumpPort, "Jump port"),
+        port: positiveNumber(draft.jumpPort, t("Jump port"), 65535, t),
         username: draft.jumpUsername.trim() || undefined,
       }
     : undefined;
@@ -117,7 +128,7 @@ function toInput(draft: Draft): SshConnectionInput {
     id: draft.id,
     name: draft.name.trim(),
     host: draft.host.trim(),
-    port: positiveNumber(draft.port, "Port"),
+    port: positiveNumber(draft.port, t("Port"), 65535, t),
     username: draft.username.trim(),
     authenticationType: draft.authenticationType,
     identityFile: draft.identityFile.trim() || undefined,
@@ -125,18 +136,21 @@ function toInput(draft: Draft): SshConnectionInput {
     jumpHost,
     connectTimeoutSeconds: positiveNumber(
       draft.connectTimeoutSeconds,
-      "Connect timeout",
+      t("Connect timeout (s)"),
       600,
+      t,
     ),
     serverAliveIntervalSeconds: positiveNumber(
       draft.serverAliveIntervalSeconds,
-      "Keepalive interval",
+      t("Keepalive interval (s)"),
       3600,
+      t,
     ),
     serverAliveCountMax: positiveNumber(
       draft.serverAliveCountMax,
-      "Keepalive count",
+      t("Keepalive count"),
       100,
+      t,
     ),
     strictHostKeyChecking: draft.strictHostKeyChecking,
     knownHostsFile: draft.knownHostsFile.trim() || undefined,
@@ -193,7 +207,7 @@ export function SshConnectionDialog({
     setBusy(true);
     setError(null);
     try {
-      const input = toInput(draft);
+      const input = toInput(draft, t);
       if (input.authenticationType !== "system-config" && !input.username) {
         throw new Error(
           t("Username is required unless you use a system SSH config alias."),

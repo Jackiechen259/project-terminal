@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import type { LucideIcon } from "lucide-react";
 
+import { useTranslation } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 export type ContextMenuItem =
@@ -27,6 +28,7 @@ interface ContextMenuProps {
  */
 export function ContextMenu({ position, items, onClose }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const { t } = useTranslation();
 
   useEffect(() => {
     const dismissOnPointerDown = (event: PointerEvent) => {
@@ -70,7 +72,7 @@ export function ContextMenu({ position, items, onClose }: ContextMenuProps) {
     <div
       ref={menuRef}
       role="menu"
-      aria-label="Application context menu"
+      aria-label={t("Application context menu")}
       className="fixed z-50 min-w-48 rounded-md border bg-popover p-1 text-popover-foreground shadow-lg"
       style={{ left: position.x, top: position.y }}
     >

@@ -4,7 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 
-import { listenForAppCommands } from "@/lib/appCommands";
+import { useTranslation } from "@/i18n";
 import { TerminalInputQueue } from "@/lib/terminalInputQueue";
 import { getTerminalTheme } from "@/lib/terminalThemes";
 import { terminalService } from "@/services";
@@ -74,6 +74,9 @@ export function TerminalView({
   const sessionIdRef = useRef<string | null>(null);
   const reportedExitRef = useRef(false);
   const onTitleChangeRef = useRef(onTitleChange);
+  const { t } = useTranslation();
+  const tRef = useRef(t);
+  tRef.current = t;
   const terminalFontSize = useSettingsStore((state) => state.terminalFontSize);
   const cursorBlink = useSettingsStore((state) => state.cursorBlink);
   const theme = useSettingsStore((state) => state.theme);
@@ -262,9 +265,9 @@ export function TerminalView({
       .catch((e) => {
         const err = e as { message?: string };
         term.write(
-          `\r\n\x1b[31mFailed to start terminal: ${
-            err.message ?? "unknown error"
-          }\x1b[0m\r\n`,
+          `\r\n\x1b[31m${tRef.current("Failed to start terminal: {error}", {
+            error: err.message ?? tRef.current("unknown error"),
+          })}\x1b[0m\r\n`,
         );
         onExit?.(null);
       });

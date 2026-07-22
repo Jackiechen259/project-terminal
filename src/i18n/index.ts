@@ -324,6 +324,43 @@ const zhCNWorkspace: Record<string, string> = {
   "Check your internet connection and try again.": "请检查网络连接后重试。",
   "The update could not be installed. Please try again later.":
     "无法安装更新，请稍后重试。",
+  // --- Validation & error messages ---
+  "{field} must be a whole number between 1 and {maximum}.":
+    "{field} 必须是 1 到 {maximum} 之间的整数。",
+  'Invalid environment variable: "{line}". Use NAME=value.':
+    '环境变量格式无效：“{line}”。请使用 NAME=value 格式。',
+  "Profile name is required.": "请输入配置名称。",
+  "Template name is required.": "请输入模板名称。",
+  "Choose a Conda environment name or environment path.":
+    "请填写 Conda 环境名称或环境路径。",
+  "Could not save profile.": "无法保存配置。",
+  "Could not delete profile.": "无法删除配置。",
+  "Could not save template.": "无法保存模板。",
+  "Could not delete template.": "无法删除模板。",
+  'Delete terminal profile "{name}"?': "删除终端配置“{name}”？",
+  'Delete profile template "{name}"?': "删除配置模板“{name}”？",
+  "Failed to start terminal: {error}": "启动终端失败：{error}",
+  "unknown error": "未知错误",
+  // --- Tab status & aria labels ---
+  "Connection error": "连接错误",
+  "Exited ({code})": "已退出（{code}）",
+  "Reconnect SSH terminal": "重新连接 SSH 终端",
+  "Restart tab": "重启标签页",
+  // --- Close confirmations ---
+  'Close the running terminal "{name}"?': "关闭正在运行的终端“{name}？”",
+  "Close both terminals in this split group?": "关闭此拆分组中的两个终端？",
+  // --- Empty states ---
+  "No terminals open for {name}.": "{name} 暂无打开的终端。",
+  "Select or create a project to start a terminal.":
+    "选择或创建一个项目以启动终端。",
+  // --- Drag & drop ---
+  "Drop to split {zone}": "拖放至{zone}拆分",
+  left: "左侧",
+  right: "右侧",
+  top: "上方",
+  bottom: "下方",
+  // --- Accessibility ---
+  "Application context menu": "应用上下文菜单",
 };
 
 const dictionaries: Record<AppLanguage, Record<string, string>> = {

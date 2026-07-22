@@ -254,12 +254,17 @@ function lines(value: string) {
     .filter(Boolean);
 }
 
-function parseVariables(value: string): Record<string, string> | undefined {
+function parseVariables(
+  value: string,
+  t: (source: string, params?: Record<string, string | number>) => string,
+): Record<string, string> | undefined {
   const entries = lines(value).map((line) => {
     const separator = line.indexOf("=");
     if (separator <= 0) {
       throw new Error(
-        `Invalid environment variable: "${line}". Use NAME=value.`,
+        t('Invalid environment variable: "{line}". Use NAME=value.', {
+          line,
+        }),
       );
     }
     return [
@@ -365,7 +370,7 @@ export function SettingsDialog() {
   async function saveProfile() {
     if (!editing || !selectedProject) return;
     if (!editing.name.trim()) {
-      setError("Profile name is required.");
+      setError(t("Profile name is required."));
       return;
     }
     if (
@@ -373,7 +378,7 @@ export function SettingsDialog() {
       !editing.environmentName.trim() &&
       !editing.environmentPath.trim()
     ) {
-      setError("Choose a Conda environment name or environment path.");
+      setError(t("Choose a Conda environment name or environment path."));
       return;
     }
 
@@ -407,7 +412,7 @@ export function SettingsDialog() {
             : undefined,
         activationCommand: optional(editing.activationCommand),
         startupCommands: lines(editing.startupCommands),
-        environmentVariables: parseVariables(editing.environmentVariables),
+        environmentVariables: parseVariables(editing.environmentVariables, t),
         wslDistribution: optional(editing.wslDistribution),
         wslWorkingDirectory: optional(editing.wslWorkingDirectory),
         remoteShellCommand: optional(editing.remoteShellCommand),
@@ -433,7 +438,7 @@ export function SettingsDialog() {
         cause instanceof Error
           ? cause.message
           : (cause as { message?: string }).message;
-      setError(message ?? "Could not save profile.");
+      setError(message ?? t("Could not save profile."));
     } finally {
       setSaving(false);
     }
@@ -442,7 +447,7 @@ export function SettingsDialog() {
   async function removeProfile(profile: TerminalProfile) {
     if (
       !projectId ||
-      !window.confirm(`Delete terminal profile "${profile.name}"?`)
+      !window.confirm(t('Delete terminal profile "{name}"?', { name: profile.name }))
     )
       return;
     try {
@@ -452,7 +457,7 @@ export function SettingsDialog() {
       if (editing?.id === profile.id) setEditing(null);
     } catch (cause) {
       setError(
-        (cause as { message?: string }).message ?? "Could not delete profile.",
+        (cause as { message?: string }).message ?? t("Could not delete profile."),
       );
     }
   }
@@ -460,7 +465,7 @@ export function SettingsDialog() {
   async function saveTemplate() {
     if (!editingTemplate) return;
     if (!editingTemplate.name.trim()) {
-      setTemplateError("Template name is required.");
+      setTemplateError(t("Template name is required."));
       return;
     }
     if (
@@ -468,7 +473,7 @@ export function SettingsDialog() {
       !editingTemplate.environmentName.trim() &&
       !editingTemplate.environmentPath.trim()
     ) {
-      setTemplateError("Choose a Conda environment name or environment path.");
+      setTemplateError(t("Choose a Conda environment name or environment path."));
       return;
     }
 
@@ -503,6 +508,7 @@ export function SettingsDialog() {
         startupCommands: lines(editingTemplate.startupCommands),
         environmentVariables: parseVariables(
           editingTemplate.environmentVariables,
+          t,
         ),
         wslDistribution: optional(editingTemplate.wslDistribution),
         wslWorkingDirectory: optional(editingTemplate.wslWorkingDirectory),
@@ -518,21 +524,21 @@ export function SettingsDialog() {
         cause instanceof Error
           ? cause.message
           : (cause as { message?: string }).message;
-      setTemplateError(message ?? "Could not save template.");
+      setTemplateError(message ?? t("Could not save template."));
     } finally {
       setSavingTemplate(false);
     }
   }
 
   async function removeTemplate(template: ProfileTemplate) {
-    if (!window.confirm(`Delete profile template "${template.name}"?`)) return;
+    if (!window.confirm(t('Delete profile template "{name}"?', { name: template.name }))) return;
     try {
       setTemplateError(null);
       await deleteTemplate(template.id);
       if (editingTemplate?.id === template.id) setEditingTemplate(null);
     } catch (cause) {
       setTemplateError(
-        (cause as { message?: string }).message ?? "Could not delete template.",
+        (cause as { message?: string }).message ?? t("Could not delete template."),
       );
     }
   }
