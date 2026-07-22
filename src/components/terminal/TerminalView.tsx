@@ -7,6 +7,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { useTranslation } from "@/i18n";
 import { listenForAppCommands } from "@/lib/appCommands";
 import { TerminalInputQueue } from "@/lib/terminalInputQueue";
+import { TerminalResizeQueue } from "@/lib/terminalResizeQueue";
 import {
   getTerminalMinimumContrast,
   getTerminalTheme,
@@ -76,6 +77,7 @@ export function TerminalView({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const resizeQueueRef = useRef<TerminalResizeQueue | null>(null);
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusTimerRef = useRef<number | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -133,6 +135,8 @@ export function TerminalView({
   }, [focused, copySelection]);
 
   useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
     const term = new Terminal({
       allowProposedApi: true,
       cursorBlink,
@@ -150,9 +154,11 @@ export function TerminalView({
     term.loadAddon(fit);
     term.loadAddon(new UnicodeGraphemesAddon());
     term.loadAddon(new WebLinksAddon());
-    term.open(containerRef.current!);
+    term.open(container);
     termRef.current = term;
     fitRef.current = fit;
+    const resizeQueue = new TerminalResizeQueue(terminalService.resize);
+    resizeQueueRef.current = resizeQueue;
 
     // xterm keeps its scroll bar virtual: the native viewport's scroll range
     // is translated back into a buffer row. In WebView2 that range can
@@ -162,8 +168,7 @@ export function TerminalView({
     // bottom as a side effect). Detect that precise case and ask xterm to
     // perform the missing logical scroll. This only runs at the visible end,
     // so it does not disturb users reading earlier output.
-    const viewport =
-      containerRef.current?.querySelector<HTMLElement>(".xterm-viewport");
+    const viewport = container.querySelector<HTMLElement>(".xterm-viewport");
     let viewportSyncFrame: number | null = null;
     const syncBottomAtNativeViewportEnd = () => {
       if (!viewport || viewportSyncFrame !== null) return;
@@ -204,21 +209,17 @@ export function TerminalView({
         updateGeneralSettings({ terminalFontSize: next });
       }
     };
-    containerRef.current?.addEventListener("wheel", handleWheelZoom, {
+    container.addEventListener("wheel", handleWheelZoom, {
       passive: false,
     });
 
     const fitAndResize = () => {
-      const container = containerRef.current;
       if (!container || !container.clientWidth || !container.clientHeight) {
         return;
       }
       try {
         fit.fit();
-        const sid = sessionIdRef.current;
-        if (sid) {
-          void terminalService.resize(sid, term.rows, term.cols);
-        }
+        resizeQueue.request(term.rows, term.cols);
       } catch {
         // Fitting can fail while a tab is being attached or hidden.
       }
@@ -237,7 +238,15 @@ export function TerminalView({
         fitAndResize();
       }, 80);
     });
-    if (containerRef.current) ro.observe(containerRef.current);
+    ro.observe(container);
+
+    // Full-screen programs are launched by the backend before create()
+    // resolves, so they must receive the real grid size in the create request.
+    // Starting every PTY at 80x24 and resizing later lets a dynamic TUI paint
+    // its first frame against the wrong width, which desynchronizes its input
+    // cursor from xterm's grid.
+    fitAndResize();
+    const initialDimensions = { rows: term.rows, cols: term.cols };
 
     // Create the backend PTY. Output chunks are decoded and written to the
     // terminal; we also detect a session-end by a 0-byte final chunk (the
@@ -249,8 +258,8 @@ export function TerminalView({
         {
           projectId: pending.projectId,
           profileId: pending.profileId,
-          rows: 24,
-          cols: 80,
+          rows: initialDimensions.rows,
+          cols: initialDimensions.cols,
         },
         (chunk) => {
           if (cancelled) return;
@@ -259,12 +268,18 @@ export function TerminalView({
           term.write(bytes);
         },
       )
-      .then((sessionId) => {
+      .then(async (sessionId) => {
         if (cancelled) {
           void terminalService.close(sessionId);
           return;
         }
         sessionIdRef.current = sessionId;
+        resizeQueue.attach(sessionId, initialDimensions);
+        // If the view changed size while the backend was starting the shell,
+        // apply that latest grid before releasing any buffered keystrokes to
+        // the TUI. This keeps its first editable frame and xterm in lockstep.
+        await resizeQueue.whenIdle();
+        if (cancelled) return;
         inputQueue.attach(sessionId);
         onSessionId?.(sessionId);
         const statusTimer = window.setInterval(() => {
@@ -302,6 +317,7 @@ export function TerminalView({
     return () => {
       cancelled = true;
       inputQueue.dispose();
+      resizeQueue.dispose();
       disposable.dispose();
       titleDisposable.dispose();
       ro.disconnect();
@@ -312,12 +328,13 @@ export function TerminalView({
       }
       viewport?.removeEventListener("scroll", handleViewportScroll);
       term.element?.removeEventListener("wheel", handleTerminalWheel);
-      containerRef.current?.removeEventListener("wheel", handleWheelZoom);
+      container.removeEventListener("wheel", handleWheelZoom);
       const sid = sessionIdRef.current;
       if (sid) void terminalService.close(sid);
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
+      resizeQueueRef.current = null;
       sessionIdRef.current = null;
       reportedExitRef.current = false;
     };
@@ -337,8 +354,7 @@ export function TerminalView({
     const frame = requestAnimationFrame(() => {
       try {
         fitRef.current?.fit();
-        const sid = sessionIdRef.current;
-        if (sid) void terminalService.resize(sid, term.rows, term.cols);
+        resizeQueueRef.current?.request(term.rows, term.cols);
       } catch {
         // The terminal may be hidden or closing while preferences update.
       }
@@ -354,9 +370,8 @@ export function TerminalView({
       try {
         fitRef.current?.fit();
         const term = termRef.current;
-        const sid = sessionIdRef.current;
-        if (term && sid) {
-          void terminalService.resize(sid, term.rows, term.cols);
+        if (term) {
+          resizeQueueRef.current?.request(term.rows, term.cols);
         }
       } catch {
         // ignore
