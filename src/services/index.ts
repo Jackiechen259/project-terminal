@@ -136,11 +136,9 @@ export interface CreateTerminalRequest {
 export interface TerminalOutputChunk {
   sessionId: string;
   /** base64-encoded bytes from the PTY. */
-  data: string;
-}
-
-export interface TerminalSessionStatus {
-  status: "starting" | "running" | "exited" | "error";
+  data?: string;
+  /** Present when the backend process exits or its wait operation fails. */
+  status?: "exited" | "error";
   exitCode?: number;
 }
 
@@ -266,10 +264,6 @@ export const terminalService = {
     invokeOrThrow<void>("write_terminal", { sessionId, data }),
   resize: (sessionId: string, rows: number, cols: number) =>
     invokeOrThrow<void>("resize_terminal", { sessionId, rows, cols }),
-  status: (sessionId: string) =>
-    invokeOrThrow<TerminalSessionStatus>("terminal_session_status", {
-      sessionId,
-    }),
   close: (sessionId: string) =>
     invokeOrThrow<void>("close_terminal", { sessionId }),
   restart: async (

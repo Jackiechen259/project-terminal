@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { flushSync } from "react-dom";
 import {
   ChevronDown,
@@ -8,6 +16,7 @@ import {
   Pencil,
   Plus,
   Server,
+  Settings,
   Terminal,
   Trash2,
 } from "lucide-react";
@@ -23,15 +32,43 @@ import { useTerminalStore } from "@/stores/terminalStore";
 import { projectService, sshService, terminalService } from "@/services";
 import { cn } from "@/lib/utils";
 import { useDragPreviewPosition } from "@/lib/useDragPreviewPosition";
+import { listenForAppCommands } from "@/lib/appCommands";
 import { useTranslation } from "@/i18n";
 import type { Project } from "@/types";
+import type { SettingsSection } from "@/components/settings/SettingsDialog";
 
-import { ProjectDialog } from "./ProjectDialog";
 import { ProjectContextMenu } from "./ProjectContextMenu";
-import { ProjectEditDialog } from "./ProjectEditDialog";
-import { CollectionDialog } from "./CollectionDialog";
-import { SettingsDialog } from "@/components/settings/SettingsDialog";
-import { SshConnectionDialog } from "@/components/ssh/SshConnectionDialog";
+
+const loadProjectDialog = () => import("./ProjectDialog");
+const loadProjectEditDialog = () => import("./ProjectEditDialog");
+const loadCollectionDialog = () => import("./CollectionDialog");
+const loadSshConnectionDialog = () =>
+  import("@/components/ssh/SshConnectionDialog");
+const loadSettingsDialog = () => import("@/components/settings/SettingsDialog");
+
+const LazyProjectDialog = lazy(() =>
+  loadProjectDialog().then((module) => ({ default: module.ProjectDialog })),
+);
+const LazyProjectEditDialog = lazy(() =>
+  loadProjectEditDialog().then((module) => ({
+    default: module.ProjectEditDialog,
+  })),
+);
+const LazyCollectionDialog = lazy(() =>
+  loadCollectionDialog().then((module) => ({
+    default: module.CollectionDialog,
+  })),
+);
+const LazySshConnectionDialog = lazy(() =>
+  loadSshConnectionDialog().then((module) => ({
+    default: module.SshConnectionDialog,
+  })),
+);
+const LazySettingsDialog = lazy(() =>
+  loadSettingsDialog().then((module) => ({
+    default: module.SettingsDialog,
+  })),
+);
 
 type DropPosition = "before" | "after";
 
@@ -118,6 +155,12 @@ export function ProjectSidebar() {
   );
 
   const [notice, setNotice] = useState<string | null>(null);
+  const [creatingCollection, setCreatingCollection] = useState(false);
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [managingSsh, setManagingSsh] = useState(false);
+  const [settingsSection, setSettingsSection] =
+    useState<SettingsSection>("general");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [draggedProjectId, setDraggedProjectId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   const { previewRef, updatePreviewPosition, resetPreviewPosition } =
@@ -132,6 +175,14 @@ export function ProjectSidebar() {
   useEffect(() => {
     void loadProjects();
   }, [loadProjects]);
+
+  useEffect(() => {
+    return listenForAppCommands((command) => {
+      if (command.type !== "open-settings") return;
+      setSettingsSection(command.section ?? "general");
+      setSettingsOpen(true);
+    });
+  }, []);
 
   useEffect(() => {
     if (
@@ -432,33 +483,47 @@ export function ProjectSidebar() {
           {t("Projects")}
         </span>
         <div className="flex flex-row gap-1">
-          <CollectionDialog
-            trigger={
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                aria-label={t("New collection")}
-                title={t("New collection")}
-              >
-                <FolderPlus className="h-4 w-4" />
-              </Button>
-            }
-          />
-          <ProjectDialog
-            trigger={
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                aria-label={t("Add project")}
-                title={t("Add project")}
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-            }
-          />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            aria-label={t("New collection")}
+            title={t("New collection")}
+            onPointerEnter={() => void loadCollectionDialog()}
+            onFocus={() => void loadCollectionDialog()}
+            onClick={() => setCreatingCollection(true)}
+          >
+            <FolderPlus className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            aria-label={t("Add project")}
+            title={t("Add project")}
+            onPointerEnter={() => void loadProjectDialog()}
+            onFocus={() => void loadProjectDialog()}
+            onClick={() => setCreatingProject(true)}
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
         </div>
+        {creatingCollection ? (
+          <Suspense fallback={null}>
+            <LazyCollectionDialog
+              openState={creatingCollection}
+              onOpenChange={setCreatingCollection}
+            />
+          </Suspense>
+        ) : null}
+        {creatingProject ? (
+          <Suspense fallback={null}>
+            <LazyProjectDialog
+              openState={creatingProject}
+              onOpenChange={setCreatingProject}
+            />
+          </Suspense>
+        ) : null}
       </header>
 
       <div className="app-scrollbar flex flex-1 flex-col gap-1 overflow-y-auto p-2">
@@ -648,19 +713,47 @@ export function ProjectSidebar() {
       </div>
 
       <footer className="flex flex-row gap-1 border-t border-border p-2">
-        <SshConnectionDialog
-          trigger={
-            <Button
-              variant="ghost"
-              size="sm"
-              className="flex-1 justify-start text-xs"
-            >
-              <Server className="mr-2 h-3.5 w-3.5" />
-              SSH
-            </Button>
-          }
-        />
-        <SettingsDialog />
+        <Button
+          variant="ghost"
+          size="sm"
+          className="flex-1 justify-start text-xs"
+          onPointerEnter={() => void loadSshConnectionDialog()}
+          onFocus={() => void loadSshConnectionDialog()}
+          onClick={() => setManagingSsh(true)}
+        >
+          <Server className="mr-2 h-3.5 w-3.5" />
+          SSH
+        </Button>
+        <Button
+          variant="secondary"
+          size="icon"
+          aria-label={t("Settings")}
+          onPointerEnter={() => void loadSettingsDialog()}
+          onFocus={() => void loadSettingsDialog()}
+          onClick={() => {
+            setSettingsSection("general");
+            setSettingsOpen(true);
+          }}
+        >
+          <Settings className="h-4 w-4" />
+        </Button>
+        {managingSsh ? (
+          <Suspense fallback={null}>
+            <LazySshConnectionDialog
+              openState={managingSsh}
+              onOpenChange={setManagingSsh}
+            />
+          </Suspense>
+        ) : null}
+        {settingsOpen ? (
+          <Suspense fallback={null}>
+            <LazySettingsDialog
+              openState={settingsOpen}
+              onOpenChange={setSettingsOpen}
+              initialSection={settingsSection}
+            />
+          </Suspense>
+        ) : null}
       </footer>
     </aside>
   );
@@ -898,11 +991,15 @@ function CollectionGroup({
         </div>
       ) : null}
 
-      <CollectionDialog
-        collection={collection}
-        openState={renaming}
-        onOpenChange={setRenaming}
-      />
+      {renaming ? (
+        <Suspense fallback={null}>
+          <LazyCollectionDialog
+            collection={collection}
+            openState={renaming}
+            onOpenChange={setRenaming}
+          />
+        </Suspense>
+      ) : null}
     </div>
   );
 }
@@ -1153,11 +1250,15 @@ function ProjectRow({
           onClose={() => setMenuPosition(null)}
         />
       ) : null}
-      <ProjectEditDialog
-        project={project}
-        openState={editing}
-        onOpenChange={setEditing}
-      />
+      {editing ? (
+        <Suspense fallback={null}>
+          <LazyProjectEditDialog
+            project={project}
+            openState={editing}
+            onOpenChange={setEditing}
+          />
+        </Suspense>
+      ) : null}
     </>
   );
 }

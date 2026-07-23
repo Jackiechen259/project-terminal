@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Check,
   ChevronLeft,
   EyeOff,
   LayoutTemplate,
   Plus,
-  Settings,
   SlidersHorizontal,
   Sparkles,
   SquareTerminal,
@@ -28,7 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { dispatchAppCommand, listenForAppCommands } from "@/lib/appCommands";
+import { dispatchAppCommand } from "@/lib/appCommands";
 import { useTranslation } from "@/i18n";
 import {
   BUILT_IN_PROFILE_PRESETS,
@@ -56,7 +55,7 @@ import type {
 
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
 
-type SettingsSection = "general" | "profiles" | "templates";
+export type SettingsSection = "general" | "profiles" | "templates";
 
 type ProfileDraft = {
   id?: string;
@@ -287,9 +286,18 @@ function parseVariables(
 }
 
 /** Settings surface for project-scoped terminal profiles. */
-export function SettingsDialog() {
+export function SettingsDialog({
+  openState,
+  onOpenChange,
+  initialSection = "general",
+}: {
+  openState: boolean;
+  onOpenChange: (open: boolean) => void;
+  initialSection?: SettingsSection;
+}) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
+  const open = openState;
+  const setOpen = onOpenChange;
   const [section, setSection] = useState<SettingsSection>("general");
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useTerminalStore((s) => s.activeProjectId);
@@ -297,7 +305,6 @@ export function SettingsDialog() {
   const [editing, setEditing] = useState<ProfileDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const requestedSectionRef = useRef<SettingsSection | null>(null);
 
   const profiles = useProfileStore((s) =>
     projectId ? (s.byProjectId[projectId] ?? EMPTY_PROFILES) : EMPTY_PROFILES,
@@ -336,14 +343,13 @@ export function SettingsDialog() {
   useEffect(() => {
     if (!open) return;
     const initialId = activeProjectId ?? projects[0]?.id ?? null;
-    setSection(requestedSectionRef.current ?? "general");
-    requestedSectionRef.current = null;
+    setSection(initialSection);
     setProjectId(initialId);
     setEditing(null);
     setError(null);
     setEditingTemplate(null);
     setTemplateError(null);
-  }, [open, activeProjectId, projects]);
+  }, [open, activeProjectId, initialSection, projects]);
 
   useEffect(() => {
     if (open && section === "templates" && !templatesLoaded) {
@@ -356,15 +362,6 @@ export function SettingsDialog() {
       void loadForProject(projectId);
     }
   }, [open, projectId, loadForProject, section]);
-
-  useEffect(() => {
-    return listenForAppCommands((command) => {
-      if (command.type === "open-settings") {
-        requestedSectionRef.current = command.section ?? null;
-        setOpen(true);
-      }
-    });
-  }, []);
 
   function selectProject(nextProjectId: string) {
     setProjectId(nextProjectId);
@@ -458,7 +455,9 @@ export function SettingsDialog() {
   async function removeProfile(profile: TerminalProfile) {
     if (
       !projectId ||
-      !window.confirm(t('Delete terminal profile "{name}"?', { name: profile.name }))
+      !window.confirm(
+        t('Delete terminal profile "{name}"?', { name: profile.name }),
+      )
     )
       return;
     try {
@@ -468,7 +467,8 @@ export function SettingsDialog() {
       if (editing?.id === profile.id) setEditing(null);
     } catch (cause) {
       setError(
-        (cause as { message?: string }).message ?? t("Could not delete profile."),
+        (cause as { message?: string }).message ??
+          t("Could not delete profile."),
       );
     }
   }
@@ -484,7 +484,9 @@ export function SettingsDialog() {
       !editingTemplate.environmentName.trim() &&
       !editingTemplate.environmentPath.trim()
     ) {
-      setTemplateError(t("Choose a Conda environment name or environment path."));
+      setTemplateError(
+        t("Choose a Conda environment name or environment path."),
+      );
       return;
     }
 
@@ -543,28 +545,26 @@ export function SettingsDialog() {
   }
 
   async function removeTemplate(template: ProfileTemplate) {
-    if (!window.confirm(t('Delete profile template "{name}"?', { name: template.name }))) return;
+    if (
+      !window.confirm(
+        t('Delete profile template "{name}"?', { name: template.name }),
+      )
+    )
+      return;
     try {
       setTemplateError(null);
       await deleteTemplate(template.id);
       if (editingTemplate?.id === template.id) setEditingTemplate(null);
     } catch (cause) {
       setTemplateError(
-        (cause as { message?: string }).message ?? t("Could not delete template."),
+        (cause as { message?: string }).message ??
+          t("Could not delete template."),
       );
     }
   }
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <Button
-        variant="secondary"
-        size="icon"
-        aria-label={t("Settings")}
-        onClick={() => setOpen(true)}
-      >
-        <Settings className="h-4 w-4" />
-      </Button>
       <DialogContent className="flex h-[min(720px,calc(100vh-2rem))] max-w-5xl flex-col gap-0 overflow-hidden p-0">
         <DialogHeader className="border-b px-6 py-5 pr-12">
           <DialogTitle>{t("Settings")}</DialogTitle>

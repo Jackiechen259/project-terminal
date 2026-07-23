@@ -121,7 +121,6 @@ pub fn run() {
                 commands::terminal::create_terminal,
                 commands::terminal::write_terminal,
                 commands::terminal::resize_terminal,
-                commands::terminal::terminal_session_status,
                 commands::terminal::close_terminal,
                 commands::terminal::restart_terminal,
                 // Environment detection (plan §12.4)

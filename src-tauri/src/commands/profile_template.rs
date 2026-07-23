@@ -89,45 +89,49 @@ pub fn create_profile_template_inner(
     state: &AppState,
     input: TemplateInput,
 ) -> AppResult<ProfileTemplate> {
-    let id = new_id("tpl");
-    let template = build_template_from_input(input, id)?;
-    state.templates.upsert(template)
+    state.with_config_write(|| {
+        let id = new_id("tpl");
+        let template = build_template_from_input(input, id)?;
+        state.templates.upsert(template)
+    })
 }
 
 pub fn update_profile_template_inner(
     state: &AppState,
     input: TemplateInput,
 ) -> AppResult<ProfileTemplate> {
-    let id = input
-        .id
-        .ok_or_else(|| crate::error::AppError::Configuration("Template id is required".into()))?;
-    let existing = state.templates.get(&id)?;
-    let now = Utc::now();
-    let template = ProfileTemplate {
-        id: id.clone(),
-        name: input.name,
-        icon: input.icon,
-        shell_type: input.shell_type,
-        shell_executable: input.shell_executable,
-        shell_args: input.shell_args,
-        environment_type: input.environment_type,
-        environment_name: input.environment_name,
-        environment_path: input.environment_path,
-        conda: input.conda,
-        activation_command: input.activation_command,
-        startup_commands: input.startup_commands,
-        environment_variables: input.environment_variables,
-        wsl_distribution: input.wsl_distribution,
-        wsl_working_directory: input.wsl_working_directory,
-        remote_shell_command: input.remote_shell_command,
-        created_at: existing.created_at,
-        updated_at: now,
-    };
-    state.templates.upsert(template)
+    state.with_config_write(|| {
+        let id = input.id.ok_or_else(|| {
+            crate::error::AppError::Configuration("Template id is required".into())
+        })?;
+        let existing = state.templates.get(&id)?;
+        let now = Utc::now();
+        let template = ProfileTemplate {
+            id: id.clone(),
+            name: input.name,
+            icon: input.icon,
+            shell_type: input.shell_type,
+            shell_executable: input.shell_executable,
+            shell_args: input.shell_args,
+            environment_type: input.environment_type,
+            environment_name: input.environment_name,
+            environment_path: input.environment_path,
+            conda: input.conda,
+            activation_command: input.activation_command,
+            startup_commands: input.startup_commands,
+            environment_variables: input.environment_variables,
+            wsl_distribution: input.wsl_distribution,
+            wsl_working_directory: input.wsl_working_directory,
+            remote_shell_command: input.remote_shell_command,
+            created_at: existing.created_at,
+            updated_at: now,
+        };
+        state.templates.upsert(template)
+    })
 }
 
 pub fn delete_profile_template_inner(state: &AppState, id: &str) -> AppResult<()> {
-    state.templates.delete(id)
+    state.with_config_write(|| state.templates.delete(id))
 }
 
 #[tauri::command]
@@ -165,31 +169,33 @@ pub fn create_profile_from_template_inner(
     project_id: &str,
     name: &str,
 ) -> AppResult<TerminalProfile> {
-    let template = state.templates.get(template_id)?;
-    let now = Utc::now();
-    let profile = TerminalProfile {
-        id: new_id("profile"),
-        project_id: project_id.to_string(),
-        name: name.to_string(),
-        shell_type: template.shell_type,
-        shell_executable: template.shell_executable,
-        shell_args: template.shell_args,
-        environment_type: template.environment_type,
-        environment_name: template.environment_name,
-        environment_path: template.environment_path,
-        conda: template.conda,
-        activation_command: template.activation_command,
-        startup_commands: template.startup_commands,
-        environment_variables: template.environment_variables,
-        wsl_distribution: template.wsl_distribution,
-        wsl_working_directory: template.wsl_working_directory,
-        remote_shell_command: template.remote_shell_command,
-        is_default: false,
-        show_in_context_menu: true,
-        created_at: now,
-        updated_at: now,
-    };
-    state.profiles.upsert(profile)
+    state.with_config_write(|| {
+        let template = state.templates.get(template_id)?;
+        let now = Utc::now();
+        let profile = TerminalProfile {
+            id: new_id("profile"),
+            project_id: project_id.to_string(),
+            name: name.to_string(),
+            shell_type: template.shell_type,
+            shell_executable: template.shell_executable,
+            shell_args: template.shell_args,
+            environment_type: template.environment_type,
+            environment_name: template.environment_name,
+            environment_path: template.environment_path,
+            conda: template.conda,
+            activation_command: template.activation_command,
+            startup_commands: template.startup_commands,
+            environment_variables: template.environment_variables,
+            wsl_distribution: template.wsl_distribution,
+            wsl_working_directory: template.wsl_working_directory,
+            remote_shell_command: template.remote_shell_command,
+            is_default: false,
+            show_in_context_menu: true,
+            created_at: now,
+            updated_at: now,
+        };
+        state.profiles.upsert(profile)
+    })
 }
 
 #[tauri::command]
@@ -205,23 +211,19 @@ pub fn create_profile_from_template(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::AppState;
     use crate::config_dirs::ConfigDirs;
+    use crate::state::AppState;
 
     fn test_state() -> AppState {
         let dir = tempfile::tempdir().unwrap();
         let dirs = ConfigDirs::from_root(dir.path().to_path_buf());
-        AppState {
-            projects: Arc::new(crate::project::ProjectRepository::new(dirs.projects_path())),
-            profiles: Arc::new(crate::profile::ProfileRepository::new(dirs.profiles_path())),
-            templates: Arc::new(crate::profile::TemplateRepository::new(dirs.templates_path())),
-            ssh: Arc::new(crate::ssh::SshConnectionRepository::new(
-                dirs.ssh_connections_path(),
-            )),
-        }
+        AppState::from_repositories(
+            crate::project::ProjectRepository::new(dirs.projects_path()),
+            crate::profile::ProfileRepository::new(dirs.profiles_path()),
+            crate::profile::TemplateRepository::new(dirs.templates_path()),
+            crate::ssh::SshConnectionRepository::new(dirs.ssh_connections_path()),
+        )
     }
-
-    use std::sync::Arc;
 
     fn sample_input(name: &str) -> TemplateInput {
         TemplateInput {
@@ -270,20 +272,18 @@ mod tests {
         let state = test_state();
         let created = create_profile_template_inner(&state, sample_input("Codex")).unwrap();
         delete_profile_template_inner(&state, &created.id).unwrap();
-        assert!(list_profile_templates_inner(&state).unwrap().items.is_empty());
+        assert!(list_profile_templates_inner(&state)
+            .unwrap()
+            .items
+            .is_empty());
     }
 
     #[test]
     fn create_profile_from_template_copies_fields() {
         let state = test_state();
         let template = create_profile_template_inner(&state, sample_input("Codex")).unwrap();
-        let profile = create_profile_from_template_inner(
-            &state,
-            &template.id,
-            "proj-1",
-            "Codex",
-        )
-        .unwrap();
+        let profile =
+            create_profile_from_template_inner(&state, &template.id, "proj-1", "Codex").unwrap();
         assert_eq!(profile.project_id, "proj-1");
         assert_eq!(profile.startup_commands, vec!["codex".to_string()]);
         assert!(!profile.is_default);

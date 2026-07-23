@@ -1,6 +1,7 @@
 {
   "name": "project-terminal",
   "version": "0.4.2",
+  "packageManager": "pnpm@11.0.0",
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
@@ -12,9 +13,9 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "lint": "eslint . --ext .ts,.tsx --max-warnings=0",
-    "format": "prettier --write \"src/**/*.{ts,tsx,css,json}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,css,json}\"",
+    "lint": "eslint src vite.config.ts tailwind.config.ts --max-warnings=0",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css,json}\" \"*.{json,ts}\" \".github/**/*.yml\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css,json}\" \"*.{json,ts}\" \".github/**/*.yml\"",
     "test": "vitest run",
     "test:watch": "vitest",
     "bump": "node scripts/bump-version.mjs"

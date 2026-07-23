@@ -112,49 +112,52 @@ pub fn create_terminal_profile_inner(
     state: &AppState,
     input: ProfileInput,
 ) -> AppResult<TerminalProfile> {
-    // Profile must belong to an existing project.
-    state.projects.get(&input.project_id)?;
-    let id = new_id("profile");
-    let profile = build_profile_from_input(input, id)?;
-    state.profiles.upsert(profile)
+    state.with_config_write(|| {
+        // Profile must belong to an existing project.
+        state.projects.get(&input.project_id)?;
+        let id = new_id("profile");
+        let profile = build_profile_from_input(input, id)?;
+        state.profiles.upsert(profile)
+    })
 }
 
 pub fn update_terminal_profile_inner(
     state: &AppState,
     input: ProfileInput,
 ) -> AppResult<TerminalProfile> {
-    let id = input
-        .id
-        .clone()
-        .ok_or_else(|| AppError::Configuration("update_terminal_profile requires an id".into()))?;
-    let existing = state.profiles.get(&id)?;
-    let updated = TerminalProfile {
-        id: existing.id.clone(),
-        project_id: input.project_id,
-        name: input.name,
-        shell_type: input.shell_type,
-        shell_executable: input.shell_executable,
-        shell_args: input.shell_args,
-        environment_type: input.environment_type,
-        environment_name: input.environment_name,
-        environment_path: input.environment_path,
-        conda: input.conda,
-        activation_command: input.activation_command,
-        startup_commands: input.startup_commands,
-        environment_variables: input.environment_variables,
-        wsl_distribution: input.wsl_distribution,
-        wsl_working_directory: input.wsl_working_directory,
-        remote_shell_command: input.remote_shell_command,
-        is_default: input.is_default,
-        show_in_context_menu: input.show_in_context_menu,
-        created_at: existing.created_at,
-        updated_at: Utc::now(),
-    };
-    state.profiles.upsert(updated)
+    state.with_config_write(|| {
+        let id = input.id.clone().ok_or_else(|| {
+            AppError::Configuration("update_terminal_profile requires an id".into())
+        })?;
+        let existing = state.profiles.get(&id)?;
+        let updated = TerminalProfile {
+            id: existing.id.clone(),
+            project_id: input.project_id,
+            name: input.name,
+            shell_type: input.shell_type,
+            shell_executable: input.shell_executable,
+            shell_args: input.shell_args,
+            environment_type: input.environment_type,
+            environment_name: input.environment_name,
+            environment_path: input.environment_path,
+            conda: input.conda,
+            activation_command: input.activation_command,
+            startup_commands: input.startup_commands,
+            environment_variables: input.environment_variables,
+            wsl_distribution: input.wsl_distribution,
+            wsl_working_directory: input.wsl_working_directory,
+            remote_shell_command: input.remote_shell_command,
+            is_default: input.is_default,
+            show_in_context_menu: input.show_in_context_menu,
+            created_at: existing.created_at,
+            updated_at: Utc::now(),
+        };
+        state.profiles.upsert(updated)
+    })
 }
 
 pub fn delete_terminal_profile_inner(state: &AppState, id: &str) -> AppResult<()> {
-    state.profiles.delete(id)
+    state.with_config_write(|| state.profiles.delete(id))
 }
 
 pub fn test_terminal_profile_inner(_state: &AppState, _id: &str) -> AppResult<String> {
@@ -213,17 +216,15 @@ mod tests {
     use crate::ssh::SshConnectionRepository;
     use std::fs;
     use std::path::PathBuf;
-    use std::sync::Arc;
-
     fn test_state() -> AppState {
         let root = std::env::temp_dir().join(format!("pt-prof-cmd-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        AppState {
-            projects: Arc::new(ProjectRepository::new(root.join("projects.json"))),
-            profiles: Arc::new(ProfileRepository::new(root.join("profiles.json"))),
-            templates: Arc::new(TemplateRepository::new(root.join("templates.json"))),
-            ssh: Arc::new(SshConnectionRepository::new(root.join("ssh.json"))),
-        }
+        AppState::from_repositories(
+            ProjectRepository::new(root.join("projects.json")),
+            ProfileRepository::new(root.join("profiles.json")),
+            TemplateRepository::new(root.join("templates.json")),
+            SshConnectionRepository::new(root.join("ssh.json")),
+        )
     }
 
     fn temp_local_dir() -> PathBuf {

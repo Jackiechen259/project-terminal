@@ -64,7 +64,7 @@ import type {
   TerminalTab,
 } from "@/types";
 
-import { TerminalView } from "./TerminalView";
+import { TerminalPane } from "./TerminalPane";
 
 type TerminalDropZone = "left" | "right" | "top" | "bottom";
 type TabDropPosition = "before" | "after";
@@ -101,7 +101,6 @@ export function TerminalWorkspace() {
   const clearSplitView = useTerminalStore((s) => s.clearSplitView);
   const reorderTab = useTerminalStore((s) => s.reorderTab);
   const registerTab = useTerminalStore((s) => s.registerTab);
-  const updateTab = useTerminalStore((s) => s.updateTab);
   const removeTab = useTerminalStore((s) => s.removeTab);
   const confirmCloseTerminal = useSettingsStore((s) => s.confirmCloseTerminal);
   const templateList = useTemplateStore((s) => s.templates);
@@ -707,17 +706,6 @@ export function TerminalWorkspace() {
     [activeProjectId, profiles, registerTab, t],
   );
 
-  function handleSessionId(tabId: string, sessionId: string) {
-    updateTab(tabId, { sessionId, status: "running", exitCode: undefined });
-  }
-
-  function handleExit(
-    tabId: string,
-    code: number | null,
-    status: "exited" | "error" = "exited",
-  ) {
-    updateTab(tabId, { status, exitCode: code ?? undefined });
-  }
   async function handleRestart(tabId: string) {
     const oldTab = tabsById[tabId];
     if (!oldTab) return;
@@ -883,6 +871,12 @@ export function TerminalWorkspace() {
   ]);
 
   const hasAnyTab = Object.keys(tabsById).length > 0;
+  const selectTerminalPaneRef = useRef(handleSelectTab);
+  selectTerminalPaneRef.current = handleSelectTab;
+  const selectTerminalPane = useCallback(
+    (tabId: string) => selectTerminalPaneRef.current(tabId),
+    [],
+  );
 
   const renderTerminalTab = (id: string) => {
     const tab = tabsById[id];
@@ -1251,45 +1245,26 @@ export function TerminalWorkspace() {
                       : "bottom-0 left-0 right-0 h-1/2 border-t border-border"
                     : "inset-0";
               return (
-                <div
+                <TerminalPane
                   key={tab.id}
-                  className={cn(
-                    "absolute min-h-0 min-w-0",
-                    visible ? panePosition : "hidden",
-                  )}
-                  onMouseDown={() => {
-                    if (visible) handleSelectTab(tab.id);
-                  }}
-                >
-                  <TerminalView
-                    pending={{
-                      projectId: tab.projectId,
-                      profileId: tab.profileId,
-                    }}
-                    active={visible}
-                    focused={
-                      isSplitPane
-                        ? activePaneIndex === paneIndex
-                        : tab.id === activeTabId
-                    }
-                    defaultTitle={tab.defaultTitle}
-                    onFocus={() => {
-                      if (visible) handleSelectTab(tab.id);
-                    }}
-                    onSessionId={(sessionId) =>
-                      handleSessionId(tab.id, sessionId)
-                    }
-                    onExit={(code, status) => handleExit(tab.id, code, status)}
-                    onTitleChange={(title) => updateTab(tab.id, { title })}
-                  />
-                </div>
+                  tabId={tab.id}
+                  visible={visible}
+                  focused={
+                    isSplitPane
+                      ? activePaneIndex === paneIndex
+                      : tab.id === activeTabId
+                  }
+                  panePosition={panePosition}
+                  onSelect={selectTerminalPane}
+                />
               );
             })}
           </>
         ) : activeProject ? (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
             <TerminalIcon className="mr-2 h-4 w-4" />
-            {error ?? t("No terminals open for {name}.", { name: activeProject.name })}
+            {error ??
+              t("No terminals open for {name}.", { name: activeProject.name })}
           </div>
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">

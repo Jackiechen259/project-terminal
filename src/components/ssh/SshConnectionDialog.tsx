@@ -165,12 +165,18 @@ function toInput(
 export function SshConnectionDialog({
   trigger,
   onClosed,
+  openState: controlledOpen,
+  onOpenChange,
 }: {
-  trigger: React.ReactNode;
+  trigger?: React.ReactNode;
   onClosed?: () => void;
+  openState?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = onOpenChange ?? setInternalOpen;
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
@@ -283,7 +289,7 @@ export function SshConnectionDialog({
         if (!nextOpen) onClosed?.();
       }}
     >
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-[720px]">
         <DialogHeader>
           <DialogTitle>{t("SSH connections")}</DialogTitle>

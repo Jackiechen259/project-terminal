@@ -1,10 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  act,
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+} from "@testing-library/react";
 
 import { useProjectStore } from "@/stores/projectStore";
 import { useCollectionStore } from "@/stores/collectionStore";
+import { dispatchAppCommand } from "@/lib/appCommands";
 import { ProjectSidebar } from "./ProjectSidebar";
 
+const settingsDialogRender = vi.hoisted(() => vi.fn());
 const terminalState = vi.hoisted(() => {
   const state = {
     activeProjectId: null as string | null,
@@ -61,7 +69,10 @@ vi.mock("./ProjectContextMenu", () => ({
   ProjectContextMenu: () => null,
 }));
 vi.mock("@/components/settings/SettingsDialog", () => ({
-  SettingsDialog: () => null,
+  SettingsDialog: (props: unknown) => {
+    settingsDialogRender(props);
+    return null;
+  },
 }));
 vi.mock("@/components/ssh/SshConnectionDialog", () => ({
   SshConnectionDialog: () => null,
@@ -93,6 +104,7 @@ beforeEach(() => {
   terminalState.tabsById = {};
   terminalState.setActiveProject.mockClear();
   terminalState.removeProjectTabs.mockClear();
+  settingsDialogRender.mockClear();
   useCollectionStore.setState({
     collections: [],
     collapsed: {},
@@ -122,6 +134,23 @@ describe("ProjectSidebar collections", () => {
   it("renders the new-collection button", () => {
     render(<ProjectSidebar />);
     expect(screen.getByLabelText("New collection")).toBeTruthy();
+  });
+
+  it("loads settings on demand and preserves the requested section", async () => {
+    render(<ProjectSidebar />);
+
+    act(() => {
+      dispatchAppCommand({ type: "open-settings", section: "templates" });
+    });
+
+    await waitFor(() => {
+      expect(settingsDialogRender).toHaveBeenCalledWith(
+        expect.objectContaining({
+          openState: true,
+          initialSection: "templates",
+        }),
+      );
+    });
   });
 
   it("selects another terminal project before deleting the active project", async () => {

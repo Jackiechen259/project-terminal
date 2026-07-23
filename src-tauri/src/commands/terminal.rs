@@ -45,13 +45,6 @@ pub struct CreateTerminalRequest {
     pub cols: u16,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TerminalSessionStatus {
-    pub status: crate::terminal::SessionStatus,
-    pub exit_code: Option<i32>,
-}
-
 /// Per-session state we keep alongside the manager so restart can rebuild
 /// the spawn config from the original profile without re-querying.
 struct SessionMeta {
@@ -436,7 +429,7 @@ fn execute_startup_commands(
     // Phase 3.6/3.7: Environment activation is evaluated and pushed first.
     // Plan §20.8 / §22: if activation generation fails, we MUST retain the
     // shell so the user can manually inspect or fix it.
-    match crate::terminal::build_activation_script(&profile) {
+    match crate::terminal::build_activation_script(profile) {
         Ok(activation) => {
             if !activation.is_empty() {
                 let activation = normalize_initialization_script(profile.shell_type, &activation);
@@ -597,17 +590,6 @@ pub fn resize_terminal(
 }
 
 #[tauri::command]
-pub fn terminal_session_status(
-    terminal: State<'_, TerminalState>,
-    session_id: String,
-) -> AppResult<TerminalSessionStatus> {
-    Ok(TerminalSessionStatus {
-        status: terminal.manager.status(&session_id)?,
-        exit_code: terminal.manager.exit_code(&session_id)?,
-    })
-}
-
-#[tauri::command]
 pub fn close_terminal(terminal: State<'_, TerminalState>, session_id: String) -> AppResult<()> {
     terminal.manager.close(&session_id)?;
     terminal.forget(&session_id);
@@ -675,8 +657,7 @@ mod tests {
     use super::*;
     use crate::profile::repository::default_powershell_profile;
     use crate::profile::{
-        default_wsl_profile, EnvironmentType, ProfileRepository, ShellType,
-        TemplateRepository,
+        default_wsl_profile, EnvironmentType, ProfileRepository, ShellType, TemplateRepository,
     };
     use crate::project::{
         LocalProjectConfig, Project, ProjectRepository, ProjectType, WslProjectConfig,
@@ -745,12 +726,12 @@ mod tests {
     fn test_state() -> AppState {
         let root = std::env::temp_dir().join(format!("pt-term-cmd-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        AppState {
-            projects: Arc::new(ProjectRepository::new(root.join("projects.json"))),
-            profiles: Arc::new(ProfileRepository::new(root.join("profiles.json"))),
-            templates: Arc::new(TemplateRepository::new(root.join("templates.json"))),
-            ssh: Arc::new(SshConnectionRepository::new(root.join("ssh.json"))),
-        }
+        AppState::from_repositories(
+            ProjectRepository::new(root.join("projects.json")),
+            ProfileRepository::new(root.join("profiles.json")),
+            TemplateRepository::new(root.join("templates.json")),
+            SshConnectionRepository::new(root.join("ssh.json")),
+        )
     }
 
     fn seed_project(app: &AppState, id: &str) -> PathBuf {
@@ -920,7 +901,10 @@ mod tests {
     #[test]
     fn escape_remote_cd_path_preserves_tilde_unquoted() {
         // ~/subpath — tilde and slash unquoted so the shell expands ~.
-        assert_eq!(escape_remote_cd_path("~/projects"), Some("~/projects".into()));
+        assert_eq!(
+            escape_remote_cd_path("~/projects"),
+            Some("~/projects".into())
+        );
         assert_eq!(
             escape_remote_cd_path("~/my project"),
             Some("~/'my project'".into())
@@ -1058,20 +1042,17 @@ mod tests {
         let mut out = Vec::new();
         use base64::Engine;
         while std::time::Instant::now() < deadline {
-            match rx.recv_timeout(std::time::Duration::from_millis(50)) {
-                Ok(chunk) => {
-                    let bytes = base64::engine::general_purpose::STANDARD
-                        .decode(chunk.data)
-                        .unwrap();
-                    out.extend_from_slice(&bytes);
-                    if out
-                        .windows(27)
-                        .any(|w| w == b"Environment activation failed")
-                    {
-                        break;
-                    }
+            if let Ok(chunk) = rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(chunk.data)
+                    .unwrap();
+                out.extend_from_slice(&bytes);
+                if out
+                    .windows(27)
+                    .any(|w| w == b"Environment activation failed")
+                {
+                    break;
                 }
-                Err(_) => {}
             }
         }
         terminal.manager.close_all();
@@ -1135,17 +1116,14 @@ mod tests {
         let mut out = Vec::new();
         use base64::Engine;
         while std::time::Instant::now() < deadline {
-            match rx.recv_timeout(std::time::Duration::from_millis(50)) {
-                Ok(chunk) => {
-                    let bytes = base64::engine::general_purpose::STANDARD
-                        .decode(chunk.data)
-                        .unwrap();
-                    out.extend_from_slice(&bytes);
-                    if out.windows(14).any(|w| w == b"PT_STARTUP_OK\r") {
-                        break;
-                    }
+            if let Ok(chunk) = rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(chunk.data)
+                    .unwrap();
+                out.extend_from_slice(&bytes);
+                if out.windows(14).any(|w| w == b"PT_STARTUP_OK\r") {
+                    break;
                 }
-                Err(_) => {}
             }
         }
 
