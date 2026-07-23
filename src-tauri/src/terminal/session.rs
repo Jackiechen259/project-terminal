@@ -17,22 +17,47 @@ use tauri::ipc::Channel;
 
 use crate::error::{AppError, AppResult};
 
-/// A chunk of bytes sent from the PTY reader to the frontend.
+/// A terminal lifecycle event sent to the frontend.
 ///
-/// Serialized as `{ sessionId, data }` so the frontend can route output by
-/// session id. `data` is base64-encoded bytes (terminal output is not
-/// guaranteed to be valid UTF-8).
+/// Output bytes are base64 encoded because terminal output is not guaranteed
+/// to be valid UTF-8. Exit state travels over the same channel so the frontend
+/// does not need to poll every live session.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalOutput {
     pub session_id: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub data: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<SessionStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+}
+
+impl TerminalOutput {
+    fn output(session_id: String, data: String) -> Self {
+        Self {
+            session_id,
+            data,
+            status: None,
+            exit_code: None,
+        }
+    }
+
+    fn status(session_id: String, status: SessionStatus, exit_code: Option<i32>) -> Self {
+        Self {
+            session_id,
+            data: String::new(),
+            status: Some(status),
+            exit_code,
+        }
+    }
 }
 
 /// Abstract output sink. Production wires `tauri::ipc::Channel`; tests wire
 /// an mpsc sender so the reader thread's bytes can be inspected without a
 /// runtime.
-pub trait OutputSink: Send + 'static {
+pub trait OutputSink: Send + Sync + 'static {
     /// Send one chunk. Returns `false` when the sink is closed (frontend
     /// window closed) so the reader thread can stop.
     fn send_output(&self, output: TerminalOutput) -> bool;
@@ -252,7 +277,8 @@ impl TerminalSession {
 
         // Reader thread: scans for the one-shot ready marker, removes that
         // protocol line, and forwards every other byte sequence to xterm.
-        let ch_for_reader = sink;
+        let sink: Arc<dyn OutputSink> = Arc::from(sink);
+        let ch_for_reader = Arc::clone(&sink);
         let sid_for_reader = session_id.clone();
         let watcher_for_reader = ready_watcher.clone();
         thread::spawn(move || {
@@ -264,10 +290,10 @@ impl TerminalSession {
                     Ok(n) => {
                         let output = watcher_for_reader.lock().process(&buf[..n]);
                         if !output.is_empty()
-                            && !ch_for_reader.send_output(TerminalOutput {
-                                session_id: sid_for_reader.clone(),
-                                data: encode_bytes(&output),
-                            })
+                            && !ch_for_reader.send_output(TerminalOutput::output(
+                                sid_for_reader.clone(),
+                                encode_bytes(&output),
+                            ))
                         {
                             // Sink closed (frontend window closed). Stop
                             // reading - the manager will tear the session
@@ -296,6 +322,8 @@ impl TerminalSession {
         // flip status.
         let inner_for_wait = inner.clone();
         let watcher_for_wait = ready_watcher.clone();
+        let sink_for_wait = Arc::clone(&sink);
+        let sid_for_wait = session_id.clone();
         let mut child_for_wait = child;
         thread::spawn(move || match child_for_wait.wait() {
             Ok(status) => {
@@ -307,6 +335,11 @@ impl TerminalSession {
                 drop(guard);
                 if !closing {
                     watcher_for_wait.lock().process_exited(Some(code));
+                    let _ = sink_for_wait.send_output(TerminalOutput::status(
+                        sid_for_wait,
+                        SessionStatus::Exited,
+                        Some(code),
+                    ));
                 }
             }
             Err(_) => {
@@ -316,6 +349,11 @@ impl TerminalSession {
                 drop(guard);
                 if !closing {
                     watcher_for_wait.lock().process_exited(None);
+                    let _ = sink_for_wait.send_output(TerminalOutput::status(
+                        sid_for_wait,
+                        SessionStatus::Error,
+                        None,
+                    ));
                 }
             }
         });
@@ -404,13 +442,9 @@ impl TerminalSession {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn status(&self) -> SessionStatus {
         self.inner.lock().status
-    }
-
-    #[allow(dead_code)]
-    pub fn exit_code(&self) -> Option<i32> {
-        self.inner.lock().exit_code
     }
 
     /// Close the session. Sends a kill to the child so it does not leak when
@@ -518,6 +552,24 @@ mod tests {
             String::from_utf8_lossy(&output)
         );
         session.close();
+    }
+
+    #[test]
+    fn process_exit_is_pushed_through_the_output_channel() {
+        let (_session, rx) = make_session("cmd.exe", &["/C", "exit", "7"]);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let status = loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "timed out waiting for exit status");
+            let event = rx.recv_timeout(remaining).expect("receive terminal event");
+            if event.status.is_some() {
+                break event;
+            }
+        };
+
+        assert_eq!(status.status, Some(SessionStatus::Exited));
+        assert_eq!(status.exit_code, Some(7));
+        assert!(status.data.is_empty());
     }
 
     #[test]

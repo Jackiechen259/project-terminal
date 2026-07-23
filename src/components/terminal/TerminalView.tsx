@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { memo, useCallback, useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
@@ -51,7 +51,7 @@ interface PendingSession {
  * + profile. Output bytes flow from the PTY through a Tauri Channel into the
  * Terminal. Input bytes flow from the Terminal through terminalService.write.
  */
-export function TerminalView({
+export const TerminalView = memo(function TerminalView({
   pending,
   active,
   focused = active,
@@ -79,10 +79,10 @@ export function TerminalView({
   const fitRef = useRef<FitAddon | null>(null);
   const resizeQueueRef = useRef<TerminalResizeQueue | null>(null);
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const statusTimerRef = useRef<number | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const reportedExitRef = useRef(false);
   const onTitleChangeRef = useRef(onTitleChange);
+  const onExitRef = useRef(onExit);
   const { t } = useTranslation();
   const tRef = useRef(t);
   tRef.current = t;
@@ -126,6 +126,10 @@ export function TerminalView({
   useEffect(() => {
     onTitleChangeRef.current = onTitleChange;
   }, [onTitleChange]);
+
+  useEffect(() => {
+    onExitRef.current = onExit;
+  }, [onExit]);
 
   useEffect(() => {
     return listenForAppCommands((command) => {
@@ -265,6 +269,13 @@ export function TerminalView({
         },
         (chunk) => {
           if (cancelled) return;
+          if (chunk.status) {
+            if (!reportedExitRef.current) {
+              reportedExitRef.current = true;
+              onExitRef.current?.(chunk.exitCode ?? null, chunk.status);
+            }
+            return;
+          }
           if (!chunk.data) return;
           const bytes = terminalService.decodeBase64(chunk.data);
           term.write(bytes);
@@ -284,27 +295,10 @@ export function TerminalView({
         if (cancelled) return;
         inputQueue.attach(sessionId);
         onSessionId?.(sessionId);
-        const statusTimer = window.setInterval(() => {
-          if (reportedExitRef.current) return;
-          void terminalService
-            .status(sessionId)
-            .then((status) => {
-              if (status.status === "exited" || status.status === "error") {
-                reportedExitRef.current = true;
-                onExit?.(status.exitCode ?? null, status.status);
-                window.clearInterval(statusTimer);
-              }
-            })
-            .catch(() => {
-              // A tab can close while a poll is in flight; cleanup owns it.
-            });
-        }, 700);
         // The first ResizeObserver fit normally runs before the asynchronous
         // PTY session id exists. Resize once it is available so applications
         // in the shell receive the same grid dimensions as xterm.
         requestAnimationFrame(fitAndResize);
-        // Cleanup is tied to the outer effect; see `statusTimer` below.
-        statusTimerRef.current = statusTimer;
       })
       .catch((e) => {
         const err = e as { message?: string };
@@ -313,7 +307,10 @@ export function TerminalView({
             error: err.message ?? tRef.current("unknown error"),
           })}\x1b[0m\r\n`,
         );
-        onExit?.(null);
+        if (!reportedExitRef.current) {
+          reportedExitRef.current = true;
+          onExitRef.current?.(null, "error");
+        }
       });
 
     return () => {
@@ -324,7 +321,6 @@ export function TerminalView({
       titleDisposable.dispose();
       ro.disconnect();
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
-      if (statusTimerRef.current) window.clearInterval(statusTimerRef.current);
       if (viewportSyncFrame !== null) {
         window.cancelAnimationFrame(viewportSyncFrame);
       }
@@ -397,4 +393,4 @@ export function TerminalView({
       />
     </div>
   );
-}
+});

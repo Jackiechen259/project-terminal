@@ -14,7 +14,7 @@ use parking_lot::Mutex;
 
 use crate::error::{AppError, AppResult};
 
-use super::session::{SessionSpawn, SessionStatus, TerminalSession};
+use super::session::{SessionSpawn, TerminalSession};
 
 pub struct TerminalManager {
     sessions: Arc<Mutex<HashMap<String, Arc<TerminalSession>>>>,
@@ -84,14 +84,6 @@ impl TerminalManager {
     pub fn resize(&self, session_id: &str, rows: u16, cols: u16) -> AppResult<()> {
         let session = self.get(session_id)?;
         session.resize(rows, cols)
-    }
-
-    pub fn status(&self, session_id: &str) -> AppResult<SessionStatus> {
-        Ok(self.get(session_id)?.status())
-    }
-
-    pub fn exit_code(&self, session_id: &str) -> AppResult<Option<i32>> {
-        Ok(self.get(session_id)?.exit_code())
     }
 
     /// Close a session and remove it from the map. Idempotent - closing an

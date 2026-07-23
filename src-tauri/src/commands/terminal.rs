@@ -45,13 +45,6 @@ pub struct CreateTerminalRequest {
     pub cols: u16,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TerminalSessionStatus {
-    pub status: crate::terminal::SessionStatus,
-    pub exit_code: Option<i32>,
-}
-
 /// Per-session state we keep alongside the manager so restart can rebuild
 /// the spawn config from the original profile without re-querying.
 struct SessionMeta {
@@ -594,17 +587,6 @@ pub fn resize_terminal(
     cols: u16,
 ) -> AppResult<()> {
     terminal.manager.resize(&session_id, rows, cols)
-}
-
-#[tauri::command]
-pub fn terminal_session_status(
-    terminal: State<'_, TerminalState>,
-    session_id: String,
-) -> AppResult<TerminalSessionStatus> {
-    Ok(TerminalSessionStatus {
-        status: terminal.manager.status(&session_id)?,
-        exit_code: terminal.manager.exit_code(&session_id)?,
-    })
 }
 
 #[tauri::command]
