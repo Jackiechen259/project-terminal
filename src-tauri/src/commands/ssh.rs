@@ -130,47 +130,52 @@ pub fn create_ssh_connection_inner(
     state: &AppState,
     input: SshConnectionInput,
 ) -> AppResult<SshConnection> {
-    let id = crate::state::new_id("ssh");
-    let conn = build_connection_from_input(input, id)?;
-    state.ssh.upsert(conn)
+    state.with_config_write(|| {
+        let id = crate::state::new_id("ssh");
+        let conn = build_connection_from_input(input, id)?;
+        state.ssh.upsert(conn)
+    })
 }
 
 pub fn update_ssh_connection_inner(
     state: &AppState,
     input: SshConnectionInput,
 ) -> AppResult<SshConnection> {
-    let id = input
-        .id
-        .clone()
-        .ok_or_else(|| AppError::Configuration("update_ssh_connection requires an id".into()))?;
-    let existing = state.ssh.get(&id)?;
-    let updated = SshConnection {
-        id: existing.id.clone(),
-        name: input.name,
-        host: input.host,
-        port: input.port,
-        username: input.username,
-        authentication_type: input.authentication_type,
-        identity_file: input.identity_file,
-        use_ssh_agent: input.use_ssh_agent,
-        jump_host: input.jump_host,
-        connect_timeout_seconds: input.connect_timeout_seconds,
-        server_alive_interval_seconds: input.server_alive_interval_seconds,
-        server_alive_count_max: input.server_alive_count_max,
-        strict_host_key_checking: input.strict_host_key_checking,
-        known_hosts_file: input.known_hosts_file,
-        extra_args: input.extra_args,
-        created_at: existing.created_at,
-        updated_at: Utc::now(),
-    };
-    state.ssh.upsert(updated)
+    state.with_config_write(|| {
+        let id = input.id.clone().ok_or_else(|| {
+            AppError::Configuration("update_ssh_connection requires an id".into())
+        })?;
+        let existing = state.ssh.get(&id)?;
+        let updated = SshConnection {
+            id: existing.id.clone(),
+            name: input.name,
+            host: input.host,
+            port: input.port,
+            username: input.username,
+            authentication_type: input.authentication_type,
+            identity_file: input.identity_file,
+            use_ssh_agent: input.use_ssh_agent,
+            jump_host: input.jump_host,
+            connect_timeout_seconds: input.connect_timeout_seconds,
+            server_alive_interval_seconds: input.server_alive_interval_seconds,
+            server_alive_count_max: input.server_alive_count_max,
+            strict_host_key_checking: input.strict_host_key_checking,
+            known_hosts_file: input.known_hosts_file,
+            extra_args: input.extra_args,
+            created_at: existing.created_at,
+            updated_at: Utc::now(),
+        };
+        state.ssh.upsert(updated)
+    })
 }
 
 pub fn delete_ssh_connection_inner(state: &AppState, id: &str) -> AppResult<()> {
     // §31.2: if any project still references this connection, block delete
     // and surface the referencing project id.
-    let references = projects_referencing_connection(state, id);
-    state.ssh.delete(id, &references)
+    state.with_config_write(|| {
+        let references = projects_referencing_connection(state, id);
+        state.ssh.delete(id, &references)
+    })
 }
 
 pub fn test_ssh_connection_inner(state: &AppState, id: &str) -> AppResult<String> {
@@ -460,17 +465,15 @@ mod tests {
     use crate::project::{Project, ProjectRepository, ProjectType, SshProjectConfig};
     use crate::ssh::SshConnectionRepository;
     use std::fs;
-    use std::sync::Arc;
-
     fn test_state() -> AppState {
         let root = std::env::temp_dir().join(format!("pt-ssh-cmd-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        AppState {
-            projects: Arc::new(ProjectRepository::new(root.join("projects.json"))),
-            profiles: Arc::new(ProfileRepository::new(root.join("profiles.json"))),
-            templates: Arc::new(TemplateRepository::new(root.join("templates.json"))),
-            ssh: Arc::new(SshConnectionRepository::new(root.join("ssh.json"))),
-        }
+        AppState::from_repositories(
+            ProjectRepository::new(root.join("projects.json")),
+            ProfileRepository::new(root.join("profiles.json")),
+            TemplateRepository::new(root.join("templates.json")),
+            SshConnectionRepository::new(root.join("ssh.json")),
+        )
     }
 
     fn sample_input() -> SshConnectionInput {

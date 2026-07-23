@@ -136,60 +136,90 @@ pub fn validate_project_inner(input: ProjectInput) -> AppResult<()> {
 }
 
 pub fn create_project_inner(state: &AppState, input: ProjectInput) -> AppResult<Project> {
-    let id = new_id("project");
-    let project = build_project_from_input(input, id)?;
-    project.validate()?;
-    state.projects.upsert(project.clone())?;
+    state.with_config_write(|| {
+        let id = new_id("project");
+        let project = build_project_from_input(input, id)?;
+        project.validate()?;
+        state.projects.upsert(project.clone())?;
 
-    // Every project gets an immediately usable, target-appropriate profile.
-    let profile_id = new_id("profile");
-    let profile = match project.project_type {
-        ProjectType::Local => default_local_profile(profile_id, project.id.clone()),
-        ProjectType::Ssh => default_remote_profile(profile_id, project.id.clone()),
-        ProjectType::Wsl => {
-            let wsl = project.wsl.clone().ok_or_else(|| {
-                AppError::Configuration("WSL project requires a wsl config".into())
-            })?;
-            default_wsl_profile(
-                profile_id,
-                project.id.clone(),
-                wsl.distribution,
-                wsl.working_directory,
-            )
+        // Every project gets an immediately usable, target-appropriate profile.
+        let profile_id = new_id("profile");
+        let profile = match project.project_type {
+            ProjectType::Local => default_local_profile(profile_id, project.id.clone()),
+            ProjectType::Ssh => default_remote_profile(profile_id, project.id.clone()),
+            ProjectType::Wsl => {
+                let wsl = project.wsl.clone().ok_or_else(|| {
+                    AppError::Configuration("WSL project requires a wsl config".into())
+                })?;
+                default_wsl_profile(
+                    profile_id,
+                    project.id.clone(),
+                    wsl.distribution,
+                    wsl.working_directory,
+                )
+            }
+        };
+        if let Err(profile_error) = state.profiles.upsert(profile) {
+            if let Err(rollback_error) = state.projects.delete(&project.id) {
+                return Err(AppError::Configuration(format!(
+                    "Failed to create the default profile ({profile_error}); \
+                     project rollback also failed ({rollback_error})"
+                )));
+            }
+            return Err(profile_error);
         }
-    };
-    state.profiles.upsert(profile)?;
-    Ok(project)
+        Ok(project)
+    })
 }
 
 pub fn update_project_inner(state: &AppState, input: ProjectInput) -> AppResult<Project> {
-    let id = input
-        .id
-        .clone()
-        .ok_or_else(|| AppError::Configuration("update_project requires an id".into()))?;
-    let existing = state.projects.get(&id)?;
-    let updated = Project {
-        id: existing.id.clone(),
-        name: input.name,
-        project_type: input.project_type,
-        local: input.local,
-        ssh: input.ssh,
-        wsl: input.wsl,
-        default_profile_id: input.default_profile_id,
-        created_at: existing.created_at,
-        updated_at: Utc::now(),
-    };
-    updated.validate()?;
-    state.projects.upsert(updated)
+    state.with_config_write(|| {
+        let id = input
+            .id
+            .clone()
+            .ok_or_else(|| AppError::Configuration("update_project requires an id".into()))?;
+        let existing = state.projects.get(&id)?;
+        let updated = Project {
+            id: existing.id.clone(),
+            name: input.name,
+            project_type: input.project_type,
+            local: input.local,
+            ssh: input.ssh,
+            wsl: input.wsl,
+            default_profile_id: input.default_profile_id,
+            created_at: existing.created_at,
+            updated_at: Utc::now(),
+        };
+        updated.validate()?;
+        state.projects.upsert(updated)
+    })
 }
 
 pub fn delete_project_inner(state: &AppState, id: &str) -> AppResult<()> {
     // §31.1: deleting a project removes its profiles. The frontend confirms
     // first if it has open terminals (those would be closed via
     // close_terminal commands before this is called).
-    state.profiles.delete_all_for_project(id)?;
-    state.projects.delete(id)?;
-    Ok(())
+    state.with_config_write(|| {
+        state.projects.get(id)?;
+        let profiles = state.profiles.list_for_project(id)?;
+        state.profiles.delete_all_for_project(id)?;
+        if let Err(project_error) = state.projects.delete(id) {
+            let mut rollback_errors = Vec::new();
+            for profile in profiles {
+                if let Err(error) = state.profiles.upsert(profile) {
+                    rollback_errors.push(error.to_string());
+                }
+            }
+            if !rollback_errors.is_empty() {
+                return Err(AppError::Configuration(format!(
+                    "Failed to delete project ({project_error}); profile rollback also failed: {}",
+                    rollback_errors.join("; ")
+                )));
+            }
+            return Err(project_error);
+        }
+        Ok(())
+    })
 }
 
 /// Open a saved project's working directory in Windows Explorer.
@@ -306,17 +336,15 @@ mod tests {
     use crate::ssh::SshConnectionRepository;
     use std::fs;
     use std::path::PathBuf;
-    use std::sync::Arc;
-
     fn test_state() -> AppState {
         let root = std::env::temp_dir().join(format!("pt-cmd-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        AppState {
-            projects: Arc::new(ProjectRepository::new(root.join("projects.json"))),
-            profiles: Arc::new(ProfileRepository::new(root.join("profiles.json"))),
-            templates: Arc::new(TemplateRepository::new(root.join("templates.json"))),
-            ssh: Arc::new(SshConnectionRepository::new(root.join("ssh.json"))),
-        }
+        AppState::from_repositories(
+            ProjectRepository::new(root.join("projects.json")),
+            ProfileRepository::new(root.join("profiles.json")),
+            TemplateRepository::new(root.join("templates.json")),
+            SshConnectionRepository::new(root.join("ssh.json")),
+        )
     }
 
     fn temp_local_dir() -> PathBuf {
@@ -363,6 +391,54 @@ mod tests {
         let profiles = state.profiles.list_for_project(&project.id).unwrap();
         assert_eq!(profiles.len(), 1);
         assert!(profiles[0].is_default);
+    }
+
+    #[test]
+    fn concurrent_project_creates_do_not_lose_updates() {
+        let state = test_state();
+        let dir = temp_local_dir();
+        let handles: Vec<_> = (0..8)
+            .map(|index| {
+                let state = state.clone();
+                let dir = dir.clone();
+                std::thread::spawn(move || {
+                    create_project_inner(
+                        &state,
+                        local_input(&format!("Project {index}"), dir.to_str().unwrap()),
+                    )
+                    .unwrap();
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let projects = state.projects.list().unwrap();
+        let profiles = state.profiles.list_all().unwrap();
+        assert_eq!(projects.len(), 8);
+        assert_eq!(profiles.len(), 8);
+    }
+
+    #[test]
+    fn create_project_rolls_back_when_default_profile_cannot_be_saved() {
+        let root = std::env::temp_dir().join(format!("pt-cmd-rollback-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let invalid_profile_path = root.join("profiles-as-directory");
+        fs::create_dir_all(&invalid_profile_path).unwrap();
+        let state = AppState::from_repositories(
+            ProjectRepository::new(root.join("projects.json")),
+            ProfileRepository::new(invalid_profile_path),
+            TemplateRepository::new(root.join("templates.json")),
+            SshConnectionRepository::new(root.join("ssh.json")),
+        );
+        let dir = temp_local_dir();
+
+        let result = create_project_inner(&state, local_input("Demo", dir.to_str().unwrap()));
+
+        assert!(result.is_err());
+        assert!(state.projects.list().unwrap().is_empty());
     }
 
     #[test]

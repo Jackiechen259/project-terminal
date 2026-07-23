@@ -675,8 +675,7 @@ mod tests {
     use super::*;
     use crate::profile::repository::default_powershell_profile;
     use crate::profile::{
-        default_wsl_profile, EnvironmentType, ProfileRepository, ShellType,
-        TemplateRepository,
+        default_wsl_profile, EnvironmentType, ProfileRepository, ShellType, TemplateRepository,
     };
     use crate::project::{
         LocalProjectConfig, Project, ProjectRepository, ProjectType, WslProjectConfig,
@@ -745,12 +744,12 @@ mod tests {
     fn test_state() -> AppState {
         let root = std::env::temp_dir().join(format!("pt-term-cmd-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
-        AppState {
-            projects: Arc::new(ProjectRepository::new(root.join("projects.json"))),
-            profiles: Arc::new(ProfileRepository::new(root.join("profiles.json"))),
-            templates: Arc::new(TemplateRepository::new(root.join("templates.json"))),
-            ssh: Arc::new(SshConnectionRepository::new(root.join("ssh.json"))),
-        }
+        AppState::from_repositories(
+            ProjectRepository::new(root.join("projects.json")),
+            ProfileRepository::new(root.join("profiles.json")),
+            TemplateRepository::new(root.join("templates.json")),
+            SshConnectionRepository::new(root.join("ssh.json")),
+        )
     }
 
     fn seed_project(app: &AppState, id: &str) -> PathBuf {
@@ -920,7 +919,10 @@ mod tests {
     #[test]
     fn escape_remote_cd_path_preserves_tilde_unquoted() {
         // ~/subpath — tilde and slash unquoted so the shell expands ~.
-        assert_eq!(escape_remote_cd_path("~/projects"), Some("~/projects".into()));
+        assert_eq!(
+            escape_remote_cd_path("~/projects"),
+            Some("~/projects".into())
+        );
         assert_eq!(
             escape_remote_cd_path("~/my project"),
             Some("~/'my project'".into())
