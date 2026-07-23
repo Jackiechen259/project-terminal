@@ -38,9 +38,19 @@ type ProjectType = "local" | "ssh" | "wsl";
  * Linux working directory; the distribution list is detected from the host's
  * `wsl.exe` when the dialog opens.
  */
-export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
+export function ProjectDialog({
+  trigger,
+  openState: controlledOpen,
+  onOpenChange,
+}: {
+  trigger?: React.ReactNode;
+  openState?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}) {
   const { t } = useTranslation();
-  const [openState, setOpenState] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const openState = controlledOpen ?? internalOpen;
+  const setOpenState = onOpenChange ?? setInternalOpen;
   const [name, setName] = useState("");
   const [type, setType] = useState<ProjectType>("local");
   const [localPath, setLocalPath] = useState("");
@@ -193,7 +203,7 @@ export function ProjectDialog({ trigger }: { trigger: React.ReactNode }) {
         if (!v) reset();
       }}
     >
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
       <DialogContent className="sm:max-w-[480px]">
         <DialogHeader>
           <DialogTitle>{t("Add project")}</DialogTitle>

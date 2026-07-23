@@ -30,6 +30,30 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          "react-vendor": ["react", "react-dom", "zustand"],
+          "terminal-vendor": [
+            "@xterm/xterm",
+            "@xterm/addon-fit",
+            "@xterm/addon-unicode-graphemes",
+            "@xterm/addon-web-links",
+          ],
+          "ui-vendor": [
+            "@radix-ui/react-dialog",
+            "@radix-ui/react-dropdown-menu",
+            "@radix-ui/react-label",
+            "@radix-ui/react-select",
+            "@radix-ui/react-slot",
+            "@radix-ui/react-tooltip",
+          ],
+          "icons-vendor": ["lucide-react"],
+        },
+      },
+    },
+  },
   test: {
     globals: true,
     environment: "jsdom",
