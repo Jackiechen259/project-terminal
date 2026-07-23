@@ -7,6 +7,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { useTranslation } from "@/i18n";
 import { listenForAppCommands } from "@/lib/appCommands";
 import { TerminalInputQueue } from "@/lib/terminalInputQueue";
+import { TerminalOutputQueue } from "@/lib/terminalOutputQueue";
 import { TerminalResizeQueue } from "@/lib/terminalResizeQueue";
 import {
   getTerminalMinimumContrast,
@@ -232,6 +233,11 @@ export const TerminalView = memo(function TerminalView({
     };
 
     const inputQueue = new TerminalInputQueue(terminalService.write);
+    const outputQueue = new TerminalOutputQueue(
+      (data) => term.write(data),
+      (callback) => window.requestAnimationFrame(callback),
+      (handle) => window.cancelAnimationFrame(handle),
+    );
     const disposable = term.onData((data) => inputQueue.send(data));
     const titleDisposable = term.onTitleChange((nextTitle) => {
       const title = resolveTerminalTabTitle(nextTitle, defaultTitle);
@@ -270,6 +276,7 @@ export const TerminalView = memo(function TerminalView({
         (chunk) => {
           if (cancelled) return;
           if (chunk.status) {
+            outputQueue.flush();
             if (!reportedExitRef.current) {
               reportedExitRef.current = true;
               onExitRef.current?.(chunk.exitCode ?? null, chunk.status);
@@ -278,7 +285,7 @@ export const TerminalView = memo(function TerminalView({
           }
           if (!chunk.data) return;
           const bytes = terminalService.decodeBase64(chunk.data);
-          term.write(bytes);
+          outputQueue.send(bytes);
         },
       )
       .then(async (sessionId) => {
@@ -302,6 +309,7 @@ export const TerminalView = memo(function TerminalView({
       })
       .catch((e) => {
         const err = e as { message?: string };
+        outputQueue.flush();
         term.write(
           `\r\n\x1b[31m${tRef.current("Failed to start terminal: {error}", {
             error: err.message ?? tRef.current("unknown error"),
@@ -316,6 +324,7 @@ export const TerminalView = memo(function TerminalView({
     return () => {
       cancelled = true;
       inputQueue.dispose();
+      outputQueue.dispose();
       resizeQueue.dispose();
       disposable.dispose();
       titleDisposable.dispose();
