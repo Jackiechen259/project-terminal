@@ -251,13 +251,12 @@ pub fn open_project_in_explorer_inner(state: &AppState, id: &str) -> AppResult<(
             ));
         }
     };
-    match project.project_type {
-        ProjectType::Local => validate_local_path(&target)?,
-        // WSL paths are not checked on the Windows side: the `\\wsl.localhost`
-        // share only materializes while WSL is running, and a missing folder
-        // surfaces as an Explorer error that the user can act on.
-        _ => {}
+    if project.project_type == ProjectType::Local {
+        validate_local_path(&target)?;
     }
+    // WSL paths are not checked on the Windows side: the `\\wsl.localhost`
+    // share only materializes while WSL is running, and a missing folder
+    // surfaces as an Explorer error that the user can act on.
     #[cfg(windows)]
     {
         std::process::Command::new("explorer.exe")

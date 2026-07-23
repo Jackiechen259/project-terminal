@@ -346,7 +346,7 @@ const zhCNWorkspace: Record<string, string> = {
   "{field} must be a whole number between 1 and {maximum}.":
     "{field} 必须是 1 到 {maximum} 之间的整数。",
   'Invalid environment variable: "{line}". Use NAME=value.':
-    '环境变量格式无效：“{line}”。请使用 NAME=value 格式。',
+    "环境变量格式无效：“{line}”。请使用 NAME=value 格式。",
   "Profile name is required.": "请输入配置名称。",
   "Template name is required.": "请输入模板名称。",
   "Choose a Conda environment name or environment path.":

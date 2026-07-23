@@ -429,7 +429,7 @@ fn execute_startup_commands(
     // Phase 3.6/3.7: Environment activation is evaluated and pushed first.
     // Plan §20.8 / §22: if activation generation fails, we MUST retain the
     // shell so the user can manually inspect or fix it.
-    match crate::terminal::build_activation_script(&profile) {
+    match crate::terminal::build_activation_script(profile) {
         Ok(activation) => {
             if !activation.is_empty() {
                 let activation = normalize_initialization_script(profile.shell_type, &activation);
@@ -1042,20 +1042,17 @@ mod tests {
         let mut out = Vec::new();
         use base64::Engine;
         while std::time::Instant::now() < deadline {
-            match rx.recv_timeout(std::time::Duration::from_millis(50)) {
-                Ok(chunk) => {
-                    let bytes = base64::engine::general_purpose::STANDARD
-                        .decode(chunk.data)
-                        .unwrap();
-                    out.extend_from_slice(&bytes);
-                    if out
-                        .windows(27)
-                        .any(|w| w == b"Environment activation failed")
-                    {
-                        break;
-                    }
+            if let Ok(chunk) = rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(chunk.data)
+                    .unwrap();
+                out.extend_from_slice(&bytes);
+                if out
+                    .windows(27)
+                    .any(|w| w == b"Environment activation failed")
+                {
+                    break;
                 }
-                Err(_) => {}
             }
         }
         terminal.manager.close_all();
@@ -1119,17 +1116,14 @@ mod tests {
         let mut out = Vec::new();
         use base64::Engine;
         while std::time::Instant::now() < deadline {
-            match rx.recv_timeout(std::time::Duration::from_millis(50)) {
-                Ok(chunk) => {
-                    let bytes = base64::engine::general_purpose::STANDARD
-                        .decode(chunk.data)
-                        .unwrap();
-                    out.extend_from_slice(&bytes);
-                    if out.windows(14).any(|w| w == b"PT_STARTUP_OK\r") {
-                        break;
-                    }
+            if let Ok(chunk) = rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(chunk.data)
+                    .unwrap();
+                out.extend_from_slice(&bytes);
+                if out.windows(14).any(|w| w == b"PT_STARTUP_OK\r") {
+                    break;
                 }
-                Err(_) => {}
             }
         }
 

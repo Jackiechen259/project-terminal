@@ -124,7 +124,10 @@ impl TemplateRepository {
     pub fn upsert(&self, template: ProfileTemplate) -> AppResult<ProfileTemplate> {
         template.validate()?;
         let mut collection = self.load()?;
-        let existing_idx = collection.templates.iter().position(|t| t.id == template.id);
+        let existing_idx = collection
+            .templates
+            .iter()
+            .position(|t| t.id == template.id);
         match existing_idx {
             Some(idx) => collection.templates[idx] = template.clone(),
             None => collection.templates.push(template.clone()),

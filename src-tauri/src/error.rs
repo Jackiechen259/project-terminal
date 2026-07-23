@@ -170,10 +170,7 @@ mod tests {
                 "environment_init_failed",
             ),
             (AppError::Configuration("e".into()), "configuration"),
-            (
-                AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, "x")),
-                "io",
-            ),
+            (AppError::Io(std::io::Error::other("x")), "io"),
         ];
         for (err, expected_code) in cases {
             assert_eq!(err.code(), expected_code, "mismatch for {err:?}");
