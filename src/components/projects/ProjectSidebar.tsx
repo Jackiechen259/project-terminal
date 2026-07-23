@@ -22,6 +22,7 @@ import { useSettingsStore } from "@/stores/settingsStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { projectService, sshService, terminalService } from "@/services";
 import { cn } from "@/lib/utils";
+import { useDragPreviewPosition } from "@/lib/useDragPreviewPosition";
 import { useTranslation } from "@/i18n";
 import type { Project } from "@/types";
 
@@ -118,11 +119,9 @@ export function ProjectSidebar() {
 
   const [notice, setNotice] = useState<string | null>(null);
   const [draggedProjectId, setDraggedProjectId] = useState<string | null>(null);
-  const [dragPosition, setDragPosition] = useState<{
-    x: number;
-    y: number;
-  } | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
+  const { previewRef, updatePreviewPosition, resetPreviewPosition } =
+    useDragPreviewPosition();
   // Ref mirrors `draggedProjectId` for synchronous reads inside dragover
   // handlers. React state updates are async, so by the time the first
   // `dragover` fires the state may still be null - that makes the browser
@@ -195,18 +194,21 @@ export function ProjectSidebar() {
 
   const hasCollections = collections.length > 0;
 
-  const updateDragPosition = useCallback((x: number, y: number) => {
-    if (!draggedProjectRef.current) return;
-    setDragPosition({ x, y });
-  }, []);
+  const updateDragPosition = useCallback(
+    (x: number, y: number) => {
+      if (!draggedProjectRef.current) return;
+      updatePreviewPosition(x, y);
+    },
+    [updatePreviewPosition],
+  );
 
   const clearDrag = useCallback(() => {
     draggedProjectRef.current = null;
     dropTargetRef.current = null;
     setDraggedProjectId(null);
-    setDragPosition(null);
+    resetPreviewPosition();
     setDropTarget(null);
-  }, []);
+  }, [resetPreviewPosition]);
 
   function beginPointerDrag(
     projectId: string,
@@ -226,7 +228,7 @@ export function ProjectSidebar() {
     draggedProjectRef.current = projectId;
     dropTargetRef.current = null;
     setDraggedProjectId(projectId);
-    setDragPosition(null);
+    updatePreviewPosition(event.clientX, event.clientY);
     setDropTarget(null);
   }
 
@@ -409,11 +411,11 @@ export function ProjectSidebar() {
         updateDragPosition(event.clientX, event.clientY)
       }
     >
-      {draggedProject && dragPosition ? (
+      {draggedProject ? (
         <div
+          ref={previewRef}
           aria-hidden="true"
-          className="pointer-events-none fixed z-[60] flex max-w-56 -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-md border border-primary/70 bg-surface/80 px-3 py-2 text-sm text-foreground opacity-80 shadow-xl shadow-black/40 backdrop-blur-sm animate-in fade-in-0 zoom-in-95 duration-150"
-          style={{ left: dragPosition.x, top: dragPosition.y }}
+          className="pointer-events-none fixed left-0 top-0 z-[60] flex max-w-56 will-change-transform items-center gap-2 rounded-md border border-primary/70 bg-surface/80 px-3 py-2 text-sm text-foreground opacity-80 shadow-xl shadow-black/40 backdrop-blur-sm"
         >
           {draggedProject.type === "local" ? (
             <Folder className="h-4 w-4 shrink-0 text-primary" />

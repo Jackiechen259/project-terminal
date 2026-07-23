@@ -33,6 +33,7 @@ import {
   ContextMenu,
   type ContextMenuItem,
 } from "@/components/ui/context-menu";
+import { useDragPreviewPosition } from "@/lib/useDragPreviewPosition";
 import { joinContextMenuSections } from "@/components/ui/context-menu-items";
 import { dispatchAppCommand, listenForAppCommands } from "@/lib/appCommands";
 import { getAppShortcut, isBrowserShortcut } from "@/lib/keyboardShortcuts";
@@ -111,10 +112,6 @@ export function TerminalWorkspace() {
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [activePaneIndex, setActivePaneIndex] = useState<0 | 1>(0);
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
-  const [dragPosition, setDragPosition] = useState<{
-    x: number;
-    y: number;
-  } | null>(null);
   const [dropZone, setDropZone] = useState<TerminalDropZone | null>(null);
   const [tabDropTarget, setTabDropTarget] = useState<TabDropTarget | null>(
     null,
@@ -141,6 +138,8 @@ export function TerminalWorkspace() {
   const dropZoneRef = useRef<TerminalDropZone | null>(null);
   const tabDropTargetRef = useRef<TabDropTarget | null>(null);
   const suppressTabClickRef = useRef(false);
+  const { previewRef, updatePreviewPosition, resetPreviewPosition } =
+    useDragPreviewPosition();
 
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const selectedProfile = profiles.find(
@@ -280,10 +279,10 @@ export function TerminalWorkspace() {
     dropZoneRef.current = null;
     tabDropTargetRef.current = null;
     setDraggedTabId(null);
-    setDragPosition(null);
+    resetPreviewPosition();
     setDropZone(null);
     setTabDropTarget(null);
-  }, []);
+  }, [resetPreviewPosition]);
 
   const getDropAnchorTabId = useCallback(
     (sourceTabId: string) => {
@@ -425,17 +424,23 @@ export function TerminalWorkspace() {
         );
         if (moved < 6 || !canSplitWithTab(drag.tabId)) return;
         drag.started = true;
+        updatePreviewPosition(event.clientX, event.clientY);
         setDraggedTabId(drag.tabId);
       }
 
-      setDragPosition({ x: event.clientX, y: event.clientY });
+      updatePreviewPosition(event.clientX, event.clientY);
       updateTabDropTarget(drag.tabId, event.clientX, event.clientY);
       const nextDropZone = getPointerDropZone(event.clientX, event.clientY);
       dropZoneRef.current = nextDropZone;
       setDropZone(nextDropZone);
       event.preventDefault();
     },
-    [canSplitWithTab, getPointerDropZone, updateTabDropTarget],
+    [
+      canSplitWithTab,
+      getPointerDropZone,
+      updatePreviewPosition,
+      updateTabDropTarget,
+    ],
   );
 
   const handleTabPointerUp = useCallback(
@@ -1052,11 +1057,11 @@ export function TerminalWorkspace() {
         setMenuPosition({ x: event.clientX, y: event.clientY });
       }}
     >
-      {draggedTabId && dragPosition && tabsById[draggedTabId] ? (
+      {draggedTabId && tabsById[draggedTabId] ? (
         <div
+          ref={previewRef}
           aria-hidden="true"
-          className="pointer-events-none fixed z-[60] flex max-w-56 -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-md border border-primary/70 bg-surface/80 px-3 py-2 text-xs text-foreground opacity-80 shadow-xl shadow-black/40 backdrop-blur-sm animate-in fade-in-0 zoom-in-95 duration-150"
-          style={{ left: dragPosition.x, top: dragPosition.y }}
+          className="pointer-events-none fixed left-0 top-0 z-[60] flex max-w-56 will-change-transform items-center gap-2 rounded-md border border-primary/70 bg-surface/80 px-3 py-2 text-xs text-foreground opacity-80 shadow-xl shadow-black/40 backdrop-blur-sm"
         >
           <TerminalIcon className="h-3.5 w-3.5 shrink-0 text-primary" />
           <span className="truncate">{tabsById[draggedTabId].title}</span>
