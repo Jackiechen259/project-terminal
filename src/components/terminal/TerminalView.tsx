@@ -235,8 +235,8 @@ export const TerminalView = memo(function TerminalView({
     const inputQueue = new TerminalInputQueue(terminalService.write);
     const outputQueue = new TerminalOutputQueue(
       (data) => term.write(data),
-      (callback) => window.requestAnimationFrame(callback),
-      (handle) => window.cancelAnimationFrame(handle),
+      (callback, delay) => window.setTimeout(callback, delay),
+      (handle) => window.clearTimeout(handle),
     );
     const disposable = term.onData((data) => inputQueue.send(data));
     const titleDisposable = term.onTitleChange((nextTitle) => {
