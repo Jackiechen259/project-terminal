@@ -17,7 +17,6 @@ import {
 import {
   Boxes,
   Columns2,
-  LayoutTemplate,
   Plus,
   RotateCcw,
   Rows2,
@@ -45,6 +44,7 @@ import {
   normalizedProfileName,
   uniqueProfilesByName,
 } from "@/lib/profilePresets";
+import { getProfileTemplateIcon } from "@/lib/profileTemplateIcons";
 import {
   environmentService,
   profileService,
@@ -974,14 +974,21 @@ export function TerminalWorkspace() {
   };
 
   const profileMenuItems: ContextMenuItem[] = contextMenuProfiles.map(
-    (profile) => ({
-      label: profile.name,
-      icon: profile.isDefault ? Star : TerminalIcon,
-      onSelect: () => {
-        if (activeProjectId)
-          void handleNewTerminal(activeProjectId, profile.id);
-      },
-    }),
+    (profile) => {
+      const sourceTemplate = findProfileByName(templateList, profile.name);
+      return {
+        label: profile.name,
+        icon: sourceTemplate
+          ? getProfileTemplateIcon(sourceTemplate.icon)
+          : profile.isDefault
+            ? Star
+            : TerminalIcon,
+        onSelect: () => {
+          if (activeProjectId)
+            void handleNewTerminal(activeProjectId, profile.id);
+        },
+      };
+    },
   );
 
   // Quick-launch sources are ordered by priority and claimed by normalized
@@ -1001,7 +1008,7 @@ export function TerminalWorkspace() {
   for (const template of templateList) {
     addQuickLaunchItem(template.name, {
       label: template.name,
-      icon: LayoutTemplate,
+      icon: getProfileTemplateIcon(template.icon),
       onSelect: () => void handleLaunchFromTemplate(template),
     });
   }

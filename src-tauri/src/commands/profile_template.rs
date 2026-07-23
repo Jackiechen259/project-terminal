@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::commands::ListResponse;
 use crate::error::AppResult;
 use crate::profile::model::{CondaEnvironmentConfig, EnvironmentType, ShellType};
-use crate::profile::{ProfileTemplate, TerminalProfile};
+use crate::profile::{ProfileTemplate, TemplateIcon, TerminalProfile};
 use crate::state::{new_id, AppState};
 
 /// Payload for creating/updating a profile template. The backend resolves
@@ -19,6 +19,8 @@ pub struct TemplateInput {
     #[serde(default)]
     pub id: Option<String>,
     pub name: String,
+    #[serde(default)]
+    pub icon: TemplateIcon,
 
     pub shell_type: ShellType,
     #[serde(default)]
@@ -58,6 +60,7 @@ fn build_template_from_input(input: TemplateInput, id: String) -> AppResult<Prof
     let template = ProfileTemplate {
         id,
         name: input.name,
+        icon: input.icon,
         shell_type: input.shell_type,
         shell_executable: input.shell_executable,
         shell_args: input.shell_args,
@@ -103,6 +106,7 @@ pub fn update_profile_template_inner(
     let template = ProfileTemplate {
         id: id.clone(),
         name: input.name,
+        icon: input.icon,
         shell_type: input.shell_type,
         shell_executable: input.shell_executable,
         shell_args: input.shell_args,
@@ -223,6 +227,7 @@ mod tests {
         TemplateInput {
             id: None,
             name: name.to_string(),
+            icon: TemplateIcon::LayoutTemplate,
             shell_type: ShellType::Powershell,
             shell_executable: None,
             shell_args: vec![],
@@ -254,8 +259,10 @@ mod tests {
         let created = create_profile_template_inner(&state, sample_input("Codex")).unwrap();
         let mut input = sample_input("Updated");
         input.id = Some(created.id.clone());
+        input.icon = TemplateIcon::Rocket;
         let updated = update_profile_template_inner(&state, input).unwrap();
         assert_eq!(updated.name, "Updated");
+        assert_eq!(updated.icon, TemplateIcon::Rocket);
     }
 
     #[test]

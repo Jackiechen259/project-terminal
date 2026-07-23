@@ -81,6 +81,16 @@ const zhCN: Record<string, string> = {
   Templates: "模板",
   "No templates yet.": "暂无模板。",
   "New template": "新建模板",
+  Icon: "图标",
+  Template: "模板",
+  Code: "代码",
+  Bot: "机器人",
+  Sparkles: "闪光",
+  Box: "容器",
+  Database: "数据库",
+  Server: "服务器",
+  Cloud: "云",
+  Rocket: "火箭",
   "Preferences are stored locally and applied automatically.":
     "偏好设置保存在本地并自动应用。",
   "Select a profile to edit it, or create a new one.":

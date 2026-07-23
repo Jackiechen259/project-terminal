@@ -92,6 +92,7 @@ export interface ProfileInput {
 export interface TemplateInput {
   id?: string;
   name: string;
+  icon: ProfileTemplate["icon"];
   shellType: ProfileTemplate["shellType"];
   shellExecutable?: string;
   shellArgs?: string[];

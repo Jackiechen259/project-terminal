@@ -14,11 +14,29 @@ use crate::storage;
 
 use super::model::{CondaEnvironmentConfig, EnvironmentType, ShellType};
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TemplateIcon {
+    #[default]
+    LayoutTemplate,
+    Terminal,
+    Code,
+    Bot,
+    Sparkles,
+    Box,
+    Database,
+    Server,
+    Cloud,
+    Rocket,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileTemplate {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub icon: TemplateIcon,
 
     pub shell_type: ShellType,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -134,6 +152,7 @@ mod tests {
         ProfileTemplate {
             id: id.to_string(),
             name: "Test".to_string(),
+            icon: TemplateIcon::LayoutTemplate,
             shell_type: ShellType::Powershell,
             shell_executable: None,
             shell_args: vec![],
@@ -189,6 +208,21 @@ mod tests {
         let mut t = sample_template("tpl-1");
         t.name = "  ".to_string();
         assert!(repo_with(&t).is_err());
+    }
+
+    #[test]
+    fn template_icon_round_trips_and_legacy_json_uses_default() {
+        let mut template = sample_template("tpl-icon");
+        template.icon = TemplateIcon::Rocket;
+        let json = serde_json::to_string(&template).unwrap();
+        assert!(json.contains("\"icon\":\"rocket\""));
+        let parsed: ProfileTemplate = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.icon, TemplateIcon::Rocket);
+
+        let mut legacy_value = serde_json::to_value(template).unwrap();
+        legacy_value.as_object_mut().unwrap().remove("icon");
+        let legacy: ProfileTemplate = serde_json::from_value(legacy_value).unwrap();
+        assert_eq!(legacy.icon, TemplateIcon::LayoutTemplate);
     }
 
     fn repo_with(t: &ProfileTemplate) -> AppResult<()> {

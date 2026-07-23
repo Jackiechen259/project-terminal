@@ -57,6 +57,18 @@ export type ShellType =
 export type EnvironmentType =
   "none" | "conda" | "venv" | "poetry" | "uv" | "custom";
 
+export type ProfileTemplateIcon =
+  | "layout-template"
+  | "terminal"
+  | "code"
+  | "bot"
+  | "sparkles"
+  | "box"
+  | "database"
+  | "server"
+  | "cloud"
+  | "rocket";
+
 export type CondaActivationMode = "shell-hook" | "conda-bat" | "manual-command";
 
 export interface CondaEnvironmentConfig {
@@ -109,6 +121,7 @@ export interface TerminalProfile {
 export interface ProfileTemplate {
   id: string;
   name: string;
+  icon: ProfileTemplateIcon;
 
   shellType: ShellType;
   shellExecutable?: string;

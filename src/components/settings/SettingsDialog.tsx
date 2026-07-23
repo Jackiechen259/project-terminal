@@ -35,6 +35,10 @@ import {
   type BuiltInProfilePreset,
   hasMaterializedPreset,
 } from "@/lib/profilePresets";
+import {
+  getProfileTemplateIcon,
+  PROFILE_TEMPLATE_ICON_OPTIONS,
+} from "@/lib/profileTemplateIcons";
 import { cn } from "@/lib/utils";
 import type { ProfileInput, TemplateInput } from "@/services";
 import { useProfileStore } from "@/stores/profileStore";
@@ -44,6 +48,7 @@ import { usePlatformStore } from "@/stores/platformStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import type {
   EnvironmentType,
+  ProfileTemplateIcon,
   ProfileTemplate,
   ShellType,
   TerminalProfile,
@@ -57,6 +62,7 @@ type ProfileDraft = {
   id?: string;
   builtInPresetId?: string;
   name: string;
+  templateIcon: ProfileTemplateIcon;
   shellType: ShellType;
   shellExecutable: string;
   shellArgs: string;
@@ -127,6 +133,7 @@ const EMPTY_TEMPLATES: ProfileTemplate[] = [];
 function blankTemplateDraft(): ProfileDraft {
   return {
     name: "",
+    templateIcon: "layout-template",
     shellType: "powershell",
     shellExecutable: "",
     shellArgs: "",
@@ -152,6 +159,7 @@ function draftFromTemplate(template: ProfileTemplate): ProfileDraft {
   return {
     id: template.id,
     name: template.name,
+    templateIcon: template.icon ?? "layout-template",
     shellType: template.shellType,
     shellExecutable: template.shellExecutable ?? "",
     shellArgs: (template.shellArgs ?? []).join("\n"),
@@ -180,6 +188,7 @@ function draftFromTemplate(template: ProfileTemplate): ProfileDraft {
 function blankDraft(projectType: "local" | "ssh" | "wsl"): ProfileDraft {
   return {
     name: "",
+    templateIcon: "layout-template",
     shellType: projectType === "ssh" ? "remote-default" : "powershell",
     shellExecutable: "",
     shellArgs: "",
@@ -209,6 +218,7 @@ function draftFromBuiltInPreset(
     ...blankDraft(projectType),
     builtInPresetId: preset.id,
     name: preset.name,
+    templateIcon: "sparkles",
     startupCommands: preset.startupCommands.join("\n"),
   };
 }
@@ -217,6 +227,7 @@ function draftFromProfile(profile: TerminalProfile): ProfileDraft {
   return {
     id: profile.id,
     name: profile.name,
+    templateIcon: "layout-template",
     shellType: profile.shellType,
     shellExecutable: profile.shellExecutable ?? "",
     shellArgs: (profile.shellArgs ?? []).join("\n"),
@@ -481,6 +492,7 @@ export function SettingsDialog() {
       const input: TemplateInput = {
         ...(editingTemplate.id ? { id: editingTemplate.id } : {}),
         name: editingTemplate.name.trim(),
+        icon: editingTemplate.templateIcon,
         shellType: editingTemplate.shellType,
         shellExecutable: optional(editingTemplate.shellExecutable),
         shellArgs: lines(editingTemplate.shellArgs),
@@ -707,25 +719,28 @@ export function SettingsDialog() {
                       </span>
                     </button>
                   ))}
-                  {templates.map((template) => (
-                    <button
-                      key={template.id}
-                      type="button"
-                      onClick={() => {
-                        setEditingTemplate(draftFromTemplate(template));
-                        setTemplateError(null);
-                      }}
-                      className={cn(
-                        "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent",
-                        editingTemplate?.id === template.id && "bg-accent",
-                      )}
-                    >
-                      <LayoutTemplate className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <span className="min-w-0 flex-1 truncate">
-                        {template.name}
-                      </span>
-                    </button>
-                  ))}
+                  {templates.map((template) => {
+                    const TemplateIcon = getProfileTemplateIcon(template.icon);
+                    return (
+                      <button
+                        key={template.id}
+                        type="button"
+                        onClick={() => {
+                          setEditingTemplate(draftFromTemplate(template));
+                          setTemplateError(null);
+                        }}
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent",
+                          editingTemplate?.id === template.id && "bg-accent",
+                        )}
+                      >
+                        <TemplateIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1 truncate">
+                          {template.name}
+                        </span>
+                      </button>
+                    );
+                  })}
                   {templates.length === 0 &&
                   uncreatedBuiltInTemplates.length === 0 ? (
                     <p className="px-2 py-3 text-xs text-muted-foreground">
@@ -852,6 +867,10 @@ function ProfileForm({
     draft.environmentType !== "conda" &&
     draft.environmentType !== "custom";
   const isTemplate = !showProjectOptions;
+  const selectedTemplateIcon = PROFILE_TEMPLATE_ICON_OPTIONS.find(
+    (option) => option.value === draft.templateIcon,
+  );
+  const SelectedTemplateIcon = selectedTemplateIcon?.icon;
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -890,24 +909,54 @@ function ProfileForm({
             placeholder={t("e.g. Python environment")}
           />
         </Field>
-        <Field label={t("Shell")}>
-          <Select
-            value={draft.shellType}
-            onValueChange={(value) => update("shellType", value as ShellType)}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {shells.map((shell) => (
-                <SelectItem key={shell.value} value={shell.value}>
-                  {t(shell.label)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
+        {isTemplate ? (
+          <Field label={t("Icon")}>
+            <Select
+              value={draft.templateIcon}
+              onValueChange={(value) =>
+                update("templateIcon", value as ProfileTemplateIcon)
+              }
+            >
+              <SelectTrigger>
+                <SelectValue>
+                  {selectedTemplateIcon && SelectedTemplateIcon ? (
+                    <span className="flex items-center gap-2">
+                      <SelectedTemplateIcon className="h-4 w-4" />
+                      {t(selectedTemplateIcon.label)}
+                    </span>
+                  ) : null}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {PROFILE_TEMPLATE_ICON_OPTIONS.map((option) => {
+                  const OptionIcon = option.icon;
+                  return (
+                    <SelectItem key={option.value} value={option.value}>
+                      <span className="flex items-center gap-2">
+                        <OptionIcon className="h-4 w-4" />
+                        {t(option.label)}
+                      </span>
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+          </Field>
+        ) : (
+          <ShellField
+            draft={draft}
+            shells={shells}
+            onShellChange={(value) => update("shellType", value)}
+          />
+        )}
       </div>
+      {isTemplate ? (
+        <ShellField
+          draft={draft}
+          shells={shells}
+          onShellChange={(value) => update("shellType", value)}
+        />
+      ) : null}
       {draft.shellType === "custom" ? (
         <Field
           label={
@@ -1167,6 +1216,37 @@ function ProfileForm({
         </div>
       </div>
     </div>
+  );
+}
+
+function ShellField({
+  draft,
+  shells,
+  onShellChange,
+}: {
+  draft: ProfileDraft;
+  shells: Array<{ value: ShellType; label: string }>;
+  onShellChange: (value: ShellType) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Field label={t("Shell")}>
+      <Select
+        value={draft.shellType}
+        onValueChange={(value) => onShellChange(value as ShellType)}
+      >
+        <SelectTrigger>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {shells.map((shell) => (
+            <SelectItem key={shell.value} value={shell.value}>
+              {t(shell.label)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </Field>
   );
 }
 
