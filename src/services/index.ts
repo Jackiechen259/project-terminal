@@ -171,7 +171,12 @@ export interface SessionInfo {
 export interface SessionAttachment {
   session: SessionInfo;
   /** base64-encoded raw PTY history captured before live events. */
-  scrollback: string;
+  scrollback?: string;
+  /** Output and historical grid changes in their original order. */
+  replay?: Array<
+    | { type: "output"; data: string }
+    | { type: "resize"; rows: number; cols: number }
+  >;
   truncated: boolean;
 }
 

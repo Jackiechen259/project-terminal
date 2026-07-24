@@ -2,7 +2,6 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
-import { SerializeAddon } from "@xterm/addon-serialize";
 import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -195,10 +194,8 @@ export const TerminalView = memo(function TerminalView({
     });
     const fit = new FitAddon();
     const search = new SearchAddon();
-    const serialize = new SerializeAddon();
     term.loadAddon(fit);
     term.loadAddon(search);
-    term.loadAddon(serialize);
     term.loadAddon(new UnicodeGraphemesAddon());
     term.loadAddon(new WebLinksAddon());
     term.open(container);
@@ -218,10 +215,9 @@ export const TerminalView = memo(function TerminalView({
     fitRef.current = fit;
     searchRef.current = search;
     const snapshotKey = `project-terminal.snapshot.${sessionId}`;
-    const previousSnapshot = sessionStorage.getItem(snapshotKey);
-    if (previousSnapshot) {
-      term.write(previousSnapshot);
-    }
+    // Older builds cached a visual ANSI snapshot in sessionStorage. Replaying
+    // it alongside backend PTY history duplicates cursor-addressed TUI frames.
+    sessionStorage.removeItem(snapshotKey);
     const resizeQueue = new TerminalResizeQueue(terminalService.resize);
     resizeQueueRef.current = resizeQueue;
 
@@ -325,7 +321,6 @@ export const TerminalView = memo(function TerminalView({
     ro.observe(container);
 
     fitAndResize();
-    const initialDimensions = { rows: term.rows, cols: term.cols };
     const clientId = crypto.randomUUID();
     let cancelled = false;
     let attached = false;
@@ -349,8 +344,11 @@ export const TerminalView = memo(function TerminalView({
       else pendingLiveOutput.push(chunk);
     };
 
-    inputQueue.attach(sessionId);
-    resizeQueue.attach(sessionId, initialDimensions);
+    // This view attaches to an already-running PTY, which may still be at its
+    // 80x24 creation size. Do not mark the fitted UI dimensions as applied:
+    // doing so suppresses the first real PTY resize and makes dynamic TUIs
+    // render against a different grid than xterm.
+    resizeQueue.attach(sessionId);
 
     // Subscribe first on the backend, restore bounded history, then drain
     // events queued while the command response was in flight.
@@ -366,15 +364,32 @@ export const TerminalView = memo(function TerminalView({
             "\r\n\x1b[33m[Earlier terminal output was truncated]\x1b[0m\r\n",
           );
         }
-        if (attachment.scrollback) {
-          if (previousSnapshot) {
-            term.reset();
+        if (attachment.replay?.length) {
+          for (const event of attachment.replay) {
+            if (cancelled) return;
+            if (event.type === "resize") {
+              term.resize(event.cols, event.rows);
+            } else if (event.data) {
+              await new Promise<void>((resolve) => {
+                term.write(terminalService.decodeBase64(event.data), resolve);
+              });
+            }
           }
-          outputQueue.send(
-            terminalService.decodeBase64(attachment.scrollback),
-          );
+        } else if (attachment.scrollback) {
+          const scrollback = attachment.scrollback;
+          await new Promise<void>((resolve) => {
+            term.write(
+              terminalService.decodeBase64(scrollback),
+              resolve,
+            );
+          });
         }
-        sessionStorage.removeItem(snapshotKey);
+        // Restore the grid dictated by the actual container, then deliver the
+        // resize to the PTY before releasing buffered input/live redraws.
+        fitAndResize();
+        await resizeQueue.whenIdle();
+        if (cancelled) return;
+        inputQueue.attach(sessionId);
         attached = true;
         pendingLiveOutput.splice(0).forEach(handleOutput);
         if (
@@ -387,8 +402,6 @@ export const TerminalView = memo(function TerminalView({
             exitCode: attachment.session.exitCode,
           });
         }
-        await resizeQueue.whenIdle();
-        if (cancelled) return;
         requestAnimationFrame(fitAndResize);
       })
       .catch((e) => {
@@ -423,14 +436,7 @@ export const TerminalView = memo(function TerminalView({
         capture: true,
       });
       void terminalService.detach(sessionId, clientId);
-      try {
-        const snapshot = serialize.serialize();
-        if (snapshot.length <= 1_000_000) {
-          sessionStorage.setItem(snapshotKey, snapshot);
-        }
-      } catch {
-        sessionStorage.removeItem(snapshotKey);
-      }
+      sessionStorage.removeItem(snapshotKey);
       webgl?.dispose();
       term.dispose();
       termRef.current = null;

@@ -13,6 +13,10 @@ const mocks = vi.hoisted(() => ({
   webglShouldThrow: false,
   readClipboardText: vi.fn(async () => ""),
   paste: vi.fn(),
+  terminalActions: [] as Array<
+    | { type: "write"; data: number[] }
+    | { type: "resize"; rows: number; cols: number }
+  >,
   customKeyHandler: undefined as
     | ((event: KeyboardEvent) => boolean)
     | undefined,
@@ -33,8 +37,8 @@ vi.mock("@/services", () => ({
 
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
-    rows = 24;
-    cols = 80;
+    rows = 43;
+    cols = 132;
     options: Record<string, unknown> = {};
     buffer = { active: { viewportY: 0, baseY: 0 } };
     element: HTMLElement | undefined;
@@ -53,7 +57,21 @@ vi.mock("@xterm/xterm", () => ({
     attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
       mocks.customKeyHandler = handler;
     }
-    write() {}
+    write(data: Uint8Array | string, callback?: () => void) {
+      mocks.terminalActions.push({
+        type: "write",
+        data:
+          typeof data === "string"
+            ? [...new TextEncoder().encode(data)]
+            : [...data],
+      });
+      callback?.();
+    }
+    resize(cols: number, rows: number) {
+      this.cols = cols;
+      this.rows = rows;
+      mocks.terminalActions.push({ type: "resize", rows, cols });
+    }
     reset() {}
     paste = mocks.paste;
     focus() {}
@@ -115,6 +133,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   sessionStorage.clear();
   mocks.webglShouldThrow = false;
+  mocks.terminalActions.length = 0;
   mocks.customKeyHandler = undefined;
   mocks.readClipboardText.mockResolvedValue("");
   vi.stubGlobal("ResizeObserver", ResizeObserverStub);
@@ -134,6 +153,7 @@ beforeEach(() => {
       createdAt: new Date(0).toISOString(),
     },
     scrollback: "",
+    replay: [],
     truncated: false,
   });
 });
@@ -167,6 +187,66 @@ describe("TerminalView session lifecycle", () => {
     expect(mocks.close).not.toHaveBeenCalled();
   });
 
+  it("always sends the fitted grid when attaching an existing 80x24 PTY", async () => {
+    render(
+      <TerminalView
+        sessionId="session-one"
+        active
+        defaultTitle="PowerShell"
+      />,
+    );
+
+    await waitFor(() =>
+      expect(mocks.resize).toHaveBeenCalledWith("session-one", 43, 132),
+    );
+  });
+
+  it("replays output using the grid active when each TUI frame was emitted", async () => {
+    mocks.attach.mockResolvedValue({
+      session: {
+        sessionId: "session-one",
+        projectId: "project-one",
+        profileId: "profile-one",
+        status: "running",
+        createdAt: new Date(0).toISOString(),
+      },
+      scrollback: "",
+      replay: [
+        { type: "resize", rows: 24, cols: 80 },
+        { type: "output", data: btoa("first") },
+        { type: "resize", rows: 40, cols: 120 },
+        { type: "output", data: btoa("second") },
+      ],
+      truncated: false,
+    });
+
+    render(
+      <TerminalView
+        sessionId="session-one"
+        active
+        defaultTitle="PowerShell"
+      />,
+    );
+
+    await waitFor(() =>
+      expect(mocks.terminalActions).toEqual(
+        expect.arrayContaining([
+          { type: "resize", rows: 24, cols: 80 },
+          { type: "write", data: [...new TextEncoder().encode("first")] },
+          { type: "resize", rows: 40, cols: 120 },
+          { type: "write", data: [...new TextEncoder().encode("second")] },
+        ]),
+      ),
+    );
+    const replay = mocks.terminalActions.slice(0, 4);
+    expect(replay).toEqual([
+      { type: "resize", rows: 24, cols: 80 },
+      { type: "write", data: [...new TextEncoder().encode("first")] },
+      { type: "resize", rows: 40, cols: 120 },
+      { type: "write", data: [...new TextEncoder().encode("second")] },
+    ]);
+  });
+
   it("detaches the old session and attaches the replacement on restart", async () => {
     const view = render(
       <TerminalView
@@ -186,6 +266,7 @@ describe("TerminalView session lifecycle", () => {
         createdAt: new Date(0).toISOString(),
       },
       scrollback: "",
+      replay: [],
       truncated: false,
     });
     view.rerender(

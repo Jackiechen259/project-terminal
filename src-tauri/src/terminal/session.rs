@@ -281,11 +281,12 @@ impl TerminalSession {
         }));
         let session_id = spawn.session_id.clone();
         let (event_tx, _) = broadcast::channel(1024);
+        let mut scrollback =
+            OutputRingBuffer::new(spawn.scrollback_bytes.max(DEFAULT_SCROLLBACK_BYTES / 4));
+        scrollback.resize(spawn.rows, spawn.cols);
         let event_hub = Arc::new(Mutex::new(EventHub {
             sender: event_tx,
-            scrollback: OutputRingBuffer::new(
-                spawn.scrollback_bytes.max(DEFAULT_SCROLLBACK_BYTES / 4),
-            ),
+            scrollback,
         }));
 
         // Reader thread: scans for the one-shot ready marker, removes that
@@ -445,6 +446,9 @@ impl TerminalSession {
         let rows = rows.max(1);
         let cols = cols.max(1);
         let guard = self.inner.lock();
+        // Hold the output hub across the OS resize so reader bytes triggered
+        // by SIGWINCH/ConPTY cannot overtake the replay resize marker.
+        let mut hub = self.event_hub.lock();
         guard
             .master
             .resize(PtySize {
@@ -454,6 +458,7 @@ impl TerminalSession {
                 pixel_height: 0,
             })
             .map_err(|e| AppError::PtyCreationFailed(format!("resize: {e}")))?;
+        hub.scrollback.resize(rows, cols);
         Ok(())
     }
 
@@ -646,6 +651,19 @@ mod tests {
         // Resize up then down; both must succeed.
         session.resize(30, 120).expect("resize up");
         session.resize(10, 40).expect("resize down");
+        let replay = session.attach("resize-history".into()).snapshot.replay;
+        let grids = replay
+            .into_iter()
+            .filter_map(|event| match event {
+                crate::terminal::scrollback::ScrollbackReplayEvent::Resize { rows, cols } => {
+                    Some((rows, cols))
+                }
+                crate::terminal::scrollback::ScrollbackReplayEvent::Output(_) => None,
+            })
+            .collect::<Vec<_>>();
+        // Consecutive grid changes with no intervening output collapse to the
+        // latest one because no frame needs either earlier size for replay.
+        assert_eq!(grids, vec![(10, 40)]);
         assert_eq!(session.status(), SessionStatus::Running);
         session.close();
     }

@@ -659,8 +659,19 @@ pub async fn restart_terminal_inner(
 pub struct SessionAttachment {
     pub session: SessionInfo,
     /// Base64-encoded raw PTY bytes captured before the live subscription.
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub scrollback: String,
+    /// Ordered output and grid changes required to faithfully reconstruct a
+    /// cursor-addressed terminal after reattaching.
+    pub replay: Vec<SessionReplayEvent>,
     pub truncated: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum SessionReplayEvent {
+    Output { data: String },
+    Resize { rows: u16, cols: u16 },
 }
 
 /// Attach one frontend client to an existing PTY without changing its
@@ -677,11 +688,37 @@ pub fn session_attach(
     use tokio::sync::broadcast::error::RecvError;
 
     let (info, subscription) = terminal.manager.attach(&session_id, client_id.clone())?;
-    let scrollback = base64::engine::general_purpose::STANDARD.encode(subscription.snapshot.bytes);
+    let crate::terminal::scrollback::ScrollbackSnapshot {
+        bytes,
+        replay,
+        truncated,
+    } = subscription.snapshot;
+    let replay = replay
+        .into_iter()
+        .map(|event| match event {
+            crate::terminal::scrollback::ScrollbackReplayEvent::Output(bytes) => {
+                SessionReplayEvent::Output {
+                    data: base64::engine::general_purpose::STANDARD.encode(bytes),
+                }
+            }
+            crate::terminal::scrollback::ScrollbackReplayEvent::Resize { rows, cols } => {
+                SessionReplayEvent::Resize { rows, cols }
+            }
+        })
+        .collect::<Vec<_>>();
+    // Avoid sending the same potentially multi-megabyte history twice. The
+    // flat field remains only as a compatibility fallback for snapshots that
+    // predate resize-aware replay events.
+    let scrollback = if replay.is_empty() {
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    } else {
+        String::new()
+    };
     let attachment = SessionAttachment {
         session: info,
         scrollback,
-        truncated: subscription.snapshot.truncated,
+        replay,
+        truncated,
     };
 
     let manager = terminal.manager.clone_handle();

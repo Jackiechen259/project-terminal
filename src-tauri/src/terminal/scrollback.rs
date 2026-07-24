@@ -12,12 +12,19 @@ pub const DEFAULT_SCROLLBACK_BYTES: usize = 4 * 1024 * 1024;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScrollbackSnapshot {
     pub bytes: Vec<u8>,
+    pub replay: Vec<ScrollbackReplayEvent>,
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScrollbackReplayEvent {
+    Output(Bytes),
+    Resize { rows: u16, cols: u16 },
 }
 
 #[derive(Debug)]
 pub struct OutputRingBuffer {
-    chunks: VecDeque<Bytes>,
+    events: VecDeque<ScrollbackReplayEvent>,
     total_bytes: usize,
     max_bytes: usize,
     truncated: bool,
@@ -26,7 +33,7 @@ pub struct OutputRingBuffer {
 impl OutputRingBuffer {
     pub fn new(max_bytes: usize) -> Self {
         Self {
-            chunks: VecDeque::new(),
+            events: VecDeque::new(),
             total_bytes: 0,
             max_bytes: max_bytes.max(1),
             truncated: false,
@@ -41,29 +48,76 @@ impl OutputRingBuffer {
 
         if bytes.len() > self.max_bytes {
             bytes = bytes.slice(bytes.len() - self.max_bytes..);
-            self.chunks.clear();
+            let last_resize = self.events.iter().rev().find_map(|event| match event {
+                ScrollbackReplayEvent::Resize { rows, cols } => {
+                    Some(ScrollbackReplayEvent::Resize {
+                        rows: *rows,
+                        cols: *cols,
+                    })
+                }
+                ScrollbackReplayEvent::Output(_) => None,
+            });
+            self.events.clear();
+            if let Some(resize) = last_resize {
+                self.events.push_back(resize);
+            }
             self.total_bytes = 0;
             self.truncated = true;
         }
 
         self.total_bytes += bytes.len();
-        self.chunks.push_back(bytes);
+        self.events.push_back(ScrollbackReplayEvent::Output(bytes));
         while self.total_bytes > self.max_bytes {
-            if let Some(removed) = self.chunks.pop_front() {
-                self.total_bytes -= removed.len();
-                self.truncated = true;
+            match self.events.pop_front() {
+                Some(ScrollbackReplayEvent::Output(removed)) => {
+                    self.total_bytes -= removed.len();
+                    self.truncated = true;
+                }
+                Some(ScrollbackReplayEvent::Resize { .. }) => {}
+                None => break,
             }
         }
+        self.compact_leading_resizes();
+    }
+
+    /// Record the grid that subsequent PTY output was rendered against.
+    ///
+    /// Replaying raw ANSI output at a single, newer grid corrupts dynamic TUIs:
+    /// cursor-addressed redraws land on different rows and leave stale frames
+    /// behind. Resize events therefore form part of the retained history.
+    pub fn resize(&mut self, rows: u16, cols: u16) {
+        let event = ScrollbackReplayEvent::Resize { rows, cols };
+        if matches!(
+            self.events.back(),
+            Some(ScrollbackReplayEvent::Resize { .. })
+        ) {
+            self.events.pop_back();
+        }
+        self.events.push_back(event);
     }
 
     pub fn snapshot(&self) -> ScrollbackSnapshot {
         let mut bytes = Vec::with_capacity(self.total_bytes);
-        for chunk in &self.chunks {
-            bytes.extend_from_slice(chunk);
+        for event in &self.events {
+            if let ScrollbackReplayEvent::Output(chunk) = event {
+                bytes.extend_from_slice(chunk);
+            }
         }
         ScrollbackSnapshot {
             bytes,
+            replay: self.events.iter().cloned().collect(),
             truncated: self.truncated,
+        }
+    }
+
+    fn compact_leading_resizes(&mut self) {
+        let leading_resizes = self
+            .events
+            .iter()
+            .take_while(|event| matches!(event, ScrollbackReplayEvent::Resize { .. }))
+            .count();
+        for _ in 1..leading_resizes {
+            self.events.pop_front();
         }
     }
 
@@ -130,5 +184,47 @@ mod tests {
 
         assert_eq!(buffer.snapshot().bytes, b"");
         assert!(!buffer.snapshot().truncated);
+    }
+
+    #[test]
+    fn snapshot_preserves_resize_boundaries_for_tui_replay() {
+        let mut buffer = OutputRingBuffer::new(16);
+        buffer.resize(24, 80);
+        buffer.push(Bytes::from_static(b"first"));
+        buffer.resize(40, 120);
+        buffer.push(Bytes::from_static(b"second"));
+
+        assert_eq!(
+            buffer.snapshot().replay,
+            vec![
+                ScrollbackReplayEvent::Resize { rows: 24, cols: 80 },
+                ScrollbackReplayEvent::Output(Bytes::from_static(b"first")),
+                ScrollbackReplayEvent::Resize {
+                    rows: 40,
+                    cols: 120
+                },
+                ScrollbackReplayEvent::Output(Bytes::from_static(b"second")),
+            ]
+        );
+    }
+
+    #[test]
+    fn truncation_keeps_only_the_latest_leading_resize() {
+        let mut buffer = OutputRingBuffer::new(4);
+        buffer.resize(24, 80);
+        buffer.push(Bytes::from_static(b"old"));
+        buffer.resize(30, 100);
+        buffer.push(Bytes::from_static(b"newer"));
+
+        assert_eq!(
+            buffer.snapshot().replay,
+            vec![
+                ScrollbackReplayEvent::Resize {
+                    rows: 30,
+                    cols: 100
+                },
+                ScrollbackReplayEvent::Output(Bytes::from_static(b"ewer")),
+            ]
+        );
     }
 }
