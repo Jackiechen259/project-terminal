@@ -20,6 +20,7 @@ export interface ProfileStoreState {
   loadForProject: (projectId: string) => Promise<void>;
   createProfile: (input: ProfileInput) => Promise<TerminalProfile>;
   updateProfile: (input: ProfileInput) => Promise<TerminalProfile>;
+  duplicateProfile: (id: string) => Promise<TerminalProfile>;
   deleteProfile: (id: string, projectId: string) => Promise<void>;
   defaultForProject: (projectId: string) => TerminalProfile | null;
   clearError: () => void;
@@ -76,6 +77,18 @@ export const useProfileStore = create<ProfileStoreState>((set, get) => ({
     );
     set({
       byProjectId: { ...get().byProjectId, [projectId]: updated },
+    });
+    return profile;
+  },
+
+  duplicateProfile: async (id) => {
+    const profile = await profileService.duplicate(id);
+    const existing = get().byProjectId[profile.projectId] ?? [];
+    set({
+      byProjectId: {
+        ...get().byProjectId,
+        [profile.projectId]: [...existing, profile],
+      },
     });
     return profile;
   },

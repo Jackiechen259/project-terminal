@@ -1164,7 +1164,7 @@ function ProjectRow({
         await Promise.all(
           projectTabs
             .filter((tab) => tab.sessionId)
-            .map((tab) => terminalService.close(tab.sessionId)),
+            .map((tab) => terminalService.close(tab.sessionId!)),
         );
         // Switch the terminal workspace before removing the active project
         // from the project store. Otherwise TerminalWorkspace briefly has no

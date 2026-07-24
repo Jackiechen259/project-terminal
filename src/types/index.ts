@@ -190,7 +190,8 @@ export type TerminalStatus =
 
 export interface TerminalTab {
   id: string;
-  sessionId: string;
+  /** Null after restoring a workspace from disk; the prior PTY has ended. */
+  sessionId: string | null;
 
   projectId: string;
   profileId: string;

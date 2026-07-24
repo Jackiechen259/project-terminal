@@ -11,6 +11,7 @@ interface TerminalPaneProps {
   focused: boolean;
   panePosition: string;
   onSelect: (tabId: string) => void;
+  onRestart: (tabId: string) => void;
 }
 
 /**
@@ -24,6 +25,7 @@ export const TerminalPane = memo(function TerminalPane({
   focused,
   panePosition,
   onSelect,
+  onRestart,
 }: TerminalPaneProps) {
   const tab = useTerminalStore((state) => state.tabsById[tabId]);
   const updateTab = useTerminalStore((state) => state.updateTab);
@@ -51,15 +53,27 @@ export const TerminalPane = memo(function TerminalPane({
       )}
       onMouseDown={select}
     >
-      <TerminalView
-        sessionId={tab.sessionId}
-        active={visible}
-        focused={focused}
-        defaultTitle={tab.defaultTitle}
-        onFocus={select}
-        onExit={handleExit}
-        onTitleChange={handleTitleChange}
-      />
+      {tab.sessionId ? (
+        <TerminalView
+          sessionId={tab.sessionId}
+          active={visible}
+          focused={focused}
+          defaultTitle={tab.defaultTitle}
+          onFocus={select}
+          onExit={handleExit}
+          onTitleChange={handleTitleChange}
+        />
+      ) : (
+        <div className="flex h-full items-center justify-center bg-background">
+          <button
+            type="button"
+            className="rounded-md border border-border bg-surface px-4 py-3 text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+            onClick={() => onRestart(tabId)}
+          >
+            Session ended — click to restart
+          </button>
+        </div>
+      )}
     </div>
   );
 });

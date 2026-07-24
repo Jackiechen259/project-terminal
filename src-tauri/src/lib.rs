@@ -100,7 +100,10 @@ pub fn run() {
                 commands::profile::create_terminal_profile,
                 commands::profile::update_terminal_profile,
                 commands::profile::delete_terminal_profile,
+                commands::profile::duplicate_terminal_profile,
                 commands::profile::test_terminal_profile,
+                commands::profile::detect_local_shells,
+                commands::profile::detect_python_environments,
                 // Profile templates (global reusable presets)
                 commands::profile_template::list_profile_templates,
                 commands::profile_template::create_profile_template,

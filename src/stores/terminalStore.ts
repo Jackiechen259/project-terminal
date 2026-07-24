@@ -12,6 +12,7 @@
  */
 
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 import type {
   ProjectTabGroup,
@@ -72,7 +73,12 @@ export interface TerminalStoreState {
   removeProjectTabs: (projectId: string) => void;
 }
 
-export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
+export const TERMINAL_WORKSPACE_STORAGE_KEY =
+  "project-terminal.workspace-layout.v1";
+
+export const useTerminalStore = create<TerminalStoreState>()(
+  persist(
+    (set, get) => ({
   activeProjectId: null,
   tabsById: {},
   tabGroupsByProjectId: {},
@@ -281,4 +287,35 @@ export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
     if (!group?.activeTabId) return null;
     return tabsById[group.activeTabId] ?? null;
   },
-}));
+    }),
+    {
+      name: TERMINAL_WORKSPACE_STORAGE_KEY,
+      version: 1,
+      partialize: (state) => ({
+        activeProjectId: state.activeProjectId,
+        tabsById: state.tabsById,
+        tabGroupsByProjectId: state.tabGroupsByProjectId,
+        splitViewsByProjectId: state.splitViewsByProjectId,
+      }),
+      merge: (persisted, current) => {
+        const saved = persisted as Partial<TerminalStoreState>;
+        const tabsById = Object.fromEntries(
+          Object.entries(saved.tabsById ?? {}).map(([id, tab]) => [
+            id,
+            {
+              ...tab,
+              sessionId: null,
+              status: "exited" as const,
+              exitCode: undefined,
+            },
+          ]),
+        );
+        return {
+          ...current,
+          ...saved,
+          tabsById,
+        };
+      },
+    },
+  ),
+);

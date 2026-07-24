@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Check,
   ChevronLeft,
+  Copy,
   EyeOff,
   LayoutTemplate,
   Plus,
@@ -315,6 +316,7 @@ export function SettingsDialog({
   const loadForProject = useProfileStore((s) => s.loadForProject);
   const createProfile = useProfileStore((s) => s.createProfile);
   const updateProfile = useProfileStore((s) => s.updateProfile);
+  const duplicateProfile = useProfileStore((s) => s.duplicateProfile);
   const deleteProfile = useProfileStore((s) => s.deleteProfile);
   const templates = useTemplateStore((s) => s.templates ?? EMPTY_TEMPLATES);
   const templatesLoaded = useTemplateStore((s) => s.loaded);
@@ -469,6 +471,21 @@ export function SettingsDialog({
       setError(
         (cause as { message?: string }).message ??
           t("Could not delete profile."),
+      );
+    }
+  }
+
+  async function duplicateExistingProfile(profile: TerminalProfile) {
+    if (!projectId) return;
+    try {
+      setError(null);
+      const duplicate = await duplicateProfile(profile.id);
+      setEditing(draftFromProfile(duplicate));
+      dispatchAppCommand({ type: "profiles-changed", projectId });
+    } catch (cause) {
+      setError(
+        (cause as { message?: string }).message ??
+          t("Could not duplicate profile."),
       );
     }
   }
@@ -638,34 +655,47 @@ export function SettingsDialog({
                   ) : null}
                   {!loading &&
                     profiles.map((profile) => (
-                      <button
+                      <div
                         key={profile.id}
-                        type="button"
-                        onClick={() => {
-                          setEditing(draftFromProfile(profile));
-                          setError(null);
-                        }}
                         className={cn(
-                          "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent",
+                          "group flex w-full items-center rounded-md text-sm hover:bg-accent",
                           editing?.id === profile.id && "bg-accent",
                         )}
                       >
-                        <span className="min-w-0 flex-1 truncate">
-                          {profile.name}
-                        </span>
-                        {profile.showInContextMenu === false ? (
-                          <EyeOff
-                            className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
-                            aria-label={t("Hidden from + menu")}
-                          />
-                        ) : null}
-                        {profile.isDefault ? (
-                          <Check
-                            className="h-3.5 w-3.5 shrink-0 text-ok"
-                            aria-label={t("Default profile")}
-                          />
-                        ) : null}
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditing(draftFromProfile(profile));
+                            setError(null);
+                          }}
+                          className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left"
+                        >
+                          <span className="min-w-0 flex-1 truncate">
+                            {profile.name}
+                          </span>
+                          {profile.showInContextMenu === false ? (
+                            <EyeOff
+                              className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                              aria-label={t("Hidden from + menu")}
+                            />
+                          ) : null}
+                          {profile.isDefault ? (
+                            <Check
+                              className="h-3.5 w-3.5 shrink-0 text-ok"
+                              aria-label={t("Default profile")}
+                            />
+                          ) : null}
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={t("Duplicate profile")}
+                          title={t("Duplicate profile")}
+                          className="mr-1 rounded p-1 text-muted-foreground opacity-0 hover:bg-background hover:text-foreground group-hover:opacity-100 focus:opacity-100"
+                          onClick={() => void duplicateExistingProfile(profile)}
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     ))}
                   {!loading && selectedProject && !profiles.length ? (
                     <p className="px-2 py-3 text-xs text-muted-foreground">

@@ -378,6 +378,8 @@ const zhCNWorkspace: Record<string, string> = {
   "Exited ({code})": "已退出（{code}）",
   "Reconnect SSH terminal": "重新连接 SSH 终端",
   "Restart tab": "重启标签页",
+  "Duplicate profile": "复制配置",
+  "Could not duplicate profile.": "无法复制配置。",
   // --- Close confirmations ---
   'Close the running terminal "{name}"?': "关闭正在运行的终端“{name}？”",
   "Close both terminals in this split group?": "关闭此拆分组中的两个终端？",

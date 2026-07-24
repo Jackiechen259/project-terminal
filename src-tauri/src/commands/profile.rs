@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::commands::ListResponse;
 use crate::error::{AppError, AppResult};
 use crate::profile::{ShellType, TerminalProfile};
+use crate::project::ProjectType;
 use crate::state::{new_id, AppState};
 
 /// Payload for creating/updating a terminal profile. The frontend fills this
@@ -160,13 +161,106 @@ pub fn delete_terminal_profile_inner(state: &AppState, id: &str) -> AppResult<()
     state.with_config_write(|| state.profiles.delete(id))
 }
 
-pub fn test_terminal_profile_inner(_state: &AppState, _id: &str) -> AppResult<String> {
-    // Phase 3.6/3.7 will implement conda/venv test execution. Until then we
-    // return an explicit Configuration error so the frontend can distinguish
-    // "not implemented yet" from a real test failure.
-    Err(AppError::Configuration(
-        "test_terminal_profile is not implemented until Phase 3.6".into(),
-    ))
+pub fn duplicate_terminal_profile_inner(state: &AppState, id: &str) -> AppResult<TerminalProfile> {
+    state.with_config_write(|| {
+        let source = state.profiles.get(id)?;
+        let now = Utc::now();
+        let duplicate = TerminalProfile {
+            id: new_id("profile"),
+            project_id: source.project_id,
+            name: format!("{} Copy", source.name),
+            is_default: false,
+            created_at: now,
+            updated_at: now,
+            ..source
+        };
+        state.profiles.upsert(duplicate)
+    })
+}
+
+pub fn test_terminal_profile_inner(state: &AppState, id: &str) -> AppResult<String> {
+    let profile = state.profiles.get(id)?;
+    profile.validate()?;
+    let project = state.projects.get(&profile.project_id)?;
+
+    match project.project_type {
+        ProjectType::Local => {
+            let (executable, _) = crate::terminal::resolve_local_shell(&profile)?;
+            validate_environment_path(&profile)?;
+            Ok(format!("Profile is ready. Shell: {executable}"))
+        }
+        ProjectType::Wsl => {
+            if !crate::terminal::detect_wsl_distributions()
+                .iter()
+                .any(|item| {
+                    profile
+                        .wsl_distribution
+                        .as_deref()
+                        .map(|name| name == item.name)
+                        .unwrap_or(true)
+                })
+            {
+                return Err(AppError::Configuration(
+                    "The configured WSL distribution is not installed".into(),
+                ));
+            }
+            Ok("Profile is ready for WSL".into())
+        }
+        ProjectType::Ssh => Ok("Profile configuration is valid for SSH".into()),
+    }
+}
+
+fn validate_environment_path(profile: &TerminalProfile) -> AppResult<()> {
+    if let Some(path) = profile
+        .environment_path
+        .as_deref()
+        .filter(|path| !path.trim().is_empty())
+    {
+        if !std::path::Path::new(path).exists() {
+            return Err(AppError::Configuration(format!(
+                "Environment path does not exist: {path}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectedPythonEnvironment {
+    pub name: String,
+    pub path: String,
+    pub kind: String,
+}
+
+pub fn detect_python_environments_inner(
+    state: &AppState,
+    project_id: &str,
+) -> AppResult<Vec<DetectedPythonEnvironment>> {
+    let project = state.projects.get(project_id)?;
+    let local = project.local.ok_or_else(|| {
+        AppError::Configuration("Python environment detection requires a local project".into())
+    })?;
+    let root = std::path::Path::new(&local.path);
+    let mut detected = Vec::new();
+
+    for name in [".venv", "venv", "env"] {
+        let path = root.join(name);
+        let python = if cfg!(windows) {
+            path.join("Scripts").join("python.exe")
+        } else {
+            path.join("bin").join("python")
+        };
+        if python.is_file() {
+            detected.push(DetectedPythonEnvironment {
+                name: name.into(),
+                path: path.to_string_lossy().into_owned(),
+                kind: "venv".into(),
+            });
+        }
+    }
+
+    Ok(detected)
 }
 
 #[tauri::command]
@@ -204,8 +298,29 @@ pub fn delete_terminal_profile(state: tauri::State<'_, AppState>, id: String) ->
 }
 
 #[tauri::command]
+pub fn duplicate_terminal_profile(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> AppResult<TerminalProfile> {
+    duplicate_terminal_profile_inner(&state, &id)
+}
+
+#[tauri::command]
 pub fn test_terminal_profile(state: tauri::State<'_, AppState>, id: String) -> AppResult<String> {
     test_terminal_profile_inner(&state, &id)
+}
+
+#[tauri::command]
+pub fn detect_local_shells() -> Vec<crate::terminal::DetectedShell> {
+    crate::terminal::detect_local_shells()
+}
+
+#[tauri::command]
+pub fn detect_python_environments(
+    state: tauri::State<'_, AppState>,
+    project_id: String,
+) -> AppResult<Vec<DetectedPythonEnvironment>> {
+    detect_python_environments_inner(&state, &project_id)
 }
 
 #[cfg(test)]
@@ -309,9 +424,30 @@ mod tests {
     }
 
     #[test]
-    fn test_terminal_profile_returns_configuration_error() {
+    fn duplicate_profile_copies_configuration_with_new_identity() {
         let state = test_state();
-        let result = test_terminal_profile_inner(&state, "x");
-        assert!(result.is_err());
+        seed_local_project(&state, "p1");
+        let original = create_terminal_profile_inner(&state, sample_input("p1")).unwrap();
+        let duplicate = duplicate_terminal_profile_inner(&state, &original.id).unwrap();
+        assert_ne!(duplicate.id, original.id);
+        assert_eq!(duplicate.project_id, original.project_id);
+        assert_eq!(duplicate.name, "PowerShell Copy");
+        assert!(!duplicate.is_default);
+    }
+
+    #[test]
+    fn detects_project_venv() {
+        let state = test_state();
+        let root = seed_local_project(&state, "p1");
+        let python = if cfg!(windows) {
+            root.join(".venv").join("Scripts").join("python.exe")
+        } else {
+            root.join(".venv").join("bin").join("python")
+        };
+        fs::create_dir_all(python.parent().unwrap()).unwrap();
+        fs::write(python, b"").unwrap();
+        let environments = detect_python_environments_inner(&state, "p1").unwrap();
+        assert_eq!(environments.len(), 1);
+        assert_eq!(environments[0].name, ".venv");
     }
 }

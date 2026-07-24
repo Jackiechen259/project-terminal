@@ -56,6 +56,7 @@ describe("TerminalPane", () => {
           focused
           panePosition="inset-0"
           onSelect={onSelect}
+          onRestart={vi.fn()}
         />
         <TerminalPane
           tabId="two"
@@ -63,6 +64,7 @@ describe("TerminalPane", () => {
           focused={false}
           panePosition="inset-0"
           onSelect={onSelect}
+          onRestart={vi.fn()}
         />
       </>,
     );

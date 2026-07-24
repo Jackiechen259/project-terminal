@@ -18,8 +18,65 @@ use crate::profile::EnvironmentType;
 use crate::profile::{ShellType, TerminalProfile};
 pub use initializer::{build_activation_script, build_remote_initialization_commands};
 pub use manager::{SessionInfo, TerminalManager};
+use serde::Serialize;
 pub use session::{SessionSpawn, TerminalOutput};
 pub use wsl::{detect_wsl_distributions, DetectedWslDistribution};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectedShell {
+    pub shell_type: ShellType,
+    pub name: String,
+    pub executable: String,
+}
+
+/// Discover shells that can be selected without requiring a manually entered
+/// executable. The list is host-specific and contains only verified paths.
+pub fn detect_local_shells() -> Vec<DetectedShell> {
+    let mut shells = Vec::new();
+
+    if let Ok((executable, _)) = find_powershell() {
+        shells.push(DetectedShell {
+            shell_type: ShellType::Powershell,
+            name: "PowerShell".into(),
+            executable,
+        });
+    }
+
+    #[cfg(windows)]
+    if let Some(executable) = which("cmd.exe") {
+        shells.push(DetectedShell {
+            shell_type: ShellType::Cmd,
+            name: "Command Prompt".into(),
+            executable,
+        });
+    }
+
+    if let Ok(executable) = find_git_bash() {
+        shells.push(DetectedShell {
+            shell_type: ShellType::GitBash,
+            name: "Git Bash".into(),
+            executable,
+        });
+    }
+
+    for (shell_type, name, executable_name) in [
+        (ShellType::Bash, "Bash", "bash"),
+        (ShellType::Zsh, "Zsh", "zsh"),
+        (ShellType::Fish, "Fish", "fish"),
+        (ShellType::Sh, "POSIX sh", "sh"),
+    ] {
+        if let Some(executable) = which(executable_name) {
+            shells.push(DetectedShell {
+                shell_type,
+                name: name.into(),
+                executable,
+            });
+        }
+    }
+
+    shells
+}
 
 /// Resolve the shell executable + args for a local profile.
 ///

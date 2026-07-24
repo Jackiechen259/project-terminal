@@ -736,7 +736,16 @@ export function TerminalWorkspace() {
     setError(null);
     updateTab(tabId, { status: "starting", exitCode: undefined });
     try {
-      const sessionId = await terminalService.restart(oldTab.sessionId);
+      const sessionId = oldTab.sessionId
+        ? await terminalService.restart(oldTab.sessionId)
+        : await terminalService.create({
+            projectId: oldTab.projectId,
+            profileId: oldTab.profileId,
+            rows: 24,
+            cols: 80,
+            scrollbackMegabytes:
+              useSettingsStore.getState().terminalScrollbackMegabytes,
+          });
       updateTab(tabId, {
         sessionId,
         status: "running",
@@ -770,7 +779,7 @@ export function TerminalWorkspace() {
       }
       if (!tab) return;
       try {
-        await terminalService.close(tab.sessionId);
+        if (tab.sessionId) await terminalService.close(tab.sessionId);
         removeTab(tabId);
       } catch (e) {
         const err = e as { message?: string };
@@ -799,7 +808,12 @@ export function TerminalWorkspace() {
     }
     try {
       await Promise.all(
-        groupTabs.map((tab) => terminalService.close(tab.sessionId)),
+        groupTabs
+          .filter(
+            (tab): tab is TerminalTab & { sessionId: string } =>
+              Boolean(tab.sessionId),
+          )
+          .map((tab) => terminalService.close(tab.sessionId)),
       );
       groupTabs.forEach((tab) => removeTab(tab.id));
     } catch (e) {
@@ -1289,6 +1303,7 @@ export function TerminalWorkspace() {
                   }
                   panePosition={panePosition}
                   onSelect={selectTerminalPane}
+                  onRestart={(tabId) => void handleRestart(tabId)}
                 />
               );
             })}

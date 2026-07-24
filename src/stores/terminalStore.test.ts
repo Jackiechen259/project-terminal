@@ -1,6 +1,9 @@
 import { describe, expect, it, beforeEach } from "vitest";
 
-import { useTerminalStore } from "@/stores/terminalStore";
+import {
+  TERMINAL_WORKSPACE_STORAGE_KEY,
+  useTerminalStore,
+} from "@/stores/terminalStore";
 import type { TerminalTab } from "@/types";
 
 function makeTab(id: string, projectId: string, title = id): TerminalTab {
@@ -28,6 +31,35 @@ beforeEach(() => {
 });
 
 describe("terminalStore", () => {
+  it("restores workspace layout without reviving stale session ids", async () => {
+    const tab = makeTab("restored", "p1");
+    localStorage.setItem(
+      TERMINAL_WORKSPACE_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        state: {
+          activeProjectId: "p1",
+          tabsById: { restored: tab },
+          tabGroupsByProjectId: {
+            p1: {
+              projectId: "p1",
+              tabIds: ["restored"],
+              activeTabId: "restored",
+            },
+          },
+          splitViewsByProjectId: {},
+        },
+      }),
+    );
+
+    await useTerminalStore.persist.rehydrate();
+
+    const state = useTerminalStore.getState();
+    expect(state.activeProjectId).toBe("p1");
+    expect(state.tabsById.restored.sessionId).toBeNull();
+    expect(state.tabsById.restored.status).toBe("exited");
+  });
+
   describe("tab groups", () => {
     it("creates a tab group when registering the first tab", () => {
       const { registerTab } = useTerminalStore.getState();

@@ -35,7 +35,10 @@ const PROFILE_CMD = {
   create: "create_terminal_profile",
   update: "update_terminal_profile",
   delete: "delete_terminal_profile",
+  duplicate: "duplicate_terminal_profile",
   test: "test_terminal_profile",
+  detectShells: "detect_local_shells",
+  detectPython: "detect_python_environments",
 } as const;
 
 const TEMPLATE_CMD = {
@@ -220,8 +223,22 @@ export const profileService = {
   update: (input: ProfileInput) =>
     invokeOrThrow<TerminalProfile>(PROFILE_CMD.update, { input }),
   delete: (id: string) => invokeOrThrow<void>(PROFILE_CMD.delete, { id }),
+  duplicate: (id: string) =>
+    invokeOrThrow<TerminalProfile>(PROFILE_CMD.duplicate, { id }),
   test: (id: string) => invokeOrThrow<string>(PROFILE_CMD.test, { id }),
 };
+
+export interface DetectedShell {
+  shellType: TerminalProfile["shellType"];
+  name: string;
+  executable: string;
+}
+
+export interface DetectedPythonEnvironment {
+  name: string;
+  path: string;
+  kind: "venv";
+}
 
 export const templateService = {
   list: () =>
@@ -312,6 +329,12 @@ export interface DetectedWslDistribution {
 }
 
 export const environmentService = {
+  detectShells: () =>
+    invokeOrThrow<DetectedShell[]>(PROFILE_CMD.detectShells),
+  detectPython: (projectId: string) =>
+    invokeOrThrow<DetectedPythonEnvironment[]>(PROFILE_CMD.detectPython, {
+      projectId,
+    }),
   detectConda: () => invokeOrThrow<string[]>("detect_conda_installations"),
   listConda: (condaExecutable: string) =>
     invokeOrThrow<DetectedCondaEnvironment[]>("list_conda_environments", {
