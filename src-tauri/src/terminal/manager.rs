@@ -16,7 +16,7 @@ use crate::error::{AppError, AppResult};
 
 use super::session::{SessionSpawn, SessionStatus, SessionSubscription, TerminalSession};
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionInfo {
     pub session_id: String,

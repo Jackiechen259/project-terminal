@@ -108,7 +108,7 @@ impl TerminalState {
 /// Build a SessionSpawn from a saved project + profile. This is the only
 /// place that resolves cwd, executable, args, and env - the frontend never
 /// sees these.
-fn build_session_spawn(
+pub(crate) fn build_session_spawn(
     app: &AppState,
     request: &CreateTerminalRequest,
     session_id: &str,

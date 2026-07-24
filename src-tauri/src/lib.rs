@@ -10,19 +10,27 @@
 mod agent;
 mod commands;
 mod config_dirs;
-mod error;
+pub mod daemon;
+pub mod error;
 mod platform;
 mod profile;
 mod project;
 mod ssh;
 mod state;
 mod storage;
-mod terminal;
+pub mod terminal;
 
 use commands::terminal::TerminalState;
 use state::AppState;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::Manager;
 
 const APP_ERROR_TITLE: &str = "Project Terminal - startup failed";
+
+#[derive(Default)]
+struct AppLifecycleState {
+    quitting: AtomicBool,
+}
 
 /// Show a native message box on Windows so the user sees the failure even
 /// when no console is attached. On other platforms we fall back to stderr.
@@ -93,11 +101,67 @@ pub fn run() {
             .manage(state)
             .manage(terminal_state)
             .manage(agent_state)
+            .manage(AppLifecycleState::default())
+            .setup(|app| {
+                use tauri::menu::{Menu, MenuItem};
+                use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
+                let show =
+                    MenuItem::with_id(app, "show", "Show Project Terminal", true, None::<&str>)?;
+                let quit = MenuItem::with_id(
+                    app,
+                    "quit",
+                    "Quit and stop all sessions",
+                    true,
+                    None::<&str>,
+                )?;
+                let menu = Menu::with_items(app, &[&show, &quit])?;
+                let mut tray = TrayIconBuilder::with_id("project-terminal")
+                    .menu(&menu)
+                    .show_menu_on_left_click(false)
+                    .tooltip("Project Terminal");
+                if let Some(icon) = app.default_window_icon().cloned() {
+                    tray = tray.icon(icon);
+                }
+                tray.on_menu_event(|app, event| match event.id().as_ref() {
+                    "show" => show_main_window(app),
+                    "quit" => quit_application(app),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if matches!(
+                        event,
+                        TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        }
+                    ) {
+                        show_main_window(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+                tauri::async_runtime::spawn(async {
+                    let status = commands::daemon::ensure_running().await;
+                    if !status.connected {
+                        tracing::warn!(
+                            "Session Host is unavailable: {}",
+                            status.error.as_deref().unwrap_or("unknown error")
+                        );
+                    }
+                });
+                Ok(())
+            })
             .invoke_handler(tauri::generate_handler![
                 // Platform capabilities (host OS + available project types/shells)
                 commands::platform::get_platform_info,
                 // Clipboard (native read avoids a WebView paste permission prompt)
                 commands::clipboard::read_clipboard_text,
+                // Background Session Host lifecycle and reconnection
+                commands::daemon::daemon_status,
+                commands::daemon::reconnect_daemon,
+                commands::daemon::daemon_list_sessions,
+                exit_application,
                 // Project CRUD (plan §12.1)
                 commands::project::list_projects,
                 commands::project::validate_project,
@@ -159,10 +223,14 @@ pub fn run() {
                 commands::terminal::detect_wsl_distributions,
             ])
             .on_window_event(move |_window, event| {
-                if let tauri::WindowEvent::CloseRequested { .. } = event {
-                    // App is closing - kill all child processes so no
-                    // PowerShell/SSH/etc. leak in Task Manager (§36.20).
-                    manager.close_all();
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    let lifecycle = _window.app_handle().state::<AppLifecycleState>();
+                    if lifecycle.quitting.load(Ordering::SeqCst) {
+                        manager.close_all();
+                    } else {
+                        api.prevent_close();
+                        let _ = _window.hide();
+                    }
                 }
             })
             .run(tauri::generate_context!())
@@ -174,4 +242,26 @@ pub fn run() {
         show_fatal_error(&message);
         std::process::exit(1);
     }
+}
+
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+fn quit_application(app: &tauri::AppHandle) {
+    app.state::<AppLifecycleState>()
+        .quitting
+        .store(true, Ordering::SeqCst);
+    app.state::<TerminalState>().manager.close_all();
+    let _ = tauri::async_runtime::block_on(daemon::request(daemon::DaemonRequest::Shutdown));
+    app.exit(0);
+}
+
+#[tauri::command]
+fn exit_application(app: tauri::AppHandle) {
+    quit_application(&app);
 }

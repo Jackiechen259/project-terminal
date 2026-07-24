@@ -11,9 +11,10 @@ use crate::agent::{
     TokenUsage,
 };
 use crate::config_dirs::ConfigDirs;
+use crate::daemon::{self, DaemonRequest};
 use crate::error::AppResult;
 use crate::state::new_id;
-use crate::terminal::{TerminalManager, TerminalOutput};
+use crate::terminal::TerminalOutput;
 
 const MAX_EVENTS_PER_AGENT: usize = 2_000;
 
@@ -52,15 +53,14 @@ impl AgentState {
         self.events.lock().get(id).cloned().unwrap_or_default()
     }
 
-    pub fn register(
+    pub fn register_daemon(
         &self,
         profile: &AgentProfile,
         terminal_session_id: String,
-        terminal: &TerminalManager,
     ) -> AgentSession {
         let now = Utc::now();
         let session = AgentSession {
-            id: new_id("agent-session"),
+            id: format!("agent-session-{terminal_session_id}"),
             agent_profile_id: profile.id.clone(),
             project_id: profile.project_id.clone(),
             terminal_session_id,
@@ -77,19 +77,68 @@ impl AgentState {
             &self.events,
             &session.id,
             AgentEventKind::Started,
-            "Agent started".into(),
+            "Agent started in Session Host".into(),
             None,
         );
-        self.monitor(profile.clone(), session.clone(), terminal.clone_handle());
+        self.monitor_daemon(profile.clone(), session.clone());
         session
     }
 
-    pub fn update_terminal_and_monitor(
+    pub async fn sync_daemon_sessions(&self) {
+        let Ok(response) = daemon::request(DaemonRequest::ListSessions).await else {
+            return;
+        };
+        let Some(data) = response.data else {
+            return;
+        };
+        let Ok(remote_sessions) = serde_json::from_value::<Vec<crate::terminal::SessionInfo>>(
+            data.get("sessions").cloned().unwrap_or_default(),
+        ) else {
+            return;
+        };
+        for remote in remote_sessions {
+            let Some(profile_id) = remote.profile_id.strip_prefix("agent:") else {
+                continue;
+            };
+            if self
+                .sessions
+                .lock()
+                .values()
+                .any(|session| session.terminal_session_id == remote.session_id)
+            {
+                continue;
+            }
+            let Ok(profile) = self.profiles.get(profile_id) else {
+                continue;
+            };
+            let session = self.register_daemon(&profile, remote.session_id);
+            if !matches!(
+                remote.status,
+                crate::terminal::session::SessionStatus::Running
+                    | crate::terminal::session::SessionStatus::Starting
+            ) {
+                self.set_status(
+                    &session.id,
+                    if remote.exit_code == Some(0) {
+                        AgentStatus::Completed
+                    } else {
+                        AgentStatus::Failed
+                    },
+                    remote
+                        .exit_code
+                        .map(|code| format!("Exited with code {code}")),
+                    AgentEventKind::Status,
+                    "Recovered Agent state from Session Host".into(),
+                );
+            }
+        }
+    }
+
+    pub fn update_daemon_session(
         &self,
         session_id: &str,
         terminal_session_id: String,
         profile: AgentProfile,
-        terminal: &TerminalManager,
     ) -> Option<AgentSession> {
         let updated = {
             let mut sessions = self.sessions.lock();
@@ -104,10 +153,10 @@ impl AgentState {
             &self.events,
             session_id,
             AgentEventKind::Started,
-            "Agent restarted".into(),
+            "Agent restarted in Session Host".into(),
             None,
         );
-        self.monitor(profile, updated.clone(), terminal.clone_handle());
+        self.monitor_daemon(profile, updated.clone());
         Some(updated)
     }
 
@@ -131,36 +180,80 @@ impl AgentState {
         Some(updated)
     }
 
-    fn monitor(&self, profile: AgentProfile, session: AgentSession, terminal: TerminalManager) {
+    fn monitor_daemon(&self, profile: AgentProfile, session: AgentSession) {
         let sessions = self.sessions.clone();
         let events = self.events.clone();
         tauri::async_runtime::spawn(async move {
-            let client_id = format!("agent-monitor-{}", session.id);
-            let Ok((_, subscription)) =
-                terminal.attach(&session.terminal_session_id, client_id.clone())
-            else {
-                return;
-            };
-            if !subscription.snapshot.bytes.is_empty() {
-                process_output(
-                    &profile,
-                    &session.id,
-                    &sessions,
-                    &events,
-                    TerminalOutput {
-                        session_id: session.terminal_session_id.clone(),
-                        data: base64::engine::general_purpose::STANDARD
-                            .encode(subscription.snapshot.bytes),
-                        status: None,
-                        exit_code: None,
-                    },
-                );
+            let mut previous = Vec::new();
+            loop {
+                let response = match daemon::request(DaemonRequest::Snapshot {
+                    session_id: session.terminal_session_id.clone(),
+                })
+                .await
+                {
+                    Ok(response) if response.ok => response,
+                    _ => break,
+                };
+                let Some(data) = response.data else {
+                    break;
+                };
+                let encoded = data
+                    .get("scrollback")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .unwrap_or_default();
+                let delta = if bytes.starts_with(&previous) {
+                    bytes[previous.len()..].to_vec()
+                } else {
+                    bytes.clone()
+                };
+                previous = bytes;
+                if !delta.is_empty() {
+                    process_output(
+                        &profile,
+                        &session.id,
+                        &sessions,
+                        &events,
+                        TerminalOutput {
+                            session_id: session.terminal_session_id.clone(),
+                            data: base64::engine::general_purpose::STANDARD.encode(delta),
+                            status: None,
+                            exit_code: None,
+                        },
+                    );
+                }
+                let remote_status = data
+                    .get("session")
+                    .and_then(|remote| remote.get("status"))
+                    .and_then(serde_json::Value::as_str);
+                if matches!(remote_status, Some("exited" | "error")) {
+                    let exit_code = data
+                        .get("session")
+                        .and_then(|remote| remote.get("exitCode"))
+                        .and_then(serde_json::Value::as_i64)
+                        .map(|code| code as i32);
+                    process_output(
+                        &profile,
+                        &session.id,
+                        &sessions,
+                        &events,
+                        TerminalOutput {
+                            session_id: session.terminal_session_id.clone(),
+                            data: String::new(),
+                            status: Some(if remote_status == Some("error") {
+                                crate::terminal::session::SessionStatus::Error
+                            } else {
+                                crate::terminal::session::SessionStatus::Exited
+                            }),
+                            exit_code,
+                        },
+                    );
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             }
-            let mut receiver = subscription.receiver;
-            while let Ok(output) = receiver.recv().await {
-                process_output(&profile, &session.id, &sessions, &events, output);
-            }
-            let _ = terminal.detach(&session.terminal_session_id, &client_id);
         });
     }
 }

@@ -20,9 +20,11 @@ import { useTranslation } from "@/i18n";
 export function WindowTitleBar({
   sidebarCollapsed = false,
   onToggleSidebar,
+  onCloseRequest,
 }: {
   sidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
+  onCloseRequest?: () => void;
 }) {
   const { t } = useTranslation();
   const [isMaximized, setIsMaximized] = useState(false);
@@ -117,7 +119,9 @@ export function WindowTitleBar({
         <WindowControl
           label={t("Close")}
           close
-          onClick={() => void getCurrentWindow().close()}
+          onClick={() =>
+            onCloseRequest ? onCloseRequest() : void getCurrentWindow().close()
+          }
         >
           <X />
         </WindowControl>

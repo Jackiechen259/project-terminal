@@ -85,7 +85,7 @@ pub struct SessionSubscription {
 }
 
 /// Lifecycle state of a session. Mirrors the frontend's TerminalStatus.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SessionStatus {
     Starting,

@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { useTranslation } from "@/i18n";
 import { profileService } from "@/services";
 import { useAgentStore } from "@/stores/agentStore";
+import { useDaemonStore } from "@/stores/daemonStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { cn } from "@/lib/utils";
 import type { AgentSession, AgentStatus, TerminalProfile } from "@/types";
@@ -57,6 +58,8 @@ export function AgentPanel() {
   const interrupt = useAgentStore((state) => state.interrupt);
   const loadEvents = useAgentStore((state) => state.loadEvents);
   const previousStatuses = useRef<Record<string, AgentStatus>>({});
+  const daemonStatus = useDaemonStore((state) => state.status);
+  const reconnectDaemon = useDaemonStore((state) => state.reconnect);
 
   const projectProfiles = useMemo(
     () => profiles.filter((profile) => profile.projectId === activeProjectId),
@@ -146,6 +149,34 @@ export function AgentPanel() {
         )}
         <Bot className="h-3.5 w-3.5" />
         <span className="flex-1 text-left">{t("Agents")}</span>
+        <span
+          role="button"
+          tabIndex={0}
+          title={
+            daemonStatus?.connected
+              ? t("Session Host connected")
+              : t("Reconnect Session Host")
+          }
+          aria-label={
+            daemonStatus?.connected
+              ? t("Session Host connected")
+              : t("Reconnect Session Host")
+          }
+          className={cn(
+            "h-2 w-2 rounded-full",
+            daemonStatus?.connected ? "bg-ok" : "bg-warning",
+          )}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (!daemonStatus?.connected) void reconnectDaemon();
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !daemonStatus?.connected) {
+              event.stopPropagation();
+              void reconnectDaemon();
+            }
+          }}
+        />
         {attentionCount > 0 ? (
           <span className="rounded-full bg-warning/20 px-1.5 py-0.5 text-[10px] text-warning">
             {attentionCount}

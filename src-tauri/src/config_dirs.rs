@@ -58,6 +58,16 @@ impl ConfigDirs {
     pub fn agent_profiles_path(&self) -> PathBuf {
         self.root.join("agent-profiles.json")
     }
+    pub fn daemon_state_path(&self) -> PathBuf {
+        self.root.join("daemon-state.json")
+    }
+    #[cfg(unix)]
+    pub fn daemon_socket_path(&self) -> PathBuf {
+        std::env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join("project-terminal.sock")
+    }
     #[cfg(test)]
     pub fn settings_path(&self) -> PathBuf {
         self.root.join("settings.json")
@@ -104,6 +114,10 @@ mod tests {
             .agent_profiles_path()
             .to_string_lossy()
             .ends_with("agent-profiles.json"));
+        assert!(dirs
+            .daemon_state_path()
+            .to_string_lossy()
+            .ends_with("daemon-state.json"));
         assert!(dirs
             .settings_path()
             .to_string_lossy()

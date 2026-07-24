@@ -2,6 +2,7 @@
 
 pub mod agent;
 pub mod clipboard;
+pub mod daemon;
 pub mod platform;
 pub mod profile;
 pub mod profile_template;

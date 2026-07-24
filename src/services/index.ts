@@ -391,3 +391,22 @@ export const agentService = {
   interrupt: (agentSessionId: string) =>
     invokeOrThrow<void>("interrupt_agent", { agentSessionId }),
 };
+
+export interface DaemonStatus {
+  connected: boolean;
+  endpoint: string;
+  details?: { pid?: number; startedAt?: string };
+  error?: string;
+}
+
+export const daemonService = {
+  status: () => invokeOrThrow<DaemonStatus>("daemon_status"),
+  reconnect: () => invokeOrThrow<DaemonStatus>("reconnect_daemon"),
+  listSessions: () =>
+    invokeOrThrow<{
+      sessions: SessionInfo[];
+      recoveredAsFailed: Array<
+        SessionInfo & { exitReason?: string }
+      >;
+    }>("daemon_list_sessions"),
+};

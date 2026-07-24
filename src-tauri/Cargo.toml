@@ -5,6 +5,7 @@ description = "Project Terminal - a Windows desktop terminal organized by projec
 authors = ["Project Terminal"]
 edition = "2021"
 rust-version = "1.77.2"
+default-run = "project-terminal"
 
 [lib]
 name = "project_terminal_lib"
@@ -14,7 +15,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 tauri-plugin-updater = "2"
@@ -23,7 +24,7 @@ serde_json = "1"
 thiserror = "2"
 parking_lot = "0.12"
 portable-pty = "0.8"
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "io-util", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "io-util", "time", "net"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dirs = "5"
@@ -38,3 +39,7 @@ windows-sys = { version = "0.59", features = ["Win32_System_DataExchange", "Win3
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+
+[[bin]]
+name = "project-terminal-daemon"
+path = "src/bin/project-terminal-daemon.rs"

@@ -389,6 +389,13 @@ const zhCNWorkspace: Record<string, string> = {
   "Create and start": "创建并启动",
   "New agent": "新建智能体",
   "Agent status changed": "智能体状态已变化",
+  "Session Host connected": "会话主机已连接",
+  "Reconnect Session Host": "重新连接会话主机",
+  "Close Project Terminal?": "关闭 Project Terminal？",
+  "Choose whether running terminals and agents should continue.":
+    "请选择是否让正在运行的终端和智能体继续工作。",
+  "Hide to tray and keep running": "隐藏到系统托盘并继续运行",
+  "Stop all terminals and quit": "停止所有终端并退出",
   // --- Close confirmations ---
   'Close the running terminal "{name}"?': "关闭正在运行的终端“{name}？”",
   "Close both terminals in this split group?": "关闭此拆分组中的两个终端？",
