@@ -1,5 +1,7 @@
 import { memo, useCallback, type CSSProperties } from "react";
+import { LoaderCircle, RotateCcw } from "lucide-react";
 
+import { useTranslation } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useTerminalStore } from "@/stores/terminalStore";
 
@@ -31,6 +33,7 @@ export const TerminalPane = memo(function TerminalPane({
 }: TerminalPaneProps) {
   const tab = useTerminalStore((state) => state.tabsById[tabId]);
   const updateTab = useTerminalStore((state) => state.updateTab);
+  const { t } = useTranslation();
   const select = useCallback(() => {
     if (visible) onSelect(tabId);
   }, [onSelect, tabId, visible]);
@@ -66,14 +69,27 @@ export const TerminalPane = memo(function TerminalPane({
           onExit={handleExit}
           onTitleChange={handleTitleChange}
         />
+      ) : ["starting", "connecting", "initializing"].includes(tab.status) ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex h-full flex-col items-center justify-center gap-3 bg-background text-sm text-muted-foreground"
+        >
+          <LoaderCircle className="h-6 w-6 animate-spin text-primary" />
+          <span>{t("Starting terminal…")}</span>
+          <span className="text-xs opacity-70">{tab.defaultTitle}</span>
+        </div>
       ) : (
         <div className="flex h-full items-center justify-center bg-background">
           <button
             type="button"
-            className="rounded-md border border-border bg-surface px-4 py-3 text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+            className="flex items-center gap-2 rounded-md border border-border bg-surface px-4 py-3 text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
             onClick={() => onRestart(tabId)}
           >
-            Session ended — click to restart
+            <RotateCcw className="h-4 w-4" />
+            {tab.status === "error"
+              ? t("Terminal failed to start — click to retry")
+              : t("Session ended — click to restart")}
           </button>
         </div>
       )}

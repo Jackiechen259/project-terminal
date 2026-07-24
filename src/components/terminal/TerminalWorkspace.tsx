@@ -17,6 +17,7 @@ import {
 import {
   Boxes,
   Columns2,
+  LoaderCircle,
   Plus,
   RotateCcw,
   Rows2,
@@ -120,6 +121,8 @@ export function TerminalWorkspace() {
   const templatesLoaded = useTemplateStore((s) => s.loaded);
   const loadTemplates = useTemplateStore((s) => s.loadTemplates);
   const [error, setError] = useState<string | null>(null);
+  const [isCreatingTerminal, setIsCreatingTerminal] = useState(false);
+  const creatingTerminalRef = useRef(false);
   const [profiles, setProfiles] = useState<TerminalProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
@@ -195,7 +198,11 @@ export function TerminalWorkspace() {
 
   const handleNewTerminal = useCallback(
     async (projectId: string, preferredProfileId?: string) => {
+      if (creatingTerminalRef.current) return null;
+      creatingTerminalRef.current = true;
+      setIsCreatingTerminal(true);
       setError(null);
+      let pendingTabId: string | null = null;
       try {
         // The active project's profiles are already loaded for the selector.
         // Reuse them so opening a tab does not wait on another IPC + disk read.
@@ -211,6 +218,20 @@ export function TerminalWorkspace() {
           availableProfiles.find((p) => p.id === preferredProfileId) ??
           availableProfiles.find((p) => p.isDefault) ??
           availableProfiles[0];
+        pendingTabId = crypto.randomUUID();
+        const now = Date.now();
+        registerTab({
+          id: pendingTabId,
+          sessionId: null,
+          projectId,
+          profileId: profile.id,
+          defaultTitle: profile.name,
+          title: profile.name,
+          cwd: "",
+          status: "starting",
+          createdAt: now,
+          lastActivatedAt: now,
+        });
         const sessionId = await terminalService.create({
           projectId,
           profileId: profile.id,
@@ -219,27 +240,30 @@ export function TerminalWorkspace() {
           scrollbackMegabytes:
             useSettingsStore.getState().terminalScrollbackMegabytes,
         });
-        const tab: TerminalTab = {
-          id: crypto.randomUUID(),
-          sessionId,
-          projectId,
-          profileId: profile.id,
-          defaultTitle: profile.name,
-          title: profile.name,
-          cwd: "",
-          status: "running",
-          createdAt: Date.now(),
-          lastActivatedAt: Date.now(),
-        };
-        registerTab(tab);
-        return tab.id;
+        // The user may close the loading tab while process creation is still
+        // in flight. Do not leak the resulting backend session in that race.
+        if (!useTerminalStore.getState().tabsById[pendingTabId]) {
+          await terminalService.close(sessionId);
+          return null;
+        }
+        updateTab(pendingTabId, { sessionId, status: "running" });
+        return pendingTabId;
       } catch (e) {
         const err = e as { message?: string };
+        if (
+          pendingTabId &&
+          useTerminalStore.getState().tabsById[pendingTabId]
+        ) {
+          updateTab(pendingTabId, { status: "error" });
+        }
         setError(err.message ?? t("Failed to start terminal"));
         return null;
+      } finally {
+        creatingTerminalRef.current = false;
+        setIsCreatingTerminal(false);
       }
     },
-    [activeProjectId, profiles, registerTab, t],
+    [activeProjectId, profiles, registerTab, t, updateTab],
   );
 
   const handleSplitTerminal = useCallback(
@@ -1045,7 +1069,12 @@ export function TerminalWorkspace() {
         ) : null}
         <div className="flex flex-col items-start">
           <span className="max-w-[160px] truncate">{tab.title}</span>
-          {tab.status === "exited" || tab.status === "error" ? (
+          {["starting", "connecting", "initializing"].includes(tab.status) ? (
+            <span className="flex items-center gap-1 text-[10px] text-primary">
+              <LoaderCircle className="h-2.5 w-2.5 animate-spin" />
+              {t("Starting terminal…")}
+            </span>
+          ) : tab.status === "exited" || tab.status === "error" ? (
             <span className="text-[10px] text-danger">
               {tab.status === "error"
                 ? t("Connection error")
@@ -1309,7 +1338,8 @@ export function TerminalWorkspace() {
           aria-label={t("New terminal")}
           title={t("New terminal (right-click for presets)")}
           className="h-7 w-7 text-muted-foreground"
-          disabled={!activeProject}
+          disabled={!activeProject || isCreatingTerminal}
+          aria-busy={isCreatingTerminal}
           onClick={() =>
             activeProject &&
             void handleNewTerminal(activeProject.id, selectedProfileId)
@@ -1325,7 +1355,11 @@ export function TerminalWorkspace() {
             }
           }}
         >
-          <Plus className="h-4 w-4" />
+          {isCreatingTerminal ? (
+            <LoaderCircle className="h-4 w-4 animate-spin text-primary" />
+          ) : (
+            <Plus className="h-4 w-4" />
+          )}
         </Button>
       </div>
 
