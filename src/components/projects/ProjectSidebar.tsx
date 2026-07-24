@@ -72,6 +72,14 @@ const LazySettingsDialog = lazy(() =>
 
 type DropPosition = "before" | "after";
 
+type PendingPointerDrag = {
+  projectId: string;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  started: boolean;
+};
+
 type DropTarget =
   | { kind: "collection"; collectionId: string }
   | {
@@ -170,6 +178,7 @@ export function ProjectSidebar() {
   // `dragover` fires the state may still be null - that makes the browser
   // refuse the drop. The ref is set the instant `dragstart` fires.
   const draggedProjectRef = useRef<string | null>(null);
+  const pointerDragRef = useRef<PendingPointerDrag | null>(null);
   const dropTargetRef = useRef<DropTarget | null>(null);
 
   useEffect(() => {
@@ -254,6 +263,7 @@ export function ProjectSidebar() {
   );
 
   const clearDrag = useCallback(() => {
+    pointerDragRef.current = null;
     draggedProjectRef.current = null;
     dropTargetRef.current = null;
     setDraggedProjectId(null);
@@ -276,10 +286,14 @@ export function ProjectSidebar() {
     if (dragSource.hasPointerCapture?.(event.pointerId)) {
       dragSource.releasePointerCapture?.(event.pointerId);
     }
-    draggedProjectRef.current = projectId;
+    pointerDragRef.current = {
+      projectId,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      started: false,
+    };
     dropTargetRef.current = null;
-    setDraggedProjectId(projectId);
-    updatePreviewPosition(event.clientX, event.clientY);
     setDropTarget(null);
   }
 
@@ -363,15 +377,43 @@ export function ProjectSidebar() {
   );
 
   useEffect(() => {
-    const finishPointerDrag = () => {
+    const finishPointerDrag = (event: PointerEvent) => {
+      const pendingDrag = pointerDragRef.current;
+      if (
+        !pendingDrag ||
+        (typeof event.pointerId === "number" &&
+          pendingDrag.pointerId !== event.pointerId)
+      ) {
+        return;
+      }
+      pointerDragRef.current = null;
       const target = dropTargetRef.current;
-      if (draggedProjectRef.current && target) {
+      if (pendingDrag.started && draggedProjectRef.current && target) {
         handleDropTarget(target);
       } else {
         clearDrag();
       }
     };
     const followPointerDrag = (event: PointerEvent | MouseEvent) => {
+      const pendingDrag = pointerDragRef.current;
+      if (!pendingDrag) return;
+      if (
+        "pointerId" in event &&
+        typeof event.pointerId === "number" &&
+        pendingDrag.pointerId !== event.pointerId
+      ) {
+        return;
+      }
+      if (!pendingDrag.started) {
+        const moved = Math.hypot(
+          event.clientX - pendingDrag.startX,
+          event.clientY - pendingDrag.startY,
+        );
+        if (moved < 6) return;
+        pendingDrag.started = true;
+        draggedProjectRef.current = pendingDrag.projectId;
+        setDraggedProjectId(pendingDrag.projectId);
+      }
       updateDragPosition(event.clientX, event.clientY);
     };
     window.addEventListener("pointermove", followPointerDrag);

@@ -97,6 +97,20 @@ const sampleProjects = [
   },
 ];
 
+function startPointerDrag(element: Element, pointerId = 1) {
+  fireEvent.pointerDown(element, {
+    button: 0,
+    pointerId,
+    clientX: 0,
+    clientY: 0,
+  });
+  fireEvent.pointerMove(window, {
+    pointerId,
+    clientX: 6,
+    clientY: 0,
+  });
+}
+
 beforeEach(() => {
   localStorage.clear();
   terminalState.activeProjectId = null;
@@ -213,7 +227,7 @@ describe("ProjectSidebar collections", () => {
       .getByText("Work")
       .closest("[data-project-drop-target='collection']");
     expect(collectionGroup).toBeTruthy();
-    fireEvent.pointerDown(projectRow!, { button: 0, pointerId: 1 });
+    startPointerDrag(projectRow!);
     await waitFor(() => {
       expect(projectRow).toHaveClass("opacity-40");
     });
@@ -236,7 +250,7 @@ describe("ProjectSidebar collections", () => {
 
     const alphaRow = screen.getByText("Alpha").closest("[role='button']");
     const betaRow = screen.getByText("Beta").closest("[role='button']");
-    fireEvent.pointerDown(betaRow!, { button: 0, pointerId: 1 });
+    startPointerDrag(betaRow!);
     fireEvent.pointerEnter(alphaRow!);
     fireEvent.pointerUp(window);
 
@@ -276,7 +290,7 @@ describe("ProjectSidebar collections", () => {
       toJSON: () => {},
     })) as unknown as typeof betaRow.getBoundingClientRect;
 
-    fireEvent.pointerDown(alphaRow, { button: 0, pointerId: 1 });
+    startPointerDrag(alphaRow);
     // Enter Beta near the bottom (clientY=30 > height/2=20) -> "after".
     fireEvent.pointerEnter(betaRow, { clientY: 30 });
     fireEvent.pointerUp(window);
@@ -311,7 +325,7 @@ describe("ProjectSidebar collections", () => {
       toJSON: () => {},
     })) as unknown as typeof betaRow.getBoundingClientRect;
 
-    fireEvent.pointerDown(alphaRow, { button: 0, pointerId: 1 });
+    startPointerDrag(alphaRow);
     // Start in the top half -> "before" Beta.
     fireEvent.pointerEnter(betaRow, { clientY: 5 });
     // Slide down to the bottom half -> should flip to "after".
@@ -337,7 +351,7 @@ describe("ProjectSidebar collections", () => {
       .closest("[data-project-drop-target='collection']")!;
     const aside = screen.getByLabelText("Projects");
 
-    fireEvent.pointerDown(projectRow, { button: 0, pointerId: 1 });
+    startPointerDrag(projectRow);
     fireEvent.pointerEnter(collectionGroup);
     // Pointer exits the sidebar before releasing - the drag must cancel
     // instead of dropping on the last hovered target inside the sidebar.
@@ -358,5 +372,29 @@ describe("ProjectSidebar collections", () => {
     const projectRow = screen.getByText("Alpha").closest("[role='button']");
     expect(projectRow).not.toHaveAttribute("draggable", "true");
     expect(projectRow).toHaveClass("select-none");
+  });
+
+  it("does not show the drag preview until the pointer actually moves", () => {
+    render(<ProjectSidebar />);
+
+    const projectRow = screen.getByText("Alpha").closest("[role='button']")!;
+    fireEvent.pointerDown(projectRow, {
+      button: 0,
+      pointerId: 1,
+      clientX: 10,
+      clientY: 10,
+    });
+
+    expect(screen.getAllByText("Alpha")).toHaveLength(1);
+    expect(projectRow).not.toHaveClass("opacity-40");
+
+    fireEvent.pointerMove(window, {
+      pointerId: 1,
+      clientX: 16,
+      clientY: 10,
+    });
+
+    expect(screen.getAllByText("Alpha")).toHaveLength(2);
+    expect(projectRow).toHaveClass("opacity-40");
   });
 });
