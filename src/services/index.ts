@@ -7,6 +7,9 @@
 import { Channel, invoke as tauriInvoke } from "@tauri-apps/api/core";
 
 import type {
+  AgentEvent,
+  AgentProfile,
+  AgentSession,
   PlatformInfo,
   ProfileTemplate,
   Project,
@@ -127,6 +130,16 @@ export interface SshConnectionInput {
   strictHostKeyChecking?: boolean;
   knownHostsFile?: string;
   extraArgs?: string[];
+}
+
+export interface AgentProfileInput {
+  id?: string;
+  name: string;
+  projectId: string;
+  terminalProfileId: string;
+  command: string;
+  waitingPatterns?: string[];
+  approvalPatterns?: string[];
 }
 
 export interface CreateTerminalRequest {
@@ -346,4 +359,35 @@ export const environmentService = {
 
 export const platformService = {
   getPlatformInfo: () => invokeOrThrow<PlatformInfo>("get_platform_info"),
+};
+
+export const agentService = {
+  listProfiles: () =>
+    invokeOrThrow<ListResponse<AgentProfile>>("list_agent_profiles").then(
+      (response) => response.items,
+    ),
+  createProfile: (input: AgentProfileInput) =>
+    invokeOrThrow<AgentProfile>("create_agent_profile", { input }),
+  updateProfile: (input: AgentProfileInput) =>
+    invokeOrThrow<AgentProfile>("update_agent_profile", { input }),
+  deleteProfile: (id: string) =>
+    invokeOrThrow<void>("delete_agent_profile", { id }),
+  listSessions: () =>
+    invokeOrThrow<ListResponse<AgentSession>>("list_agent_sessions").then(
+      (response) => response.items,
+    ),
+  listEvents: (agentSessionId: string) =>
+    invokeOrThrow<ListResponse<AgentEvent>>("list_agent_events", {
+      agentSessionId,
+    }).then((response) => response.items),
+  start: (agentProfileId: string) =>
+    invokeOrThrow<AgentSession>("start_agent", { agentProfileId }),
+  stop: (agentSessionId: string) =>
+    invokeOrThrow<AgentSession>("stop_agent", { agentSessionId }),
+  restart: (agentSessionId: string) =>
+    invokeOrThrow<AgentSession>("restart_agent", { agentSessionId }),
+  respond: (agentSessionId: string, input: string) =>
+    invokeOrThrow<AgentSession>("respond_agent", { agentSessionId, input }),
+  interrupt: (agentSessionId: string) =>
+    invokeOrThrow<void>("interrupt_agent", { agentSessionId }),
 };

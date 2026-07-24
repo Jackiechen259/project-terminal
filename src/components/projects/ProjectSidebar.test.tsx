@@ -74,6 +74,10 @@ vi.mock("@/components/settings/SettingsDialog", () => ({
     return null;
   },
 }));
+
+vi.mock("@/components/agents/AgentPanel", () => ({
+  AgentPanel: () => null,
+}));
 vi.mock("@/components/ssh/SshConnectionDialog", () => ({
   SshConnectionDialog: () => null,
 }));

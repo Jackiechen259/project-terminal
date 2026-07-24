@@ -7,6 +7,7 @@
 //! non-zero code. The Tauri runtime itself surfaces `run()` errors through
 //! the same dialog path.
 
+mod agent;
 mod commands;
 mod config_dirs;
 mod error;
@@ -71,6 +72,15 @@ pub fn run() {
     };
 
     let terminal_state = TerminalState::new();
+    let agent_state = match agent::AgentState::init() {
+        Ok(state) => state,
+        Err(error) => {
+            let message = format!("Failed to initialize agent state: {error}");
+            tracing::error!("{message}");
+            show_fatal_error(&message);
+            std::process::exit(1);
+        }
+    };
 
     // Build the app. The RunEvent handler closes all PTY child processes on
     // ExitRequested so no PowerShell / SSH / etc. children leak.
@@ -82,6 +92,7 @@ pub fn run() {
             .plugin(tauri_plugin_updater::Builder::new().build())
             .manage(state)
             .manage(terminal_state)
+            .manage(agent_state)
             .invoke_handler(tauri::generate_handler![
                 // Platform capabilities (host OS + available project types/shells)
                 commands::platform::get_platform_info,
@@ -104,6 +115,18 @@ pub fn run() {
                 commands::profile::test_terminal_profile,
                 commands::profile::detect_local_shells,
                 commands::profile::detect_python_environments,
+                // Agent profiles, structured events, and lifecycle
+                commands::agent::list_agent_profiles,
+                commands::agent::create_agent_profile,
+                commands::agent::update_agent_profile,
+                commands::agent::delete_agent_profile,
+                commands::agent::list_agent_sessions,
+                commands::agent::list_agent_events,
+                commands::agent::start_agent,
+                commands::agent::stop_agent,
+                commands::agent::restart_agent,
+                commands::agent::respond_agent,
+                commands::agent::interrupt_agent,
                 // Profile templates (global reusable presets)
                 commands::profile_template::list_profile_templates,
                 commands::profile_template::create_profile_template,

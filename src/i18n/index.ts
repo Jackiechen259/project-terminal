@@ -382,6 +382,13 @@ const zhCNWorkspace: Record<string, string> = {
   "Could not duplicate profile.": "无法复制配置。",
   "A split group can contain at most four panes.":
     "一个分屏组最多可包含四个窗格。",
+  Agents: "智能体",
+  Agent: "智能体",
+  "Agent name": "智能体名称",
+  "Agent command (for example: codex)": "智能体命令（例如：codex）",
+  "Create and start": "创建并启动",
+  "New agent": "新建智能体",
+  "Agent status changed": "智能体状态已变化",
   // --- Close confirmations ---
   'Close the running terminal "{name}"?': "关闭正在运行的终端“{name}？”",
   "Close both terminals in this split group?": "关闭此拆分组中的两个终端？",

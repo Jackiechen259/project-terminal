@@ -560,6 +560,14 @@ pub async fn create_terminal(
     terminal: State<'_, TerminalState>,
     request: CreateTerminalRequest,
 ) -> AppResult<String> {
+    create_terminal_inner(&app, &terminal, request).await
+}
+
+pub async fn create_terminal_inner(
+    app: &AppState,
+    terminal: &TerminalState,
+    request: CreateTerminalRequest,
+) -> AppResult<String> {
     let session_id = new_id("session");
     // Load the project and profile once for the whole launch. Previously the
     // same JSON files were read and parsed again for project-type detection,
@@ -611,13 +619,21 @@ pub async fn restart_terminal(
     terminal: State<'_, TerminalState>,
     session_id: String,
 ) -> AppResult<String> {
+    restart_terminal_inner(&app, &terminal, &session_id).await
+}
+
+pub async fn restart_terminal_inner(
+    app: &AppState,
+    terminal: &TerminalState,
+    session_id: &str,
+) -> AppResult<String> {
     let (project_id, profile_id) = terminal
-        .meta_for(&session_id)
-        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+        .meta_for(session_id)
+        .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
     // Close the old session first so we kill its shell before starting a new
     // one with the same profile.
-    terminal.manager.close(&session_id)?;
-    terminal.forget(&session_id);
+    terminal.manager.close(session_id)?;
+    terminal.forget(session_id);
 
     let new_id = new_id("session");
     let request = CreateTerminalRequest {

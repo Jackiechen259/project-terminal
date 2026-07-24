@@ -38,6 +38,7 @@ import type { Project } from "@/types";
 import type { SettingsSection } from "@/components/settings/SettingsDialog";
 
 import { ProjectContextMenu } from "./ProjectContextMenu";
+import { AgentPanel } from "@/components/agents/AgentPanel";
 
 const loadProjectDialog = () => import("./ProjectDialog");
 const loadProjectEditDialog = () => import("./ProjectEditDialog");
@@ -754,6 +755,7 @@ export function ProjectSidebar() {
         ) : null}
       </div>
 
+      <AgentPanel />
       <footer className="flex flex-row gap-1 border-t border-border p-2">
         <Button
           variant="ghost"

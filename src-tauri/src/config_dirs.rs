@@ -55,6 +55,9 @@ impl ConfigDirs {
     pub fn ssh_connections_path(&self) -> PathBuf {
         self.root.join("ssh-connections.json")
     }
+    pub fn agent_profiles_path(&self) -> PathBuf {
+        self.root.join("agent-profiles.json")
+    }
     #[cfg(test)]
     pub fn settings_path(&self) -> PathBuf {
         self.root.join("settings.json")
@@ -97,6 +100,10 @@ mod tests {
             .ssh_connections_path()
             .to_string_lossy()
             .ends_with("ssh-connections.json"));
+        assert!(dirs
+            .agent_profiles_path()
+            .to_string_lossy()
+            .ends_with("agent-profiles.json"));
         assert!(dirs
             .settings_path()
             .to_string_lossy()

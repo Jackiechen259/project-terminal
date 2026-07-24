@@ -256,3 +256,61 @@ export interface PlatformInfo {
   /** Shell to seed a new local project's default profile with. */
   defaultLocalShell: ShellType;
 }
+
+export interface AgentProfile {
+  id: string;
+  name: string;
+  projectId: string;
+  terminalProfileId: string;
+  command: string;
+  waitingPatterns: string[];
+  approvalPatterns: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AgentStatus =
+  | "starting"
+  | "running"
+  | "waiting"
+  | "approval"
+  | "completed"
+  | "failed"
+  | "stopped";
+
+export interface AgentTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+export interface AgentSession {
+  id: string;
+  agentProfileId: string;
+  projectId: string;
+  terminalSessionId: string;
+  status: AgentStatus;
+  tokenUsage: AgentTokenUsage;
+  exitReason?: string;
+  startedAt: string;
+  updatedAt: string;
+}
+
+export interface AgentEvent {
+  id: string;
+  agentSessionId: string;
+  kind:
+    | "started"
+    | "output"
+    | "status"
+    | "waiting"
+    | "approval"
+    | "input"
+    | "interrupted"
+    | "completed"
+    | "failed"
+    | "stopped";
+  message: string;
+  timestamp: string;
+  tokenUsage?: AgentTokenUsage;
+}
