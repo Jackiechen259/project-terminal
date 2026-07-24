@@ -119,6 +119,10 @@ pub fn run() {
                 commands::ssh::read_ssh_host_fingerprint,
                 // Terminal (plan §12.3)
                 commands::terminal::create_terminal,
+                commands::terminal::session_attach,
+                commands::terminal::session_detach,
+                commands::terminal::session_list,
+                commands::terminal::session_get,
                 commands::terminal::write_terminal,
                 commands::terminal::resize_terminal,
                 commands::terminal::close_terminal,

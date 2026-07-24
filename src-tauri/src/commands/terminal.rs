@@ -16,7 +16,9 @@ use tauri::State;
 
 use crate::error::{AppError, AppResult};
 use crate::state::{new_id, AppState};
-use crate::terminal::{resolve_local_shell, SessionSpawn, TerminalManager, TerminalOutput};
+use crate::terminal::{
+    resolve_local_shell, SessionInfo, SessionSpawn, TerminalManager, TerminalOutput,
+};
 
 use super::ListResponse;
 
@@ -210,6 +212,8 @@ fn build_session_spawn(
     Ok((
         SessionSpawn {
             session_id: session_id.to_string(),
+            project_id: project.id.clone(),
+            profile_id: profile.id.clone(),
             program,
             args,
             cwd,
@@ -490,9 +494,8 @@ fn launch_terminal(
     spawn: SessionSpawn,
     project_type: crate::project::ProjectType,
     profile: &crate::profile::TerminalProfile,
-    on_output: Channel<TerminalOutput>,
 ) -> AppResult<String> {
-    let id = manager.create(spawn, Box::new(on_output))?;
+    let id = manager.create(spawn)?;
 
     let initialization = match project_type {
         crate::project::ProjectType::Ssh => {
@@ -550,7 +553,6 @@ where
 pub async fn create_terminal(
     app: State<'_, AppState>,
     terminal: State<'_, TerminalState>,
-    on_output: Channel<TerminalOutput>,
     request: CreateTerminalRequest,
 ) -> AppResult<String> {
     let session_id = new_id("session");
@@ -560,7 +562,7 @@ pub async fn create_terminal(
     let (spawn, project_type, profile) = build_session_spawn(&app, &request, &session_id)?;
     let manager = terminal.manager.clone_handle();
     let id = run_terminal_launch(&terminal, move || {
-        launch_terminal(&manager, spawn, project_type, &profile, on_output)
+        launch_terminal(&manager, spawn, project_type, &profile)
     })
     .await?;
 
@@ -602,7 +604,6 @@ pub fn close_terminal(terminal: State<'_, TerminalState>, session_id: String) ->
 pub async fn restart_terminal(
     app: State<'_, AppState>,
     terminal: State<'_, TerminalState>,
-    on_output: Channel<TerminalOutput>,
     session_id: String,
 ) -> AppResult<String> {
     let (project_id, profile_id) = terminal
@@ -623,12 +624,99 @@ pub async fn restart_terminal(
     let (spawn, project_type, profile) = build_session_spawn(&app, &request, &new_id)?;
     let manager = terminal.manager.clone_handle();
     let id = run_terminal_launch(&terminal, move || {
-        launch_terminal(&manager, spawn, project_type, &profile, on_output)
+        launch_terminal(&manager, spawn, project_type, &profile)
     })
     .await?;
 
     terminal.remember(&id, &project_id, &profile_id);
     Ok(id)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionAttachment {
+    pub session: SessionInfo,
+    /// Base64-encoded raw PTY bytes captured before the live subscription.
+    pub scrollback: String,
+    pub truncated: bool,
+}
+
+/// Attach one frontend client to an existing PTY without changing its
+/// lifecycle. Scrollback is returned in the command response and later output
+/// is delivered through the bounded broadcast receiver.
+#[tauri::command]
+pub fn session_attach(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+    client_id: String,
+    on_output: Channel<TerminalOutput>,
+) -> AppResult<SessionAttachment> {
+    use base64::Engine;
+    use tokio::sync::broadcast::error::RecvError;
+
+    let (info, subscription) = terminal.manager.attach(&session_id, client_id.clone())?;
+    let scrollback = base64::engine::general_purpose::STANDARD.encode(subscription.snapshot.bytes);
+    let attachment = SessionAttachment {
+        session: info,
+        scrollback,
+        truncated: subscription.snapshot.truncated,
+    };
+
+    let manager = terminal.manager.clone_handle();
+    tauri::async_runtime::spawn(async move {
+        let mut receiver = subscription.receiver;
+        let mut cancellation = subscription.cancellation;
+        loop {
+            tokio::select! {
+                changed = cancellation.changed() => {
+                    if changed.is_err() || *cancellation.borrow() {
+                        break;
+                    }
+                }
+                event = receiver.recv() => {
+                    match event {
+                        Ok(event) => {
+                            if on_output.send(event).is_err() {
+                                break;
+                            }
+                        }
+                        Err(RecvError::Lagged(_)) => {
+                            // The PTY reader and other clients must keep
+                            // flowing. This client can detach/attach again to
+                            // obtain the latest bounded scrollback snapshot.
+                            continue;
+                        }
+                        Err(RecvError::Closed) => break,
+                    }
+                }
+            }
+        }
+        let _ = manager.detach(&session_id, &client_id);
+    });
+
+    Ok(attachment)
+}
+
+#[tauri::command]
+pub fn session_detach(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+    client_id: String,
+) -> AppResult<()> {
+    terminal.manager.detach(&session_id, &client_id)
+}
+
+#[tauri::command]
+pub fn session_list(terminal: State<'_, TerminalState>) -> ListResponse<SessionInfo> {
+    ListResponse::new(terminal.manager.list())
+}
+
+#[tauri::command]
+pub fn session_get(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+) -> AppResult<SessionInfo> {
+    terminal.manager.info(&session_id)
 }
 
 #[tauri::command]
@@ -988,7 +1076,6 @@ mod tests {
 
     #[test]
     fn create_terminal_retains_shell_on_activation_error() {
-        use std::sync::mpsc;
         let app = test_state();
         let dir = seed_project(&app, "p1");
 
@@ -1022,17 +1109,12 @@ mod tests {
         // the readiness handshake used by the public create command.
         spawn.readiness_marker = None;
 
-        struct MpscSink(mpsc::Sender<TerminalOutput>);
-        impl crate::terminal::session::OutputSink for MpscSink {
-            fn send_output(&self, output: TerminalOutput) -> bool {
-                self.0.send(output).is_ok()
-            }
-        }
-        let (tx, rx) = mpsc::channel();
-        let id = terminal
+        let id = terminal.manager.create(spawn).unwrap();
+        let (_, subscription) = terminal
             .manager
-            .create(spawn, Box::new(MpscSink(tx)))
+            .attach(&id, "activation-test".into())
             .unwrap();
+        let mut rx = subscription.receiver;
 
         // The helper should write the error into the shell and NOT return an
         // error, keeping the session alive.
@@ -1042,7 +1124,7 @@ mod tests {
         let mut out = Vec::new();
         use base64::Engine;
         while std::time::Instant::now() < deadline {
-            if let Ok(chunk) = rx.recv_timeout(std::time::Duration::from_millis(50)) {
+            if let Ok(chunk) = rx.try_recv() {
                 let bytes = base64::engine::general_purpose::STANDARD
                     .decode(chunk.data)
                     .unwrap();
@@ -1053,6 +1135,8 @@ mod tests {
                 {
                     break;
                 }
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(10));
             }
         }
         terminal.manager.close_all();
@@ -1068,7 +1152,6 @@ mod tests {
 
     #[test]
     fn execute_startup_commands_sends_to_pty() {
-        use std::sync::mpsc;
         let app = test_state();
         let dir = seed_project(&app, "p1");
 
@@ -1089,24 +1172,16 @@ mod tests {
 
         let terminal = TerminalState::new();
 
-        // We bypass the public create_terminal wrapper (which requires Channel)
-        // and drive the internal pieces directly to observe the startup commands.
+        // We bypass the public create_terminal wrapper and drive the internal
+        // pieces directly to observe the startup commands.
         let session_id = "test-session";
         let (mut spawn, _, profile) = build_session_spawn(&app, &request, session_id).unwrap();
         // This test intentionally bypasses the public readiness handshake.
         spawn.readiness_marker = None;
 
-        struct MpscSink(mpsc::Sender<TerminalOutput>);
-        impl crate::terminal::session::OutputSink for MpscSink {
-            fn send_output(&self, output: TerminalOutput) -> bool {
-                self.0.send(output).is_ok()
-            }
-        }
-        let (tx, rx) = mpsc::channel();
-        let id = terminal
-            .manager
-            .create(spawn, Box::new(MpscSink(tx)))
-            .unwrap();
+        let id = terminal.manager.create(spawn).unwrap();
+        let (_, subscription) = terminal.manager.attach(&id, "startup-test".into()).unwrap();
+        let mut rx = subscription.receiver;
 
         // Execute startup commands manually (replicating the wrapper).
         execute_startup_commands(&terminal.manager, &profile, &id).unwrap();
@@ -1116,7 +1191,7 @@ mod tests {
         let mut out = Vec::new();
         use base64::Engine;
         while std::time::Instant::now() < deadline {
-            if let Ok(chunk) = rx.recv_timeout(std::time::Duration::from_millis(50)) {
+            if let Ok(chunk) = rx.try_recv() {
                 let bytes = base64::engine::general_purpose::STANDARD
                     .decode(chunk.data)
                     .unwrap();
@@ -1124,6 +1199,8 @@ mod tests {
                 if out.windows(14).any(|w| w == b"PT_STARTUP_OK\r") {
                     break;
                 }
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(10));
             }
         }
 

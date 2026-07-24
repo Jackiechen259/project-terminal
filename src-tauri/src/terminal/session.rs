@@ -1,21 +1,23 @@
-//! Terminal session: owns one PTY plus a reader thread that forwards output
-//! bytes to an `OutputSink`. The sink is abstracted so the session is testable
-//! without a Tauri runtime - the production path uses a Tauri Channel, tests
-//! use an mpsc-backed sink.
+//! Terminal session: owns one PTY plus a reader thread, bounded scrollback,
+//! and a broadcast event stream.
 //!
 //! Phase 3 supports local shells only. SSH (`ssh.exe`) sessions arrive in
 //! Phase 6. The session intentionally has no knowledge of profiles or
 //! projects - the manager constructs it from resolved config.
 
+use std::collections::HashMap;
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Duration;
 
+use bytes::Bytes;
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
-use tauri::ipc::Channel;
+use tokio::sync::{broadcast, watch};
 
 use crate::error::{AppError, AppResult};
+
+use super::scrollback::{OutputRingBuffer, ScrollbackSnapshot, DEFAULT_SCROLLBACK_BYTES};
 
 /// A terminal lifecycle event sent to the frontend.
 ///
@@ -54,25 +56,12 @@ impl TerminalOutput {
     }
 }
 
-/// Abstract output sink. Production wires `tauri::ipc::Channel`; tests wire
-/// an mpsc sender so the reader thread's bytes can be inspected without a
-/// runtime.
-pub trait OutputSink: Send + Sync + 'static {
-    /// Send one chunk. Returns `false` when the sink is closed (frontend
-    /// window closed) so the reader thread can stop.
-    fn send_output(&self, output: TerminalOutput) -> bool;
-}
-
-impl OutputSink for Channel<TerminalOutput> {
-    fn send_output(&self, output: TerminalOutput) -> bool {
-        self.send(output).is_ok()
-    }
-}
-
 /// What to spawn inside the PTY.
 #[derive(Debug, Clone)]
 pub struct SessionSpawn {
     pub session_id: String,
+    pub project_id: String,
+    pub profile_id: String,
     pub program: String,
     pub args: Vec<String>,
     pub cwd: Option<String>,
@@ -81,6 +70,17 @@ pub struct SessionSpawn {
     pub readiness_marker: Option<String>,
     pub rows: u16,
     pub cols: u16,
+}
+
+struct EventHub {
+    sender: broadcast::Sender<TerminalOutput>,
+    scrollback: OutputRingBuffer,
+}
+
+pub struct SessionSubscription {
+    pub receiver: broadcast::Receiver<TerminalOutput>,
+    pub snapshot: ScrollbackSnapshot,
+    pub cancellation: watch::Receiver<bool>,
 }
 
 /// Lifecycle state of a session. Mirrors the frontend's TerminalStatus.
@@ -202,8 +202,13 @@ impl ReadyWatcher {
 
 pub struct TerminalSession {
     pub session_id: String,
+    pub project_id: String,
+    pub profile_id: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
     inner: Arc<Mutex<SessionInner>>,
     ready_watcher: Arc<Mutex<ReadyWatcher>>,
+    event_hub: Arc<Mutex<EventHub>>,
+    attachments: Mutex<HashMap<String, watch::Sender<bool>>>,
 }
 
 impl std::fmt::Debug for TerminalSession {
@@ -216,9 +221,9 @@ impl std::fmt::Debug for TerminalSession {
 }
 
 impl TerminalSession {
-    /// Spawn a local PTY, start a reader thread that forwards output to the
-    /// sink, and return a handle the manager can store.
-    pub fn spawn(spawn: SessionSpawn, sink: Box<dyn OutputSink>) -> AppResult<Self> {
+    /// Spawn a PTY and start an always-on reader thread. Output is retained
+    /// even when no frontend is attached.
+    pub fn spawn(spawn: SessionSpawn) -> AppResult<Self> {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -274,11 +279,16 @@ impl TerminalSession {
             exit_error: None,
         }));
         let session_id = spawn.session_id.clone();
+        let (event_tx, _) = broadcast::channel(1024);
+        let event_hub = Arc::new(Mutex::new(EventHub {
+            sender: event_tx,
+            scrollback: OutputRingBuffer::new(DEFAULT_SCROLLBACK_BYTES),
+        }));
 
         // Reader thread: scans for the one-shot ready marker, removes that
-        // protocol line, and forwards every other byte sequence to xterm.
-        let sink: Arc<dyn OutputSink> = Arc::from(sink);
-        let ch_for_reader = Arc::clone(&sink);
+        // protocol line, retains every other byte sequence, and broadcasts it.
+        // A missing or slow subscriber never blocks this loop.
+        let hub_for_reader = Arc::clone(&event_hub);
         let sid_for_reader = session_id.clone();
         let watcher_for_reader = ready_watcher.clone();
         thread::spawn(move || {
@@ -289,16 +299,13 @@ impl TerminalSession {
                     Ok(0) => break,
                     Ok(n) => {
                         let output = watcher_for_reader.lock().process(&buf[..n]);
-                        if !output.is_empty()
-                            && !ch_for_reader.send_output(TerminalOutput::output(
+                        if !output.is_empty() {
+                            let mut hub = hub_for_reader.lock();
+                            hub.scrollback.push(Bytes::copy_from_slice(&output));
+                            let _ = hub.sender.send(TerminalOutput::output(
                                 sid_for_reader.clone(),
                                 encode_bytes(&output),
-                            ))
-                        {
-                            // Sink closed (frontend window closed). Stop
-                            // reading - the manager will tear the session
-                            // down separately.
-                            break;
+                            ));
                         }
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -322,7 +329,7 @@ impl TerminalSession {
         // flip status.
         let inner_for_wait = inner.clone();
         let watcher_for_wait = ready_watcher.clone();
-        let sink_for_wait = Arc::clone(&sink);
+        let hub_for_wait = Arc::clone(&event_hub);
         let sid_for_wait = session_id.clone();
         let mut child_for_wait = child;
         thread::spawn(move || match child_for_wait.wait() {
@@ -335,7 +342,7 @@ impl TerminalSession {
                 drop(guard);
                 if !closing {
                     watcher_for_wait.lock().process_exited(Some(code));
-                    let _ = sink_for_wait.send_output(TerminalOutput::status(
+                    let _ = hub_for_wait.lock().sender.send(TerminalOutput::status(
                         sid_for_wait,
                         SessionStatus::Exited,
                         Some(code),
@@ -349,7 +356,7 @@ impl TerminalSession {
                 drop(guard);
                 if !closing {
                     watcher_for_wait.lock().process_exited(None);
-                    let _ = sink_for_wait.send_output(TerminalOutput::status(
+                    let _ = hub_for_wait.lock().sender.send(TerminalOutput::status(
                         sid_for_wait,
                         SessionStatus::Error,
                         None,
@@ -360,8 +367,13 @@ impl TerminalSession {
 
         Ok(Self {
             session_id,
+            project_id: spawn.project_id,
+            profile_id: spawn.profile_id,
+            created_at: chrono::Utc::now(),
             inner,
             ready_watcher,
+            event_hub,
+            attachments: Mutex::new(HashMap::new()),
         })
     }
 
@@ -442,9 +454,37 @@ impl TerminalSession {
         Ok(())
     }
 
-    #[cfg(test)]
     pub fn status(&self) -> SessionStatus {
         self.inner.lock().status
+    }
+
+    pub fn exit_code(&self) -> Option<i32> {
+        self.inner.lock().exit_code
+    }
+
+    /// Atomically subscribe before taking the scrollback snapshot. The reader
+    /// uses the same hub lock, so bytes can be in exactly one of the snapshot
+    /// or subsequent events, never lost between them.
+    pub fn attach(&self, client_id: String) -> SessionSubscription {
+        let (receiver, snapshot) = {
+            let hub = self.event_hub.lock();
+            (hub.sender.subscribe(), hub.scrollback.snapshot())
+        };
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        if let Some(previous) = self.attachments.lock().insert(client_id, cancel_tx) {
+            let _ = previous.send(true);
+        }
+        SessionSubscription {
+            receiver,
+            snapshot,
+            cancellation: cancel_rx,
+        }
+    }
+
+    pub fn detach(&self, client_id: &str) {
+        if let Some(cancellation) = self.attachments.lock().remove(client_id) {
+            let _ = cancellation.send(true);
+        }
     }
 
     /// Close the session. Sends a kill to the child so it does not leak when
@@ -459,6 +499,10 @@ impl TerminalSession {
             let _ = killer.kill();
         }
         guard.status = SessionStatus::Exited;
+        drop(guard);
+        for (_, cancellation) in self.attachments.lock().drain() {
+            let _ = cancellation.send(true);
+        }
     }
 }
 
@@ -473,15 +517,6 @@ mod tests {
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
-    /// Test sink that forwards TerminalOutput chunks to an mpsc receiver so
-    /// tests can inspect bytes without a Tauri runtime.
-    struct MpscSink(mpsc::Sender<TerminalOutput>);
-    impl OutputSink for MpscSink {
-        fn send_output(&self, output: TerminalOutput) -> bool {
-            self.0.send(output).is_ok()
-        }
-    }
-
     /// Decode base64 back to bytes for assertions.
     fn decode(b64: &str) -> Vec<u8> {
         use base64::Engine;
@@ -491,20 +526,16 @@ mod tests {
     }
 
     /// Collect all output chunks delivered before the deadline, concatenated.
-    fn drain_output(rx: &mpsc::Receiver<TerminalOutput>, deadline: Instant) -> Vec<u8> {
+    fn drain_output(rx: &mut broadcast::Receiver<TerminalOutput>, deadline: Instant) -> Vec<u8> {
         let mut out = Vec::new();
         while Instant::now() < deadline {
-            match rx.recv_timeout(Duration::from_millis(100)) {
+            match rx.try_recv() {
                 Ok(chunk) => out.extend_from_slice(&decode(&chunk.data)),
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    if !out.is_empty() {
-                        // Got something; if we time out again the shell is
-                        // idle. Keep going until the deadline so subsequent
-                        // writes can be observed.
-                        continue;
-                    }
+                Err(broadcast::error::TryRecvError::Empty) => {
+                    std::thread::sleep(Duration::from_millis(10));
                 }
-                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(broadcast::error::TryRecvError::Closed) => break,
+                Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
             }
         }
         out
@@ -513,22 +544,21 @@ mod tests {
     fn make_session(
         program: &str,
         args: &[&str],
-    ) -> (TerminalSession, mpsc::Receiver<TerminalOutput>) {
-        let (tx, rx) = mpsc::channel::<TerminalOutput>();
-        let session = TerminalSession::spawn(
-            SessionSpawn {
-                session_id: "test-session".to_string(),
-                program: program.to_string(),
-                args: args.iter().map(|s| s.to_string()).collect(),
-                cwd: None,
-                env: vec![],
-                readiness_marker: None,
-                rows: 24,
-                cols: 80,
-            },
-            Box::new(MpscSink(tx)),
-        )
+    ) -> (TerminalSession, broadcast::Receiver<TerminalOutput>) {
+        let session = TerminalSession::spawn(SessionSpawn {
+            session_id: "test-session".to_string(),
+            project_id: "test-project".to_string(),
+            profile_id: "test-profile".to_string(),
+            program: program.to_string(),
+            args: args.iter().map(|s| s.to_string()).collect(),
+            cwd: None,
+            env: vec![],
+            readiness_marker: None,
+            rows: 24,
+            cols: 80,
+        })
         .expect("spawn session");
+        let rx = session.attach("test-client".into()).receiver;
         session.mark_running();
         (session, rx)
     }
@@ -537,12 +567,12 @@ mod tests {
     fn spawn_cmd_write_command_and_read_output() {
         // §37 Phase 3 acceptance: input/output normal. Spawn cmd.exe, write
         // `echo PT_TEST_OK`, read the echo back through the reader thread.
-        let (session, rx) = make_session("cmd.exe", &["/Q"]);
+        let (session, mut rx) = make_session("cmd.exe", &["/Q"]);
         // Drain the initial prompt.
-        let _ = drain_output(&rx, Instant::now() + Duration::from_millis(500));
+        let _ = drain_output(&mut rx, Instant::now() + Duration::from_millis(500));
 
         session.write(b"echo PT_TEST_OK\r\n").expect("write");
-        let output = drain_output(&rx, Instant::now() + Duration::from_secs(3));
+        let output = drain_output(&mut rx, Instant::now() + Duration::from_secs(3));
 
         assert!(
             output
@@ -556,14 +586,17 @@ mod tests {
 
     #[test]
     fn process_exit_is_pushed_through_the_output_channel() {
-        let (_session, rx) = make_session("cmd.exe", &["/C", "exit", "7"]);
+        let (_session, mut rx) = make_session("cmd.exe", &["/C", "exit", "7"]);
         let deadline = Instant::now() + Duration::from_secs(3);
         let status = loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             assert!(!remaining.is_zero(), "timed out waiting for exit status");
-            let event = rx.recv_timeout(remaining).expect("receive terminal event");
-            if event.status.is_some() {
-                break event;
+            match rx.try_recv() {
+                Ok(event) if event.status.is_some() => break event,
+                Ok(_) | Err(broadcast::error::TryRecvError::Empty) => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("receive terminal event: {error}"),
             }
         };
 
@@ -578,15 +611,15 @@ mod tests {
         // (infinite), then send Ctrl+C (\x03) and verify the session is
         // still alive (status Running) - we should be back at the prompt,
         // not exited.
-        let (session, rx) = make_session("cmd.exe", &["/Q"]);
-        let _ = drain_output(&rx, Instant::now() + Duration::from_millis(500));
+        let (session, mut rx) = make_session("cmd.exe", &["/Q"]);
+        let _ = drain_output(&mut rx, Instant::now() + Duration::from_millis(500));
 
         session.write(b"ping 127.0.0.1 -t\r\n").expect("write ping");
         // Give it time to start pinging.
         std::thread::sleep(Duration::from_millis(400));
         // Send Ctrl+C.
         session.write(b"\x03").expect("write ctrl+c");
-        let output = drain_output(&rx, Instant::now() + Duration::from_secs(2));
+        let output = drain_output(&mut rx, Instant::now() + Duration::from_secs(2));
 
         assert!(
             !output.is_empty(),
@@ -688,21 +721,20 @@ mod tests {
 
     #[test]
     fn cmd_ready_handshake_filters_marker_and_marks_session_running() {
-        let (tx, rx) = mpsc::channel::<TerminalOutput>();
-        let session = TerminalSession::spawn(
-            SessionSpawn {
-                session_id: "ready-session".to_string(),
-                program: "cmd.exe".to_string(),
-                args: vec!["/Q".to_string()],
-                cwd: None,
-                env: vec![],
-                readiness_marker: None,
-                rows: 24,
-                cols: 80,
-            },
-            Box::new(MpscSink(tx)),
-        )
+        let session = TerminalSession::spawn(SessionSpawn {
+            session_id: "ready-session".to_string(),
+            project_id: "test-project".to_string(),
+            profile_id: "test-profile".to_string(),
+            program: "cmd.exe".to_string(),
+            args: vec!["/Q".to_string()],
+            cwd: None,
+            env: vec![],
+            readiness_marker: None,
+            rows: 24,
+            cols: 80,
+        })
         .expect("spawn session");
+        let mut rx = session.attach("ready-client".into()).receiver;
         let marker = "__PROJECT_TERMINAL_READY_test__";
         let encoded_marker = marker
             .chars()
@@ -719,7 +751,7 @@ mod tests {
         session.mark_running();
         assert_eq!(session.status(), SessionStatus::Running);
 
-        let output = drain_output(&rx, Instant::now() + Duration::from_millis(250));
+        let output = drain_output(&mut rx, Instant::now() + Duration::from_millis(250));
         assert!(
             !output
                 .windows(marker.len())
@@ -736,24 +768,23 @@ mod tests {
     }
     #[test]
     fn powershell_ready_handshake_filters_marker_and_marks_session_running() {
-        let (tx, rx) = mpsc::channel::<TerminalOutput>();
-        let session = TerminalSession::spawn(
-            SessionSpawn {
-                session_id: "powershell-ready-session".to_string(),
-                program: "powershell.exe".to_string(),
-                args: vec!["-NoLogo".to_string()],
-                cwd: None,
-                env: vec![(
-                    "PROJECT_TERMINAL_READY".to_string(),
-                    "__PROJECT_TERMINAL_READY_powershell__".to_string(),
-                )],
-                readiness_marker: None,
-                rows: 24,
-                cols: 80,
-            },
-            Box::new(MpscSink(tx)),
-        )
+        let session = TerminalSession::spawn(SessionSpawn {
+            session_id: "powershell-ready-session".to_string(),
+            project_id: "test-project".to_string(),
+            profile_id: "test-profile".to_string(),
+            program: "powershell.exe".to_string(),
+            args: vec!["-NoLogo".to_string()],
+            cwd: None,
+            env: vec![(
+                "PROJECT_TERMINAL_READY".to_string(),
+                "__PROJECT_TERMINAL_READY_powershell__".to_string(),
+            )],
+            readiness_marker: None,
+            rows: 24,
+            cols: 80,
+        })
         .expect("spawn PowerShell session");
+        let mut rx = session.attach("powershell-ready-client".into()).receiver;
         let marker = "__PROJECT_TERMINAL_READY_powershell__";
         session
             .wait_for_ready(
@@ -765,7 +796,7 @@ mod tests {
         session.mark_running();
         assert_eq!(session.status(), SessionStatus::Running);
 
-        let output = drain_output(&rx, Instant::now() + Duration::from_millis(250));
+        let output = drain_output(&mut rx, Instant::now() + Duration::from_millis(250));
         assert!(
             !output.windows(4).any(|window| window == b"\r\n>>"),
             "PowerShell entered a continuation prompt: {:?}",

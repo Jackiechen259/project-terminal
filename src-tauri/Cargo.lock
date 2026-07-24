@@ -2515,6 +2515,7 @@ name = "project-terminal"
 version = "0.4.3"
 dependencies = [
  "base64 0.22.1",
+ "bytes",
  "chrono",
  "dirs 5.0.1",
  "parking_lot",

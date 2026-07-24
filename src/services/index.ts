@@ -142,6 +142,22 @@ export interface TerminalOutputChunk {
   exitCode?: number;
 }
 
+export interface SessionInfo {
+  sessionId: string;
+  projectId: string;
+  profileId: string;
+  status: "starting" | "running" | "exited" | "error";
+  exitCode?: number;
+  createdAt: string;
+}
+
+export interface SessionAttachment {
+  session: SessionInfo;
+  /** base64-encoded raw PTY history captured before live events. */
+  scrollback: string;
+  truncated: boolean;
+}
+
 export interface RemoteDirectoryListing {
   path: string;
   directories: Array<{ name: string; path: string }>;
@@ -249,34 +265,37 @@ export const sshService = {
 
 export const terminalService = {
   readClipboardText: () => invokeOrThrow<string>("read_clipboard_text"),
-  create: async (
-    request: CreateTerminalRequest,
+  create: (request: CreateTerminalRequest): Promise<string> =>
+    invokeOrThrow<string>("create_terminal", { request }),
+  attach: async (
+    sessionId: string,
+    clientId: string,
     onOutput: (chunk: TerminalOutputChunk) => void,
-  ): Promise<string> => {
+  ): Promise<SessionAttachment> => {
     const channel = new Channel<TerminalOutputChunk>();
     channel.onmessage = onOutput;
-    return invokeOrThrow<string>("create_terminal", {
+    return invokeOrThrow<SessionAttachment>("session_attach", {
       onOutput: channel,
-      request,
+      sessionId,
+      clientId,
     });
   },
+  detach: (sessionId: string, clientId: string) =>
+    invokeOrThrow<void>("session_detach", { sessionId, clientId }),
+  list: () =>
+    invokeOrThrow<ListResponse<SessionInfo>>("session_list").then(
+      (response) => response.items,
+    ),
+  get: (sessionId: string) =>
+    invokeOrThrow<SessionInfo>("session_get", { sessionId }),
   write: (sessionId: string, data: string) =>
     invokeOrThrow<void>("write_terminal", { sessionId, data }),
   resize: (sessionId: string, rows: number, cols: number) =>
     invokeOrThrow<void>("resize_terminal", { sessionId, rows, cols }),
   close: (sessionId: string) =>
     invokeOrThrow<void>("close_terminal", { sessionId }),
-  restart: async (
-    sessionId: string,
-    onOutput: (chunk: TerminalOutputChunk) => void,
-  ): Promise<string> => {
-    const channel = new Channel<TerminalOutputChunk>();
-    channel.onmessage = onOutput;
-    return invokeOrThrow<string>("restart_terminal", {
-      onOutput: channel,
-      sessionId,
-    });
-  },
+  restart: (sessionId: string): Promise<string> =>
+    invokeOrThrow<string>("restart_terminal", { sessionId }),
   decodeBase64,
 };
 

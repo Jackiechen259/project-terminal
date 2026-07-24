@@ -8,6 +8,7 @@ pub mod conda;
 pub mod escaping;
 pub mod initializer;
 pub mod manager;
+pub mod scrollback;
 pub mod session;
 pub mod wsl;
 
@@ -16,7 +17,7 @@ use crate::error::{AppError, AppResult};
 use crate::profile::EnvironmentType;
 use crate::profile::{ShellType, TerminalProfile};
 pub use initializer::{build_activation_script, build_remote_initialization_commands};
-pub use manager::TerminalManager;
+pub use manager::{SessionInfo, TerminalManager};
 pub use session::{SessionSpawn, TerminalOutput};
 pub use wsl::{detect_wsl_distributions, DetectedWslDistribution};
 

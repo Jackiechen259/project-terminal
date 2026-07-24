@@ -13,7 +13,7 @@ import {
   getTerminalMinimumContrast,
   getTerminalTheme,
 } from "@/lib/terminalThemes";
-import { terminalService } from "@/services";
+import { terminalService, type TerminalOutputChunk } from "@/services";
 import {
   clampTerminalFontSize,
   useSettingsStore,
@@ -23,52 +23,25 @@ import { resolveTerminalTabTitle } from "./terminalTitle";
 /**
  * Single xterm.js view bound to a backend PTY session.
  *
- * Lifecycle (plan §25.5):
- * - Mounts once per tab and stays mounted while the project is active.
- * - When the parent project becomes inactive we only hide the container; the
- *   Terminal instance, PTY reader, and accumulated scrollback all survive.
- * - Disposes on unmount (tab close), which also closes the backend session.
- *
- * Channel ownership: this view opens its own Tauri Channel when it mounts.
- * The backend's create_terminal() is invoked by the workspace; the view
- * subscribes to output via a session-scoped callback registered below.
- *
- * Because Tauri Channels are per-call (each create_terminal creates a fresh
- * channel), the channel handler is owned by whoever calls create_terminal.
- * For Phase 3, the TerminalView owns the create call so the channel stays
- * paired with this xterm instance.
- */
-export interface TerminalViewHandle {
-  sessionId: string;
-}
-
-interface PendingSession {
-  projectId: string;
-  profileId: string;
-}
-
-/**
- * Mount an xterm.js terminal and create a backend PTY for the given project
- * + profile. Output bytes flow from the PTY through a Tauri Channel into the
- * Terminal. Input bytes flow from the Terminal through terminalService.write.
+ * The workspace owns session creation/closure. This view only attaches while
+ * mounted and detaches during cleanup, so React reconstruction never kills
+ * the backend PTY.
  */
 export const TerminalView = memo(function TerminalView({
-  pending,
+  sessionId,
   active,
   focused = active,
   defaultTitle,
-  onSessionId,
   onExit,
   onTitleChange,
   onFocus,
 }: {
-  pending: PendingSession;
+  sessionId: string;
   active: boolean;
   /** Only the focused pane responds to workspace-level terminal commands. */
   focused?: boolean;
   /** Profile label to restore after a shell emits its executable path. */
   defaultTitle: string;
-  onSessionId?: (sessionId: string) => void;
   onExit?: (code: number | null, status?: "exited" | "error") => void;
   /** Called when the terminal emits OSC 0/2 to update its window title. */
   onTitleChange?: (title: string) => void;
@@ -80,7 +53,6 @@ export const TerminalView = memo(function TerminalView({
   const fitRef = useRef<FitAddon | null>(null);
   const resizeQueueRef = useRef<TerminalResizeQueue | null>(null);
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const sessionIdRef = useRef<string | null>(null);
   const reportedExitRef = useRef(false);
   const onTitleChangeRef = useRef(onTitleChange);
   const onExitRef = useRef(onExit);
@@ -252,59 +224,67 @@ export const TerminalView = memo(function TerminalView({
     });
     ro.observe(container);
 
-    // Full-screen programs are launched by the backend before create()
-    // resolves, so they must receive the real grid size in the create request.
-    // Starting every PTY at 80x24 and resizing later lets a dynamic TUI paint
-    // its first frame against the wrong width, which desynchronizes its input
-    // cursor from xterm's grid.
     fitAndResize();
     const initialDimensions = { rows: term.rows, cols: term.cols };
-
-    // Create the backend PTY. Output chunks are decoded and written to the
-    // terminal; we also detect a session-end by a 0-byte final chunk (the
-    // backend's reader thread exits, which surfaces as EOF). A real
-    // exit-code listener arrives with the next phase's status command.
+    const clientId = crypto.randomUUID();
     let cancelled = false;
+    let attached = false;
+    const pendingLiveOutput: TerminalOutputChunk[] = [];
+    const handleOutput = (chunk: TerminalOutputChunk) => {
+      if (cancelled) return;
+      if (chunk.status) {
+        outputQueue.flush();
+        if (!reportedExitRef.current) {
+          reportedExitRef.current = true;
+          onExitRef.current?.(chunk.exitCode ?? null, chunk.status);
+        }
+        return;
+      }
+      if (chunk.data) {
+        outputQueue.send(terminalService.decodeBase64(chunk.data));
+      }
+    };
+    const handleLiveOutput = (chunk: TerminalOutputChunk) => {
+      if (attached) handleOutput(chunk);
+      else pendingLiveOutput.push(chunk);
+    };
+
+    inputQueue.attach(sessionId);
+    resizeQueue.attach(sessionId, initialDimensions);
+
+    // Subscribe first on the backend, restore bounded history, then drain
+    // events queued while the command response was in flight.
     void terminalService
-      .create(
-        {
-          projectId: pending.projectId,
-          profileId: pending.profileId,
-          rows: initialDimensions.rows,
-          cols: initialDimensions.cols,
-        },
-        (chunk) => {
-          if (cancelled) return;
-          if (chunk.status) {
-            outputQueue.flush();
-            if (!reportedExitRef.current) {
-              reportedExitRef.current = true;
-              onExitRef.current?.(chunk.exitCode ?? null, chunk.status);
-            }
-            return;
-          }
-          if (!chunk.data) return;
-          const bytes = terminalService.decodeBase64(chunk.data);
-          outputQueue.send(bytes);
-        },
-      )
-      .then(async (sessionId) => {
+      .attach(sessionId, clientId, handleLiveOutput)
+      .then(async (attachment) => {
         if (cancelled) {
-          void terminalService.close(sessionId);
+          void terminalService.detach(sessionId, clientId);
           return;
         }
-        sessionIdRef.current = sessionId;
-        resizeQueue.attach(sessionId, initialDimensions);
-        // If the view changed size while the backend was starting the shell,
-        // apply that latest grid before releasing any buffered keystrokes to
-        // the TUI. This keeps its first editable frame and xterm in lockstep.
+        if (attachment.truncated) {
+          term.write(
+            "\r\n\x1b[33m[Earlier terminal output was truncated]\x1b[0m\r\n",
+          );
+        }
+        if (attachment.scrollback) {
+          outputQueue.send(
+            terminalService.decodeBase64(attachment.scrollback),
+          );
+        }
+        attached = true;
+        pendingLiveOutput.splice(0).forEach(handleOutput);
+        if (
+          attachment.session.status === "exited" ||
+          attachment.session.status === "error"
+        ) {
+          handleOutput({
+            sessionId,
+            status: attachment.session.status,
+            exitCode: attachment.session.exitCode,
+          });
+        }
         await resizeQueue.whenIdle();
         if (cancelled) return;
-        inputQueue.attach(sessionId);
-        onSessionId?.(sessionId);
-        // The first ResizeObserver fit normally runs before the asynchronous
-        // PTY session id exists. Resize once it is available so applications
-        // in the shell receive the same grid dimensions as xterm.
         requestAnimationFrame(fitAndResize);
       })
       .catch((e) => {
@@ -338,19 +318,16 @@ export const TerminalView = memo(function TerminalView({
       container.removeEventListener("wheel", handleWheelZoom, {
         capture: true,
       });
-      const sid = sessionIdRef.current;
-      if (sid) void terminalService.close(sid);
+      void terminalService.detach(sessionId, clientId);
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
       resizeQueueRef.current = null;
-      sessionIdRef.current = null;
       reportedExitRef.current = false;
     };
-    // We intentionally only re-create the session when the profile id changes;
-    // changing `active` does NOT re-create it.
+    // Changing `active` only hides/refits the existing xterm instance.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pending.projectId, pending.profileId]);
+  }, [sessionId]);
 
   useEffect(() => {
     const term = termRef.current;

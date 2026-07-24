@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback } from "react";
 
 import { cn } from "@/lib/utils";
 import { useTerminalStore } from "@/stores/terminalStore";
@@ -27,26 +27,9 @@ export const TerminalPane = memo(function TerminalPane({
 }: TerminalPaneProps) {
   const tab = useTerminalStore((state) => state.tabsById[tabId]);
   const updateTab = useTerminalStore((state) => state.updateTab);
-  const pending = useMemo(
-    () => ({
-      projectId: tab?.projectId ?? "",
-      profileId: tab?.profileId ?? "",
-    }),
-    [tab?.profileId, tab?.projectId],
-  );
   const select = useCallback(() => {
     if (visible) onSelect(tabId);
   }, [onSelect, tabId, visible]);
-  const handleSessionId = useCallback(
-    (sessionId: string) => {
-      updateTab(tabId, {
-        sessionId,
-        status: "running",
-        exitCode: undefined,
-      });
-    },
-    [tabId, updateTab],
-  );
   const handleExit = useCallback(
     (code: number | null, status: "exited" | "error" = "exited") => {
       updateTab(tabId, { status, exitCode: code ?? undefined });
@@ -69,12 +52,11 @@ export const TerminalPane = memo(function TerminalPane({
       onMouseDown={select}
     >
       <TerminalView
-        pending={pending}
+        sessionId={tab.sessionId}
         active={visible}
         focused={focused}
         defaultTitle={tab.defaultTitle}
         onFocus={select}
-        onSessionId={handleSessionId}
         onExit={handleExit}
         onTitleChange={handleTitleChange}
       />

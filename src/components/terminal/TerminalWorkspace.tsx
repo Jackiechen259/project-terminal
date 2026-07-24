@@ -49,6 +49,7 @@ import {
   environmentService,
   profileService,
   templateService,
+  terminalService,
   type ProfileInput,
 } from "@/services";
 import { useProjectStore } from "@/stores/projectStore";
@@ -85,8 +86,8 @@ interface CondaEnvOption {
  * xterm instances for other projects keep running. This is the core
  * invariant: project switching must NOT close sessions or dispose xterm.
  *
- * Each TerminalView owns its backend PTY (create_terminal) and routes output
- * bytes from its own Tauri Channel into its xterm instance.
+ * The workspace creates/closes backend sessions. Each TerminalView only
+ * attaches to its existing session and detaches when React disposes it.
  */
 export function TerminalWorkspace() {
   const { t } = useTranslation();
@@ -102,6 +103,7 @@ export function TerminalWorkspace() {
   const reorderTab = useTerminalStore((s) => s.reorderTab);
   const registerTab = useTerminalStore((s) => s.registerTab);
   const removeTab = useTerminalStore((s) => s.removeTab);
+  const updateTab = useTerminalStore((s) => s.updateTab);
   const confirmCloseTerminal = useSettingsStore((s) => s.confirmCloseTerminal);
   const templateList = useTemplateStore((s) => s.templates);
   const templatesLoaded = useTemplateStore((s) => s.loaded);
@@ -198,17 +200,21 @@ export function TerminalWorkspace() {
           availableProfiles.find((p) => p.id === preferredProfileId) ??
           availableProfiles.find((p) => p.isDefault) ??
           availableProfiles[0];
-        // Reserve the tab id. sessionId will be filled in by TerminalView's
-        // onSessionId callback once the backend PTY is created.
+        const sessionId = await terminalService.create({
+          projectId,
+          profileId: profile.id,
+          rows: 24,
+          cols: 80,
+        });
         const tab: TerminalTab = {
           id: crypto.randomUUID(),
-          sessionId: "",
+          sessionId,
           projectId,
           profileId: profile.id,
           defaultTitle: profile.name,
           title: profile.name,
           cwd: "",
-          status: "starting",
+          status: "running",
           createdAt: Date.now(),
           lastActivatedAt: Date.now(),
         };
@@ -644,15 +650,21 @@ export function TerminalWorkspace() {
           profile = await profileService.create(base);
           setProfiles((prev) => [...prev, profile]);
         }
+        const sessionId = await terminalService.create({
+          projectId: activeProjectId,
+          profileId: profile.id,
+          rows: 24,
+          cols: 80,
+        });
         const tab: TerminalTab = {
           id: crypto.randomUUID(),
-          sessionId: "",
+          sessionId,
           projectId: activeProjectId,
           profileId: profile.id,
           defaultTitle: profile.name,
           title: profile.name,
           cwd: "",
-          status: "starting",
+          status: "running",
           createdAt: Date.now(),
           lastActivatedAt: Date.now(),
         };
@@ -683,15 +695,21 @@ export function TerminalWorkspace() {
             template.name,
           ));
         if (!existing) setProfiles((prev) => [...prev, profile]);
+        const sessionId = await terminalService.create({
+          projectId: activeProjectId,
+          profileId: profile.id,
+          rows: 24,
+          cols: 80,
+        });
         const tab: TerminalTab = {
           id: crypto.randomUUID(),
-          sessionId: "",
+          sessionId,
           projectId: activeProjectId,
           profileId: profile.id,
           defaultTitle: profile.name,
           title: profile.name,
           cwd: "",
-          status: "starting",
+          status: "running",
           createdAt: Date.now(),
           lastActivatedAt: Date.now(),
         };
@@ -709,24 +727,20 @@ export function TerminalWorkspace() {
   async function handleRestart(tabId: string) {
     const oldTab = tabsById[tabId];
     if (!oldTab) return;
-
-    // TerminalView owns channel creation, so the cleanest frontend restart
-    // is dropping the old tab (closing its PTY via unmount) and inserting
-    // a new tab that triggers create_terminal.
-    const tab: TerminalTab = {
-      id: crypto.randomUUID(),
-      sessionId: "",
-      projectId: oldTab.projectId,
-      profileId: oldTab.profileId,
-      defaultTitle: oldTab.defaultTitle,
-      title: oldTab.title,
-      cwd: oldTab.cwd,
-      status: "starting",
-      createdAt: Date.now(),
-      lastActivatedAt: Date.now(),
-    };
-    registerTab(tab);
-    removeTab(tabId);
+    setError(null);
+    updateTab(tabId, { status: "starting", exitCode: undefined });
+    try {
+      const sessionId = await terminalService.restart(oldTab.sessionId);
+      updateTab(tabId, {
+        sessionId,
+        status: "running",
+        exitCode: undefined,
+      });
+    } catch (e) {
+      const err = e as { message?: string };
+      updateTab(tabId, { status: "error" });
+      setError(err.message ?? t("Failed to start terminal"));
+    }
   }
 
   const handleCloseTab = useCallback(
@@ -748,14 +762,19 @@ export function TerminalWorkspace() {
       ) {
         return;
       }
-      // TerminalView's unmount cleanup closes the backend session, so we only
-      // need to remove the tab here.
-      removeTab(tabId);
+      if (!tab) return;
+      try {
+        await terminalService.close(tab.sessionId);
+        removeTab(tabId);
+      } catch (e) {
+        const err = e as { message?: string };
+        setError(err.message ?? t("Failed to close terminal"));
+      }
     },
     [confirmCloseTerminal, removeTab, t, tabsById],
   );
 
-  const handleCloseSplitGroup = useCallback(() => {
+  const handleCloseSplitGroup = useCallback(async () => {
     if (!validSplitView) return;
     const groupTabs = validSplitView.tabIds
       .map((tabId) => tabsById[tabId])
@@ -772,7 +791,15 @@ export function TerminalWorkspace() {
     ) {
       return;
     }
-    groupTabs.forEach((tab) => removeTab(tab.id));
+    try {
+      await Promise.all(
+        groupTabs.map((tab) => terminalService.close(tab.sessionId)),
+      );
+      groupTabs.forEach((tab) => removeTab(tab.id));
+    } catch (e) {
+      const err = e as { message?: string };
+      setError(err.message ?? t("Failed to close terminal"));
+    }
   }, [confirmCloseTerminal, removeTab, t, tabsById, validSplitView]);
 
   const selectRelativeTab = useCallback(

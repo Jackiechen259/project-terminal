@@ -11,8 +11,8 @@ const { terminalViewRender } = vi.hoisted(() => ({
 }));
 
 vi.mock("./TerminalView", () => ({
-  TerminalView: (props: { pending: { projectId: string } }) => {
-    terminalViewRender(props.pending.projectId);
+  TerminalView: (props: { sessionId: string }) => {
+    terminalViewRender(props.sessionId);
     return null;
   },
 }));
@@ -68,8 +68,8 @@ describe("TerminalPane", () => {
     );
 
     expect(terminalViewRender.mock.calls).toEqual([
-      ["project-one"],
-      ["project-two"],
+      ["session-one"],
+      ["session-two"],
     ]);
 
     act(() => {
@@ -77,9 +77,9 @@ describe("TerminalPane", () => {
     });
 
     expect(terminalViewRender.mock.calls).toEqual([
-      ["project-one"],
-      ["project-two"],
-      ["project-one"],
+      ["session-one"],
+      ["session-two"],
+      ["session-one"],
     ]);
   });
 });
