@@ -380,6 +380,8 @@ const zhCNWorkspace: Record<string, string> = {
   "Restart tab": "重启标签页",
   "Duplicate profile": "复制配置",
   "Could not duplicate profile.": "无法复制配置。",
+  "A split group can contain at most four panes.":
+    "一个分屏组最多可包含四个窗格。",
   // --- Close confirmations ---
   'Close the running terminal "{name}"?': "关闭正在运行的终端“{name}？”",
   "Close both terminals in this split group?": "关闭此拆分组中的两个终端？",

@@ -3,6 +3,8 @@ export type AppShortcut =
   | { type: "close-terminal" }
   | { type: "next-tab" }
   | { type: "previous-tab" }
+  | { type: "split-pane"; direction: "side-by-side" | "stacked" }
+  | { type: "focus-pane"; delta: 1 | -1 }
   | { type: "select-tab"; index: number }
   | { type: "copy-terminal" };
 
@@ -12,6 +14,18 @@ export function getAppShortcut(event: KeyboardEvent): AppShortcut | null {
   if (!command) return null;
 
   const key = event.key.toLowerCase();
+  if (event.altKey && (key === "arrowright" || key === "arrowdown")) {
+    return { type: "focus-pane", delta: 1 };
+  }
+  if (event.altKey && (key === "arrowleft" || key === "arrowup")) {
+    return { type: "focus-pane", delta: -1 };
+  }
+  if (event.shiftKey && key === "\\") {
+    return { type: "split-pane", direction: "side-by-side" };
+  }
+  if (event.shiftKey && key === "-") {
+    return { type: "split-pane", direction: "stacked" };
+  }
   if (event.shiftKey && key === "t") return { type: "new-terminal" };
   if (event.shiftKey && key === "w") return { type: "close-terminal" };
   if (event.shiftKey && key === "c") return { type: "copy-terminal" };

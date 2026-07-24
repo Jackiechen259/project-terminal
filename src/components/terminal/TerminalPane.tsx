@@ -1,4 +1,4 @@
-import { memo, useCallback } from "react";
+import { memo, useCallback, type CSSProperties } from "react";
 
 import { cn } from "@/lib/utils";
 import { useTerminalStore } from "@/stores/terminalStore";
@@ -10,6 +10,7 @@ interface TerminalPaneProps {
   visible: boolean;
   focused: boolean;
   panePosition: string;
+  style?: CSSProperties;
   onSelect: (tabId: string) => void;
   onRestart: (tabId: string) => void;
 }
@@ -24,6 +25,7 @@ export const TerminalPane = memo(function TerminalPane({
   visible,
   focused,
   panePosition,
+  style,
   onSelect,
   onRestart,
 }: TerminalPaneProps) {
@@ -51,6 +53,7 @@ export const TerminalPane = memo(function TerminalPane({
         "absolute min-h-0 min-w-0",
         visible ? panePosition : "hidden",
       )}
+      style={style}
       onMouseDown={select}
     >
       {tab.sessionId ? (

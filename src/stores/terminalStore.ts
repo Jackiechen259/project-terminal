@@ -14,6 +14,16 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+import {
+  closePane,
+  createSplitView,
+  focusRelativePane,
+  focusedPane,
+  paneLeaves,
+  replacePaneTab,
+  resizePaneSplit,
+  splitPane,
+} from "@/lib/paneLayout";
 import type {
   ProjectTabGroup,
   TerminalSplitDirection,
@@ -56,7 +66,20 @@ export interface TerminalStoreState {
     direction: TerminalSplitDirection,
   ) => void;
 
-  replaceSplitTab: (projectId: string, paneIndex: 0 | 1, tabId: string) => void;
+  splitPane: (
+    projectId: string,
+    targetPaneId: string,
+    tabId: string,
+    direction: TerminalSplitDirection,
+  ) => void;
+
+  replaceSplitTab: (projectId: string, paneId: string, tabId: string) => void;
+
+  focusSplitPane: (projectId: string, paneId: string) => void;
+
+  focusRelativePane: (projectId: string, delta: 1 | -1) => void;
+
+  resizeSplit: (projectId: string, splitId: string, ratio: number) => void;
 
   clearSplitView: (projectId: string) => void;
 
@@ -153,15 +176,19 @@ export const useTerminalStore = create<TerminalStoreState>()(
         : group.activeTabId;
 
     const splitView = get().splitViewsByProjectId?.[tab.projectId];
-    const splitIncludesTab = splitView?.tabIds.includes(tabId) ?? false;
-    const otherSplitTabId = splitIncludesTab
-      ? splitView!.tabIds[splitView!.tabIds[0] === tabId ? 1 : 0]
+    const splitPane = splitView
+      ? paneLeaves(splitView.root).find((pane) => pane.tabId === tabId)
+      : undefined;
+    const nextSplitView =
+      splitView && splitPane ? closePane(splitView, splitPane.paneId) : splitView;
+    const otherSplitTabId = nextSplitView
+      ? focusedPane(nextSplitView)?.tabId
       : null;
     const updatedGroup: ProjectTabGroup = {
       ...group,
       tabIds: remainingIds,
       activeTabId:
-        splitIncludesTab &&
+        splitPane &&
         otherSplitTabId &&
         remainingIds.includes(otherSplitTabId)
           ? otherSplitTabId
@@ -172,7 +199,13 @@ export const useTerminalStore = create<TerminalStoreState>()(
     delete nextTabsById[tabId];
 
     const splitViewsByProjectId = { ...(get().splitViewsByProjectId ?? {}) };
-    if (splitIncludesTab) delete splitViewsByProjectId[tab.projectId];
+    if (splitPane) {
+      if (nextSplitView) {
+        splitViewsByProjectId[tab.projectId] = nextSplitView;
+      } else {
+        delete splitViewsByProjectId[tab.projectId];
+      }
+    }
 
     set({
       tabsById: nextTabsById,
@@ -240,27 +273,69 @@ export const useTerminalStore = create<TerminalStoreState>()(
     set({
       splitViewsByProjectId: {
         ...(get().splitViewsByProjectId ?? {}),
-        [projectId]: { direction, tabIds },
+        [projectId]: createSplitView(tabIds[0], tabIds[1], direction),
       },
     });
   },
 
-  replaceSplitTab: (projectId, paneIndex, tabId) => {
+  splitPane: (projectId, targetPaneId, tabId, direction) => {
     const splitView = get().splitViewsByProjectId?.[projectId];
     const group = get().tabGroupsByProjectId[projectId];
     if (!splitView || !group?.tabIds.includes(tabId)) return;
+    set({
+      splitViewsByProjectId: {
+        ...(get().splitViewsByProjectId ?? {}),
+        [projectId]: splitPane(splitView, targetPaneId, tabId, direction),
+      },
+    });
+  },
 
-    const otherIndex: 0 | 1 = paneIndex === 0 ? 1 : 0;
-    const nextTabIds = [...splitView.tabIds] as [string, string];
-    if (nextTabIds[otherIndex] === tabId) {
-      [nextTabIds[0], nextTabIds[1]] = [nextTabIds[1], nextTabIds[0]];
-    } else {
-      nextTabIds[paneIndex] = tabId;
+  replaceSplitTab: (projectId, paneId, tabId) => {
+    const splitView = get().splitViewsByProjectId?.[projectId];
+    const group = get().tabGroupsByProjectId[projectId];
+    if (!splitView || !group?.tabIds.includes(tabId)) return;
+    set({
+      splitViewsByProjectId: {
+        ...(get().splitViewsByProjectId ?? {}),
+        [projectId]: replacePaneTab(splitView, paneId, tabId),
+      },
+    });
+  },
+
+  focusSplitPane: (projectId, paneId) => {
+    const splitView = get().splitViewsByProjectId?.[projectId];
+    if (
+      !splitView ||
+      !paneLeaves(splitView.root).some((pane) => pane.paneId === paneId)
+    ) {
+      return;
     }
     set({
       splitViewsByProjectId: {
         ...(get().splitViewsByProjectId ?? {}),
-        [projectId]: { ...splitView, tabIds: nextTabIds },
+        [projectId]: { ...splitView, focusedPaneId: paneId },
+      },
+    });
+  },
+
+  focusRelativePane: (projectId, delta) => {
+    const splitView = get().splitViewsByProjectId?.[projectId];
+    if (!splitView) return;
+    set({
+      splitViewsByProjectId: {
+        ...(get().splitViewsByProjectId ?? {}),
+        [projectId]: focusRelativePane(splitView, delta),
+      },
+    });
+  },
+
+  resizeSplit: (projectId, splitId, ratio) => {
+    const splitView = get().splitViewsByProjectId?.[projectId];
+    if (!splitView) return;
+    set({
+      splitViewsByProjectId: {
+        ...(get().splitViewsByProjectId ?? {}),
+        [projectId]: resizePaneSplit(splitView, splitId, ratio),
       },
     });
   },
@@ -310,10 +385,35 @@ export const useTerminalStore = create<TerminalStoreState>()(
             },
           ]),
         );
+        const splitViewsByProjectId = Object.fromEntries(
+          Object.entries(saved.splitViewsByProjectId ?? {}).flatMap(
+            ([projectId, rawView]) => {
+              const view = rawView as TerminalSplitView & {
+                direction?: TerminalSplitDirection;
+                tabIds?: [string, string];
+              };
+              if (view.root) return [[projectId, view]];
+              if (view.tabIds?.length === 2 && view.direction) {
+                return [
+                  [
+                    projectId,
+                    createSplitView(
+                      view.tabIds[0],
+                      view.tabIds[1],
+                      view.direction,
+                    ),
+                  ],
+                ];
+              }
+              return [];
+            },
+          ),
+        );
         return {
           ...current,
           ...saved,
           tabsById,
+          splitViewsByProjectId,
         };
       },
     },

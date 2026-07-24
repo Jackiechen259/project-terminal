@@ -4,6 +4,7 @@ import {
   TERMINAL_WORKSPACE_STORAGE_KEY,
   useTerminalStore,
 } from "@/stores/terminalStore";
+import { paneLeaves } from "@/lib/paneLayout";
 import type { TerminalTab } from "@/types";
 
 function makeTab(id: string, projectId: string, title = id): TerminalTab {
@@ -202,12 +203,16 @@ describe("terminalStore", () => {
       registerTab(makeTab("t2", "p1"));
       registerTab(makeTab("t3", "p1"));
       setSplitView("p1", ["t1", "t2"], "side-by-side");
-      replaceSplitTab("p1", 1, "t3");
+      const paneId = paneLeaves(
+        useTerminalStore.getState().splitViewsByProjectId.p1.root,
+      )[1].paneId;
+      replaceSplitTab("p1", paneId, "t3");
 
-      expect(useTerminalStore.getState().splitViewsByProjectId.p1).toEqual({
-        direction: "side-by-side",
-        tabIds: ["t1", "t3"],
-      });
+      expect(
+        paneLeaves(
+          useTerminalStore.getState().splitViewsByProjectId.p1.root,
+        ).map((pane) => pane.tabId),
+      ).toEqual(["t1", "t3"]);
     });
 
     it("collapses a split when one of its terminals is closed", () => {

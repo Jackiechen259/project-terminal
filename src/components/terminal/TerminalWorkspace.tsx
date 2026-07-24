@@ -36,6 +36,13 @@ import { useDragPreviewPosition } from "@/lib/useDragPreviewPosition";
 import { joinContextMenuSections } from "@/components/ui/context-menu-items";
 import { dispatchAppCommand, listenForAppCommands } from "@/lib/appCommands";
 import { getAppShortcut, isBrowserShortcut } from "@/lib/keyboardShortcuts";
+import {
+  calculatePaneLayout,
+  focusedPane,
+  MAX_TERMINAL_PANES,
+  paneLeaves,
+  paneTabIds,
+} from "@/lib/paneLayout";
 import { useTranslation } from "@/i18n";
 import {
   BUILT_IN_PROFILE_PRESETS,
@@ -98,7 +105,11 @@ export function TerminalWorkspace() {
   const splitViews = useTerminalStore((s) => s.splitViewsByProjectId);
   const setActiveTab = useTerminalStore((s) => s.setActiveTab);
   const setSplitView = useTerminalStore((s) => s.setSplitView);
+  const addSplitPane = useTerminalStore((s) => s.splitPane);
   const replaceSplitTab = useTerminalStore((s) => s.replaceSplitTab);
+  const focusSplitPane = useTerminalStore((s) => s.focusSplitPane);
+  const focusRelativePane = useTerminalStore((s) => s.focusRelativePane);
+  const resizeSplit = useTerminalStore((s) => s.resizeSplit);
   const clearSplitView = useTerminalStore((s) => s.clearSplitView);
   const reorderTab = useTerminalStore((s) => s.reorderTab);
   const registerTab = useTerminalStore((s) => s.registerTab);
@@ -111,7 +122,6 @@ export function TerminalWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<TerminalProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState("");
-  const [activePaneIndex, setActivePaneIndex] = useState<0 | 1>(0);
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
   const [dropZone, setDropZone] = useState<TerminalDropZone | null>(null);
   const [tabDropTarget, setTabDropTarget] = useState<TabDropTarget | null>(
@@ -164,16 +174,17 @@ export function TerminalWorkspace() {
   const tabIds = useMemo(() => group?.tabIds ?? [], [group]);
   const activeTabId = group?.activeTabId ?? null;
   const splitView = activeProjectId ? splitViews[activeProjectId] : undefined;
+  const splitTabIds = paneTabIds(splitView);
   const validSplitView =
     splitView &&
-    splitView.tabIds[0] !== splitView.tabIds[1] &&
-    splitView.tabIds.every((id) => tabIds.includes(id))
+    splitTabIds.length >= 2 &&
+    splitTabIds.every((id) => tabIds.includes(id))
       ? splitView
       : undefined;
-
-  useEffect(() => {
-    setActivePaneIndex(0);
-  }, [activeProjectId]);
+  const focusedSplitPane = focusedPane(validSplitView);
+  const paneLayout = validSplitView
+    ? calculatePaneLayout(validSplitView.root)
+    : undefined;
 
   useEffect(() => {
     if (!activeTabId) return;
@@ -234,28 +245,44 @@ export function TerminalWorkspace() {
   const handleSplitTerminal = useCallback(
     async (direction: TerminalSplitDirection) => {
       if (!activeProjectId) return;
-      const sourceTabId =
-        validSplitView?.tabIds[activePaneIndex] ?? activeTabId;
+      const sourceTabId = focusedSplitPane?.tabId ?? activeTabId;
       if (!sourceTabId) return;
+      if (
+        validSplitView &&
+        paneLeaves(validSplitView.root).length >= MAX_TERMINAL_PANES
+      ) {
+        setError(t("A split group can contain at most four panes."));
+        return;
+      }
 
       const newTabId = await handleNewTerminal(
         activeProjectId,
         selectedProfileId,
       );
       if (!newTabId) return;
-      setSplitView(activeProjectId, [sourceTabId, newTabId], direction);
-      setActivePaneIndex(1);
+      if (validSplitView && focusedSplitPane) {
+        addSplitPane(
+          activeProjectId,
+          focusedSplitPane.paneId,
+          newTabId,
+          direction,
+        );
+      } else {
+        setSplitView(activeProjectId, [sourceTabId, newTabId], direction);
+      }
       setActiveTab(activeProjectId, newTabId);
     },
     [
-      activePaneIndex,
+      addSplitPane,
       activeProjectId,
       activeTabId,
       handleNewTerminal,
       selectedProfileId,
       setActiveTab,
       setSplitView,
+      t,
       validSplitView,
+      focusedSplitPane,
     ],
   );
 
@@ -263,18 +290,23 @@ export function TerminalWorkspace() {
     (tabId: string) => {
       if (!activeProjectId) return;
       if (validSplitView) {
-        const paneIndex = validSplitView.tabIds.indexOf(tabId);
-        if (paneIndex === 0 || paneIndex === 1) {
-          setActivePaneIndex(paneIndex);
+        const pane = paneLeaves(validSplitView.root).find(
+          (item) => item.tabId === tabId,
+        );
+        if (pane) {
+          focusSplitPane(activeProjectId, pane.paneId);
         } else {
-          replaceSplitTab(activeProjectId, activePaneIndex, tabId);
+          const focused = focusedPane(validSplitView);
+          if (focused) {
+            replaceSplitTab(activeProjectId, focused.paneId, tabId);
+          }
         }
       }
       setActiveTab(activeProjectId, tabId);
     },
     [
-      activePaneIndex,
       activeProjectId,
+      focusSplitPane,
       replaceSplitTab,
       setActiveTab,
       validSplitView,
@@ -294,11 +326,11 @@ export function TerminalWorkspace() {
   const getDropAnchorTabId = useCallback(
     (sourceTabId: string) => {
       const focusedTabId =
-        validSplitView?.tabIds[activePaneIndex] ?? activeTabId;
+        focusedPane(validSplitView)?.tabId ?? activeTabId;
       if (focusedTabId && focusedTabId !== sourceTabId) return focusedTabId;
       return tabIds.find((tabId) => tabId !== sourceTabId) ?? null;
     },
-    [activePaneIndex, activeTabId, tabIds, validSplitView],
+    [activeTabId, tabIds, validSplitView],
   );
 
   const canSplitWithTab = useCallback(
@@ -482,7 +514,7 @@ export function TerminalWorkspace() {
         event.clientY >= splitGroupRect.top &&
         event.clientY <= splitGroupRect.bottom;
       if (activeProjectId && targetTabDrop) {
-        if (validSplitView?.tabIds.includes(sourceTabId)) {
+        if (paneTabIds(validSplitView).includes(sourceTabId)) {
           clearSplitView(activeProjectId);
         }
         reorderTab(
@@ -508,11 +540,10 @@ export function TerminalWorkspace() {
             ? "side-by-side"
             : "stacked";
         setSplitView(activeProjectId, tabPair, direction);
-        setActivePaneIndex(sourceFirst ? 0 : 1);
         setActiveTab(activeProjectId, sourceTabId);
       } else if (
         activeProjectId &&
-        validSplitView?.tabIds.includes(sourceTabId) &&
+        paneTabIds(validSplitView).includes(sourceTabId) &&
         releasedInTabList &&
         !releasedInSplitGroup
       ) {
@@ -791,7 +822,7 @@ export function TerminalWorkspace() {
 
   const handleCloseSplitGroup = useCallback(async () => {
     if (!validSplitView) return;
-    const groupTabs = validSplitView.tabIds
+    const groupTabs = paneTabIds(validSplitView)
       .map((tabId) => tabsById[tabId])
       .filter((tab): tab is TerminalTab => Boolean(tab));
     const hasRunningTerminal = groupTabs.some((tab) =>
@@ -891,6 +922,20 @@ export function TerminalWorkspace() {
         case "previous-tab":
           selectRelativeTab(-1);
           break;
+        case "split-pane":
+          void handleSplitTerminal(shortcut.direction);
+          break;
+        case "focus-pane":
+          if (activeProjectId && validSplitView) {
+            focusRelativePane(activeProjectId, shortcut.delta);
+            const next = focusedPane(
+              useTerminalStore.getState().splitViewsByProjectId[
+                activeProjectId
+              ],
+            );
+            if (next) setActiveTab(activeProjectId, next.tabId);
+          }
+          break;
         case "select-tab": {
           const tabId = tabIds[shortcut.index];
           if (activeProjectId && tabId) handleSelectTab(tabId);
@@ -914,8 +959,45 @@ export function TerminalWorkspace() {
     handleCloseTab,
     handleNewTerminal,
     handleSelectTab,
+    handleSplitTerminal,
+    focusRelativePane,
+    setActiveTab,
     selectRelativeTab,
+    validSplitView,
   ]);
+
+  const handleSplitResizeStart = useCallback(
+    (
+      event: ReactPointerEvent<HTMLDivElement>,
+      split: NonNullable<typeof paneLayout>["splits"][number],
+    ) => {
+      if (!activeProjectId || !workspaceRef.current) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const workspaceBounds = workspaceRef.current.getBoundingClientRect();
+      const onMove = (moveEvent: PointerEvent) => {
+        const splitLeft =
+          workspaceBounds.left +
+          (workspaceBounds.width * split.left) / 100;
+        const splitTop =
+          workspaceBounds.top + (workspaceBounds.height * split.top) / 100;
+        const splitWidth = (workspaceBounds.width * split.width) / 100;
+        const splitHeight = (workspaceBounds.height * split.height) / 100;
+        const ratio =
+          split.direction === "horizontal"
+            ? (moveEvent.clientX - splitLeft) / splitWidth
+            : (moveEvent.clientY - splitTop) / splitHeight;
+        resizeSplit(activeProjectId, split.paneId, ratio);
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp, { once: true });
+    },
+    [activeProjectId, resizeSplit],
+  );
 
   const hasAnyTab = Object.keys(tabsById).length > 0;
   const selectTerminalPaneRef = useRef(handleSelectTab);
@@ -1148,7 +1230,7 @@ export function TerminalWorkspace() {
                   <span className="px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                     {t("Split")}
                   </span>
-                  {validSplitView.tabIds.map(renderTerminalTab)}
+                  {paneTabIds(validSplitView).map(renderTerminalTab)}
                   <button
                     type="button"
                     className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-destructive/15 hover:text-destructive"
@@ -1165,7 +1247,7 @@ export function TerminalWorkspace() {
                 </div>
               ) : null}
               {tabIds
-                .filter((id) => !validSplitView?.tabIds.includes(id))
+                .filter((id) => !paneTabIds(validSplitView).includes(id))
                 .map(renderTerminalTab)}
             </>
           )}
@@ -1277,20 +1359,11 @@ export function TerminalWorkspace() {
               change never disposes/recreates an xterm instance or its PTY.
             */}
             {Object.values(tabsById).map((tab) => {
-              const paneIndex = validSplitView?.tabIds.indexOf(tab.id) ?? -1;
-              const isSplitPane =
-                tab.projectId === activeProjectId && paneIndex !== -1;
+              const bounds = paneLayout?.panes.find(
+                (pane) => pane.tabId === tab.id,
+              );
+              const isSplitPane = tab.projectId === activeProjectId && Boolean(bounds);
               const visible = isSplitPane || tab.id === activeTabId;
-              const panePosition =
-                paneIndex === 0
-                  ? validSplitView?.direction === "side-by-side"
-                    ? "left-0 top-0 h-full w-1/2"
-                    : "left-0 right-0 top-0 h-1/2"
-                  : paneIndex === 1
-                    ? validSplitView?.direction === "side-by-side"
-                      ? "right-0 top-0 h-full w-1/2 border-l border-border"
-                      : "bottom-0 left-0 right-0 h-1/2 border-t border-border"
-                    : "inset-0";
               return (
                 <TerminalPane
                   key={tab.id}
@@ -1298,12 +1371,54 @@ export function TerminalWorkspace() {
                   visible={visible}
                   focused={
                     isSplitPane
-                      ? activePaneIndex === paneIndex
+                      ? focusedSplitPane?.paneId === bounds?.paneId
                       : tab.id === activeTabId
                   }
-                  panePosition={panePosition}
+                  panePosition={bounds ? "" : "inset-0"}
+                  style={
+                    bounds
+                      ? {
+                          left: `${bounds.left}%`,
+                          top: `${bounds.top}%`,
+                          width: `${bounds.width}%`,
+                          height: `${bounds.height}%`,
+                        }
+                      : undefined
+                  }
                   onSelect={selectTerminalPane}
                   onRestart={(tabId) => void handleRestart(tabId)}
+                />
+              );
+            })}
+            {paneLayout?.splits.map((split) => {
+              const horizontal = split.direction === "horizontal";
+              const position = horizontal
+                ? {
+                    left: `${split.left + split.width * split.ratio}%`,
+                    top: `${split.top}%`,
+                    height: `${split.height}%`,
+                  }
+                : {
+                    left: `${split.left}%`,
+                    top: `${split.top + split.height * split.ratio}%`,
+                    width: `${split.width}%`,
+                  };
+              return (
+                <div
+                  key={split.paneId}
+                  role="separator"
+                  aria-orientation={horizontal ? "vertical" : "horizontal"}
+                  aria-valuenow={Math.round(split.ratio * 100)}
+                  className={cn(
+                    "absolute z-20 bg-border/80 transition-colors hover:bg-primary",
+                    horizontal
+                      ? "-ml-0.5 w-1 cursor-col-resize"
+                      : "-mt-0.5 h-1 cursor-row-resize",
+                  )}
+                  style={position}
+                  onPointerDown={(event) =>
+                    handleSplitResizeStart(event, split)
+                  }
                 />
               );
             })}

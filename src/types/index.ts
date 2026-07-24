@@ -214,13 +214,28 @@ export interface ProjectTabGroup {
   activeTabId: string | null;
 }
 
-/** The two layouts supported by a terminal split view. */
+/** User-facing split direction. */
 export type TerminalSplitDirection = "side-by-side" | "stacked";
 
-/** A project's optional two-pane terminal view. */
+export type PaneNode =
+  | {
+      type: "terminal";
+      paneId: string;
+      tabId: string;
+    }
+  | {
+      type: "split";
+      paneId: string;
+      direction: "horizontal" | "vertical";
+      ratio: number;
+      first: PaneNode;
+      second: PaneNode;
+    };
+
+/** A project's persisted recursive terminal pane layout (maximum 4 leaves). */
 export interface TerminalSplitView {
-  direction: TerminalSplitDirection;
-  tabIds: [string, string];
+  root: PaneNode;
+  focusedPaneId: string;
 }
 
 /**
