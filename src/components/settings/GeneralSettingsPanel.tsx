@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { RefreshCw, RotateCcw } from "lucide-react";
+import { Copy, Eye, EyeOff, RefreshCw, RotateCcw, ShieldCheck } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
 import { requestUpdateCheck } from "@/services/updater";
+import { daemonService } from "@/services";
 import {
   DEFAULT_GENERAL_SETTINGS,
   useSettingsStore,
@@ -42,6 +43,10 @@ export function GeneralSettingsPanel() {
   const update = useSettingsStore((state) => state.updateGeneralSettings);
   const reset = useSettingsStore((state) => state.resetGeneralSettings);
   const [version, setVersion] = useState("");
+  const [remoteInfo, setRemoteInfo] = useState<Awaited<
+    ReturnType<typeof daemonService.remoteAccessInfo>
+  > | null>(null);
+  const [showRemoteToken, setShowRemoteToken] = useState(false);
   useEffect(() => {
     void getVersion().then(setVersion);
   }, []);
@@ -249,6 +254,67 @@ export function GeneralSettingsPanel() {
             }
           />
         </SettingRow>
+      </SettingsGroup>
+
+      <SettingsGroup
+        title={t("Remote access")}
+        description={t(
+          "The gateway binds to loopback by default. Use Tailscale or an HTTPS reverse proxy for other devices.",
+        )}
+      >
+        <SettingRow
+          title={t("Mobile terminal gateway")}
+          description={
+            remoteInfo
+              ? `${remoteInfo.url} · ${remoteInfo.transportSecurity}`
+              : t("Access details are kept in Session Host memory only.")
+          }
+        >
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void daemonService.remoteAccessInfo().then(setRemoteInfo)}
+          >
+            <ShieldCheck className="h-4 w-4" />
+            {remoteInfo ? t("Refresh") : t("Show access")}
+          </Button>
+        </SettingRow>
+        {remoteInfo ? (
+          <SettingRow
+            title={t("Access token")}
+            description={t(
+              "This token is not saved to disk. Anyone holding it can view remote sessions.",
+            )}
+          >
+            <div className="flex max-w-sm gap-1">
+              <input
+                readOnly
+                aria-label={t("Remote access token")}
+                type={showRemoteToken ? "text" : "password"}
+                value={remoteInfo.token}
+                className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-2 font-mono text-xs"
+              />
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-9 w-9"
+                aria-label={t("Show or hide token")}
+                onClick={() => setShowRemoteToken((visible) => !visible)}
+              >
+                {showRemoteToken ? <EyeOff /> : <Eye />}
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-9 w-9"
+                aria-label={t("Copy token")}
+                onClick={() => void navigator.clipboard.writeText(remoteInfo.token)}
+              >
+                <Copy />
+              </Button>
+            </div>
+          </SettingRow>
+        ) : null}
       </SettingsGroup>
 
       <SettingsGroup

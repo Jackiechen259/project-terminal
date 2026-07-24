@@ -161,6 +161,7 @@ pub fn run() {
                 commands::daemon::daemon_status,
                 commands::daemon::reconnect_daemon,
                 commands::daemon::daemon_list_sessions,
+                commands::daemon::remote_access_info,
                 exit_application,
                 // Project CRUD (plan §12.1)
                 commands::project::list_projects,

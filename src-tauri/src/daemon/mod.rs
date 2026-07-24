@@ -10,6 +10,8 @@ use crate::error::{AppError, AppResult};
 use crate::storage;
 use crate::terminal::{SessionSpawn, TerminalManager};
 
+mod remote;
+use remote::RemoteGateway;
 #[cfg(windows)]
 pub const DAEMON_ENDPOINT: &str = r"\\.\pipe\project-terminal";
 
@@ -88,6 +90,7 @@ pub enum DaemonRequest {
     Snapshot {
         session_id: String,
     },
+    RemoteInfo,
     Shutdown,
 }
 
@@ -118,6 +121,7 @@ struct DaemonServer {
     started_at: DateTime<Utc>,
     recovered_as_failed: Vec<serde_json::Value>,
     shutdown: tokio::sync::Notify,
+    remote: RemoteGateway,
 }
 
 impl DaemonServer {
@@ -136,7 +140,7 @@ impl DaemonServer {
                 .into_iter()
                 .map(|mut session| {
                     if let Some(object) = session.as_object_mut() {
-                        object.insert("status".into(), serde_json::json!("failed"));
+                        object.insert("status".into(), serde_json::json!("error"));
                         object.insert(
                             "exitReason".into(),
                             serde_json::json!(
@@ -153,6 +157,7 @@ impl DaemonServer {
             started_at: Utc::now(),
             recovered_as_failed,
             shutdown: tokio::sync::Notify::new(),
+            remote: RemoteGateway::new(dirs),
         }
     }
 
@@ -224,6 +229,7 @@ impl DaemonServer {
                     "truncated": subscription.snapshot.truncated,
                 }))
             }
+            DaemonRequest::RemoteInfo => Ok(self.remote.info()),
             DaemonRequest::Shutdown => {
                 self.manager.close_all();
                 self.persist()?;
@@ -297,6 +303,7 @@ async fn run_windows_server(server: Arc<DaemonServer>) -> AppResult<()> {
         if !checkpoint_started {
             server.persist()?;
             spawn_state_checkpoint(server.clone());
+            server.remote.start(server.clone());
             checkpoint_started = true;
         }
         tokio::select! {
@@ -327,6 +334,7 @@ async fn run_unix_server(server: Arc<DaemonServer>, path: PathBuf) -> AppResult<
     let listener = UnixListener::bind(&path).map_err(AppError::Io)?;
     server.persist()?;
     spawn_state_checkpoint(server.clone());
+    server.remote.start(server.clone());
     loop {
         tokio::select! {
             accepted = listener.accept() => {

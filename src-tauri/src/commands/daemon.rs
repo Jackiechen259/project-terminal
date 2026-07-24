@@ -115,3 +115,23 @@ pub async fn daemon_list_sessions() -> Result<serde_json::Value, String> {
             .unwrap_or_else(|| "Session Host request failed".into()))
     }
 }
+
+#[tauri::command]
+pub async fn remote_access_info() -> Result<serde_json::Value, String> {
+    let status = ensure_running().await;
+    if !status.connected {
+        return Err(status
+            .error
+            .unwrap_or_else(|| "Session Host is unavailable".into()));
+    }
+    let response = daemon::request(DaemonRequest::RemoteInfo)
+        .await
+        .map_err(|error| error.to_string())?;
+    if response.ok {
+        Ok(response.data.unwrap_or(serde_json::Value::Null))
+    } else {
+        Err(response
+            .error
+            .unwrap_or_else(|| "Remote gateway information is unavailable".into()))
+    }
+}

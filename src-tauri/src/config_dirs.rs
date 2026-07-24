@@ -61,6 +61,9 @@ impl ConfigDirs {
     pub fn daemon_state_path(&self) -> PathBuf {
         self.root.join("daemon-state.json")
     }
+    pub fn remote_audit_path(&self) -> PathBuf {
+        self.root.join("remote-audit.jsonl")
+    }
     #[cfg(unix)]
     pub fn daemon_socket_path(&self) -> PathBuf {
         std::env::var_os("XDG_RUNTIME_DIR")
@@ -118,6 +121,10 @@ mod tests {
             .daemon_state_path()
             .to_string_lossy()
             .ends_with("daemon-state.json"));
+        assert!(dirs
+            .remote_audit_path()
+            .to_string_lossy()
+            .ends_with("remote-audit.jsonl"));
         assert!(dirs
             .settings_path()
             .to_string_lossy()

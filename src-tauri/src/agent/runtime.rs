@@ -91,8 +91,19 @@ impl AgentState {
         let Some(data) = response.data else {
             return;
         };
+        let mut remote_values = data
+            .get("sessions")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        remote_values.extend(
+            data.get("recoveredAsFailed")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+        );
         let Ok(remote_sessions) = serde_json::from_value::<Vec<crate::terminal::SessionInfo>>(
-            data.get("sessions").cloned().unwrap_or_default(),
+            serde_json::Value::Array(remote_values),
         ) else {
             return;
         };

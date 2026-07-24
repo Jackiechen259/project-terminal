@@ -396,6 +396,19 @@ const zhCNWorkspace: Record<string, string> = {
     "请选择是否让正在运行的终端和智能体继续工作。",
   "Hide to tray and keep running": "隐藏到系统托盘并继续运行",
   "Stop all terminals and quit": "停止所有终端并退出",
+  "Remote access": "远程访问",
+  "The gateway binds to loopback by default. Use Tailscale or an HTTPS reverse proxy for other devices.":
+    "网关默认仅监听本机。其他设备请使用 Tailscale 或 HTTPS 反向代理。",
+  "Mobile terminal gateway": "手机终端网关",
+  "Access details are kept in Session Host memory only.":
+    "访问凭据仅保存在会话主机内存中。",
+  "Show access": "显示访问方式",
+  "Access token": "访问令牌",
+  "This token is not saved to disk. Anyone holding it can view remote sessions.":
+    "此令牌不会写入磁盘；持有者可以查看远程会话。",
+  "Remote access token": "远程访问令牌",
+  "Show or hide token": "显示或隐藏令牌",
+  "Copy token": "复制令牌",
   // --- Close confirmations ---
   'Close the running terminal "{name}"?': "关闭正在运行的终端“{name}？”",
   "Close both terminals in this split group?": "关闭此拆分组中的两个终端？",

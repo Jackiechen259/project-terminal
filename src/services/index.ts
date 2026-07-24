@@ -409,4 +409,12 @@ export const daemonService = {
         SessionInfo & { exitReason?: string }
       >;
     }>("daemon_list_sessions"),
+  remoteAccessInfo: () =>
+    invokeOrThrow<{
+      enabled: boolean;
+      bind: string;
+      url: string;
+      token: string;
+      transportSecurity: "loopback" | "tailscale" | "tls-terminated";
+    }>("remote_access_info"),
 };
