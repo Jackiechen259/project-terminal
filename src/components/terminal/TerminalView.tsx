@@ -1,8 +1,12 @@
-import { memo, useCallback, useEffect, useRef } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
+import { SerializeAddon } from "@xterm/addon-serialize";
 import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
+import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 
 import { useTranslation } from "@/i18n";
 import { listenForAppCommands } from "@/lib/appCommands";
@@ -51,15 +55,21 @@ export const TerminalView = memo(function TerminalView({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const searchRef = useRef<SearchAddon | null>(null);
   const resizeQueueRef = useRef<TerminalResizeQueue | null>(null);
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reportedExitRef = useRef(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const onTitleChangeRef = useRef(onTitleChange);
   const onExitRef = useRef(onExit);
   const { t } = useTranslation();
   const tRef = useRef(t);
   tRef.current = t;
   const terminalFontSize = useSettingsStore((state) => state.terminalFontSize);
+  const terminalScrollbackLines = useSettingsStore(
+    (state) => state.terminalScrollbackLines,
+  );
   const cursorBlink = useSettingsStore((state) => state.cursorBlink);
   const theme = useSettingsStore((state) => state.theme);
 
@@ -67,6 +77,28 @@ export const TerminalView = memo(function TerminalView({
     const selection = termRef.current?.getSelection() ?? "";
     if (selection) await navigator.clipboard.writeText(selection);
     termRef.current?.focus();
+  }, []);
+
+  const pasteClipboard = useCallback(async () => {
+    const term = termRef.current;
+    if (!term) return;
+    const text = await terminalService.readClipboardText();
+    if (!text) return;
+    const lineCount = text.split(/\r\n|\r|\n/).length;
+    const requiresConfirmation = text.length >= 10_000 || lineCount > 20;
+    if (
+      requiresConfirmation &&
+      !window.confirm(
+        tRef.current(
+          "Paste {characters} characters across {lines} lines into the terminal?",
+          { characters: text.length, lines: lineCount },
+        ),
+      )
+    ) {
+      return;
+    }
+    term.paste(text);
+    term.focus();
   }, []);
 
   const handleContextMenu = useCallback(
@@ -84,14 +116,9 @@ export const TerminalView = memo(function TerminalView({
 
       // Read through the native process instead of the Web Clipboard API: the
       // latter asks the user to allow each paste in the WebView.
-      void terminalService
-        .readClipboardText()
-        .then((text) => {
-          if (text) term.paste(text);
-        })
-        .finally(() => term.focus());
+      void pasteClipboard().finally(() => term.focus());
     },
-    [copySelection],
+    [copySelection, pasteClipboard],
   );
 
   // The terminal is intentionally not recreated when a parent callback gets
@@ -112,13 +139,52 @@ export const TerminalView = memo(function TerminalView({
   }, [focused, copySelection]);
 
   useEffect(() => {
+    if (!focused) return;
+    const handleSearchShortcut = (event: KeyboardEvent) => {
+      if (
+        event.ctrlKey &&
+        event.shiftKey &&
+        event.key.toLowerCase() === "f"
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        setSearchOpen(true);
+      } else if (event.key === "Escape" && searchOpen) {
+        event.preventDefault();
+        setSearchOpen(false);
+        searchRef.current?.clearDecorations();
+        termRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", handleSearchShortcut, {
+      capture: true,
+    });
+    return () =>
+      window.removeEventListener("keydown", handleSearchShortcut, {
+        capture: true,
+      });
+  }, [focused, searchOpen]);
+
+  const findNext = useCallback(() => {
+    if (searchQuery) {
+      searchRef.current?.findNext(searchQuery, { caseSensitive: false });
+    }
+  }, [searchQuery]);
+
+  const findPrevious = useCallback(() => {
+    if (searchQuery) {
+      searchRef.current?.findPrevious(searchQuery, { caseSensitive: false });
+    }
+  }, [searchQuery]);
+
+  useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     const term = new Terminal({
       allowProposedApi: true,
       cursorBlink,
       cursorStyle: "block",
-      scrollback: 10_000,
+      scrollback: terminalScrollbackLines,
       fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, monospace',
       fontSize: terminalFontSize,
       lineHeight: 1.2,
@@ -128,12 +194,34 @@ export const TerminalView = memo(function TerminalView({
       theme: getTerminalTheme(theme),
     });
     const fit = new FitAddon();
+    const search = new SearchAddon();
+    const serialize = new SerializeAddon();
     term.loadAddon(fit);
+    term.loadAddon(search);
+    term.loadAddon(serialize);
     term.loadAddon(new UnicodeGraphemesAddon());
     term.loadAddon(new WebLinksAddon());
     term.open(container);
+    let webgl: WebglAddon | null = null;
+    try {
+      webgl = new WebglAddon();
+      webgl.onContextLoss(() => {
+        webgl?.dispose();
+        webgl = null;
+      });
+      term.loadAddon(webgl);
+    } catch {
+      webgl?.dispose();
+      webgl = null;
+    }
     termRef.current = term;
     fitRef.current = fit;
+    searchRef.current = search;
+    const snapshotKey = `project-terminal.snapshot.${sessionId}`;
+    const previousSnapshot = sessionStorage.getItem(snapshotKey);
+    if (previousSnapshot) {
+      term.write(previousSnapshot);
+    }
     const resizeQueue = new TerminalResizeQueue(terminalService.resize);
     resizeQueueRef.current = resizeQueue;
 
@@ -211,6 +299,18 @@ export const TerminalView = memo(function TerminalView({
       (handle) => window.clearTimeout(handle),
     );
     const disposable = term.onData((data) => inputQueue.send(data));
+    term.attachCustomKeyEventHandler((event) => {
+      if (
+        event.type === "keydown" &&
+        event.ctrlKey &&
+        !event.altKey &&
+        event.key.toLowerCase() === "v"
+      ) {
+        void pasteClipboard();
+        return false;
+      }
+      return true;
+    });
     const titleDisposable = term.onTitleChange((nextTitle) => {
       const title = resolveTerminalTabTitle(nextTitle, defaultTitle);
       if (title) onTitleChangeRef.current?.(title);
@@ -267,10 +367,14 @@ export const TerminalView = memo(function TerminalView({
           );
         }
         if (attachment.scrollback) {
+          if (previousSnapshot) {
+            term.reset();
+          }
           outputQueue.send(
             terminalService.decodeBase64(attachment.scrollback),
           );
         }
+        sessionStorage.removeItem(snapshotKey);
         attached = true;
         pendingLiveOutput.splice(0).forEach(handleOutput);
         if (
@@ -319,9 +423,19 @@ export const TerminalView = memo(function TerminalView({
         capture: true,
       });
       void terminalService.detach(sessionId, clientId);
+      try {
+        const snapshot = serialize.serialize();
+        if (snapshot.length <= 1_000_000) {
+          sessionStorage.setItem(snapshotKey, snapshot);
+        }
+      } catch {
+        sessionStorage.removeItem(snapshotKey);
+      }
+      webgl?.dispose();
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
+      searchRef.current = null;
       resizeQueueRef.current = null;
       reportedExitRef.current = false;
     };
@@ -334,6 +448,7 @@ export const TerminalView = memo(function TerminalView({
     if (!term) return;
 
     term.options.fontSize = terminalFontSize;
+    term.options.scrollback = terminalScrollbackLines;
     term.options.cursorBlink = cursorBlink;
     term.options.minimumContrastRatio = getTerminalMinimumContrast(theme);
     term.options.theme = getTerminalTheme(theme);
@@ -346,7 +461,7 @@ export const TerminalView = memo(function TerminalView({
       }
     });
     return () => cancelAnimationFrame(frame);
-  }, [cursorBlink, terminalFontSize, theme]);
+  }, [cursorBlink, terminalFontSize, terminalScrollbackLines, theme]);
 
   // When this view becomes visible again, re-fit so the terminal reports the
   // correct dimensions after being hidden.
@@ -368,10 +483,64 @@ export const TerminalView = memo(function TerminalView({
 
   return (
     <div
-      className="h-full w-full bg-background p-2"
+      className="relative h-full w-full bg-background p-2"
       onContextMenuCapture={handleContextMenu}
       onFocusCapture={onFocus}
     >
+      {searchOpen && active ? (
+        <form
+          className="absolute right-4 top-3 z-20 flex items-center gap-1 rounded-md border border-border bg-popover/95 p-1 shadow-lg backdrop-blur"
+          onSubmit={(event) => {
+            event.preventDefault();
+            findNext();
+          }}
+        >
+          <Search className="ml-1 h-3.5 w-3.5 text-muted-foreground" />
+          <input
+            autoFocus
+            aria-label={t("Search terminal")}
+            value={searchQuery}
+            onChange={(event) => {
+              const query = event.target.value;
+              setSearchQuery(query);
+              if (query) {
+                searchRef.current?.findNext(query, { incremental: true });
+              } else {
+                searchRef.current?.clearDecorations();
+              }
+            }}
+            className="h-7 w-56 bg-transparent px-1 text-xs outline-none"
+            placeholder={t("Search terminal")}
+          />
+          <button
+            type="button"
+            aria-label={t("Previous match")}
+            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+            onClick={findPrevious}
+          >
+            <ChevronUp className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="submit"
+            aria-label={t("Next match")}
+            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <ChevronDown className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            aria-label={t("Close search")}
+            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+            onClick={() => {
+              setSearchOpen(false);
+              searchRef.current?.clearDecorations();
+              termRef.current?.focus();
+            }}
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </form>
+      ) : null}
       <div
         ref={containerRef}
         className="h-full w-full"

@@ -38,9 +38,12 @@ export default defineConfig(async () => ({
           "terminal-vendor": [
             "@xterm/xterm",
             "@xterm/addon-fit",
+            "@xterm/addon-search",
+            "@xterm/addon-serialize",
             "@xterm/addon-unicode-graphemes",
             "@xterm/addon-web-links",
           ],
+          "terminal-webgl": ["@xterm/addon-webgl"],
           "ui-vendor": [
             "@radix-ui/react-dialog",
             "@radix-ui/react-dropdown-menu",

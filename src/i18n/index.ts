@@ -42,6 +42,20 @@ const zhCN: Record<string, string> = {
   "Animate the block cursor while the terminal is focused.":
     "终端获得焦点时让块状光标闪烁。",
   "Blinking terminal cursor": "终端光标闪烁",
+  "Visible scrollback": "可见回滚记录",
+  "Maximum history retained by each terminal view.":
+    "每个终端视图保留的最大历史行数。",
+  "Terminal scrollback lines": "终端回滚行数",
+  "Attach history memory": "重新连接历史内存",
+  "Maximum raw output retained for reattaching to a running session.":
+    "为重新连接运行中会话而保留的最大原始输出。",
+  "Terminal attach history memory": "终端重新连接历史内存",
+  "Search terminal": "搜索终端",
+  "Previous match": "上一个匹配项",
+  "Next match": "下一个匹配项",
+  "Close search": "关闭搜索",
+  "Paste {characters} characters across {lines} lines into the terminal?":
+    "要向终端粘贴 {characters} 个字符（共 {lines} 行）吗？",
   "Projects sidebar": "项目侧边栏",
   "Control the information shown beside each project.":
     "控制每个项目旁显示的信息。",

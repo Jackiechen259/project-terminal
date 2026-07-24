@@ -131,6 +131,7 @@ export interface CreateTerminalRequest {
   profileId: string;
   rows: number;
   cols: number;
+  scrollbackMegabytes?: number;
 }
 
 export interface TerminalOutputChunk {

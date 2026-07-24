@@ -205,6 +205,8 @@ export function TerminalWorkspace() {
           profileId: profile.id,
           rows: 24,
           cols: 80,
+          scrollbackMegabytes:
+            useSettingsStore.getState().terminalScrollbackMegabytes,
         });
         const tab: TerminalTab = {
           id: crypto.randomUUID(),
@@ -655,6 +657,8 @@ export function TerminalWorkspace() {
           profileId: profile.id,
           rows: 24,
           cols: 80,
+          scrollbackMegabytes:
+            useSettingsStore.getState().terminalScrollbackMegabytes,
         });
         const tab: TerminalTab = {
           id: crypto.randomUUID(),
@@ -700,6 +704,8 @@ export function TerminalWorkspace() {
           profileId: profile.id,
           rows: 24,
           cols: 80,
+          scrollbackMegabytes:
+            useSettingsStore.getState().terminalScrollbackMegabytes,
         });
         const tab: TerminalTab = {
           id: crypto.randomUUID(),

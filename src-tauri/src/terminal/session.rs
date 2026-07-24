@@ -70,6 +70,7 @@ pub struct SessionSpawn {
     pub readiness_marker: Option<String>,
     pub rows: u16,
     pub cols: u16,
+    pub scrollback_bytes: usize,
 }
 
 struct EventHub {
@@ -282,7 +283,9 @@ impl TerminalSession {
         let (event_tx, _) = broadcast::channel(1024);
         let event_hub = Arc::new(Mutex::new(EventHub {
             sender: event_tx,
-            scrollback: OutputRingBuffer::new(DEFAULT_SCROLLBACK_BYTES),
+            scrollback: OutputRingBuffer::new(
+                spawn.scrollback_bytes.max(DEFAULT_SCROLLBACK_BYTES / 4),
+            ),
         }));
 
         // Reader thread: scans for the one-shot ready marker, removes that
@@ -556,6 +559,7 @@ mod tests {
             readiness_marker: None,
             rows: 24,
             cols: 80,
+            scrollback_bytes: DEFAULT_SCROLLBACK_BYTES,
         })
         .expect("spawn session");
         let rx = session.attach("test-client".into()).receiver;
@@ -732,6 +736,7 @@ mod tests {
             readiness_marker: None,
             rows: 24,
             cols: 80,
+            scrollback_bytes: DEFAULT_SCROLLBACK_BYTES,
         })
         .expect("spawn session");
         let mut rx = session.attach("ready-client".into()).receiver;
@@ -782,6 +787,7 @@ mod tests {
             readiness_marker: None,
             rows: 24,
             cols: 80,
+            scrollback_bytes: DEFAULT_SCROLLBACK_BYTES,
         })
         .expect("spawn PowerShell session");
         let mut rx = session.attach("powershell-ready-client".into()).receiver;

@@ -12,6 +12,8 @@ import {
 } from "@/stores/settingsStore";
 
 const FONT_SIZES = [10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24];
+const SCROLLBACK_LINES = [1_000, 5_000, 10_000, 25_000, 50_000, 100_000];
+const SCROLLBACK_MEGABYTES = [1, 2, 4, 8, 16, 32];
 
 export function GeneralSettingsPanel() {
   const { t } = useTranslation();
@@ -27,6 +29,12 @@ export function GeneralSettingsPanel() {
     (state) => state.showTerminalCount,
   );
   const terminalFontSize = useSettingsStore((state) => state.terminalFontSize);
+  const terminalScrollbackLines = useSettingsStore(
+    (state) => state.terminalScrollbackLines,
+  );
+  const terminalScrollbackMegabytes = useSettingsStore(
+    (state) => state.terminalScrollbackMegabytes,
+  );
   const cursorBlink = useSettingsStore((state) => state.cursorBlink);
   const autoCheckForUpdates = useSettingsStore(
     (state) => state.autoCheckForUpdates,
@@ -45,6 +53,10 @@ export function GeneralSettingsPanel() {
     confirmCloseTerminal === DEFAULT_GENERAL_SETTINGS.confirmCloseTerminal &&
     showTerminalCount === DEFAULT_GENERAL_SETTINGS.showTerminalCount &&
     terminalFontSize === DEFAULT_GENERAL_SETTINGS.terminalFontSize &&
+    terminalScrollbackLines ===
+      DEFAULT_GENERAL_SETTINGS.terminalScrollbackLines &&
+    terminalScrollbackMegabytes ===
+      DEFAULT_GENERAL_SETTINGS.terminalScrollbackMegabytes &&
     cursorBlink === DEFAULT_GENERAL_SETTINGS.cursorBlink &&
     autoCheckForUpdates === DEFAULT_GENERAL_SETTINGS.autoCheckForUpdates;
 
@@ -174,6 +186,48 @@ export function GeneralSettingsPanel() {
             checked={cursorBlink}
             onCheckedChange={(checked) => update({ cursorBlink: checked })}
           />
+        </SettingRow>
+        <SettingRow
+          title={t("Visible scrollback")}
+          description={t("Maximum history retained by each terminal view.")}
+        >
+          <select
+            aria-label={t("Terminal scrollback lines")}
+            className="h-9 w-28 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+            value={terminalScrollbackLines}
+            onChange={(event) =>
+              update({ terminalScrollbackLines: Number(event.target.value) })
+            }
+          >
+            {SCROLLBACK_LINES.map((lines) => (
+              <option key={lines} value={lines}>
+                {lines.toLocaleString()}
+              </option>
+            ))}
+          </select>
+        </SettingRow>
+        <SettingRow
+          title={t("Attach history memory")}
+          description={t(
+            "Maximum raw output retained for reattaching to a running session.",
+          )}
+        >
+          <select
+            aria-label={t("Terminal attach history memory")}
+            className="h-9 w-24 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+            value={terminalScrollbackMegabytes}
+            onChange={(event) =>
+              update({
+                terminalScrollbackMegabytes: Number(event.target.value),
+              })
+            }
+          >
+            {SCROLLBACK_MEGABYTES.map((megabytes) => (
+              <option key={megabytes} value={megabytes}>
+                {megabytes} MB
+              </option>
+            ))}
+          </select>
         </SettingRow>
       </SettingsGroup>
 

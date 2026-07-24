@@ -176,6 +176,7 @@ mod tests {
             readiness_marker: None,
             rows: 24,
             cols: 80,
+            scrollback_bytes: 4 * 1024 * 1024,
         }
     }
 

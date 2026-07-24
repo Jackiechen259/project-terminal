@@ -1,4 +1,4 @@
-import { render, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -7,6 +7,15 @@ const mocks = vi.hoisted(() => ({
   close: vi.fn(async () => undefined),
   write: vi.fn(async () => undefined),
   resize: vi.fn(async () => undefined),
+  findNext: vi.fn(),
+  findPrevious: vi.fn(),
+  clearSearch: vi.fn(),
+  webglShouldThrow: false,
+  readClipboardText: vi.fn(async () => ""),
+  paste: vi.fn(),
+  customKeyHandler: undefined as
+    | ((event: KeyboardEvent) => boolean)
+    | undefined,
 }));
 
 vi.mock("@/services", () => ({
@@ -16,7 +25,7 @@ vi.mock("@/services", () => ({
     close: mocks.close,
     write: mocks.write,
     resize: mocks.resize,
-    readClipboardText: vi.fn(async () => ""),
+    readClipboardText: mocks.readClipboardText,
     decodeBase64: (value: string) =>
       Uint8Array.from(atob(value), (character) => character.charCodeAt(0)),
   },
@@ -41,8 +50,12 @@ vi.mock("@xterm/xterm", () => ({
     onTitleChange() {
       return { dispose: vi.fn() };
     }
+    attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean) {
+      mocks.customKeyHandler = handler;
+    }
     write() {}
-    paste() {}
+    reset() {}
+    paste = mocks.paste;
     focus() {}
     dispose() {}
     getSelection() {
@@ -61,6 +74,29 @@ vi.mock("@xterm/addon-fit", () => ({
     fit() {}
   },
 }));
+vi.mock("@xterm/addon-search", () => ({
+  SearchAddon: class {
+    findNext = mocks.findNext;
+    findPrevious = mocks.findPrevious;
+    clearDecorations = mocks.clearSearch;
+  },
+}));
+vi.mock("@xterm/addon-serialize", () => ({
+  SerializeAddon: class {
+    serialize() {
+      return "";
+    }
+  },
+}));
+vi.mock("@xterm/addon-webgl", () => ({
+  WebglAddon: class {
+    constructor() {
+      if (mocks.webglShouldThrow) throw new Error("WebGL unavailable");
+    }
+    onContextLoss() {}
+    dispose() {}
+  },
+}));
 vi.mock("@xterm/addon-unicode-graphemes", () => ({
   UnicodeGraphemesAddon: class {},
 }));
@@ -77,6 +113,10 @@ class ResizeObserverStub {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  sessionStorage.clear();
+  mocks.webglShouldThrow = false;
+  mocks.customKeyHandler = undefined;
+  mocks.readClipboardText.mockResolvedValue("");
   vi.stubGlobal("ResizeObserver", ResizeObserverStub);
   vi.stubGlobal(
     "requestAnimationFrame",
@@ -168,5 +208,59 @@ describe("TerminalView session lifecycle", () => {
       );
     });
     expect(mocks.close).not.toHaveBeenCalled();
+  });
+
+  it("opens search from the keyboard and searches incrementally", async () => {
+    render(
+      <TerminalView
+        sessionId="session-one"
+        active
+        focused
+        defaultTitle="PowerShell"
+      />,
+    );
+    await waitFor(() => expect(mocks.attach).toHaveBeenCalledTimes(1));
+
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true, shiftKey: true });
+    const input = await screen.findByRole("textbox", {
+      name: "Search terminal",
+    });
+    fireEvent.change(input, { target: { value: "needle" } });
+    expect(mocks.findNext).toHaveBeenCalledWith("needle", {
+      incremental: true,
+    });
+  });
+
+  it("falls back when WebGL initialization fails", async () => {
+    mocks.webglShouldThrow = true;
+    render(
+      <TerminalView
+        sessionId="session-one"
+        active
+        defaultTitle="PowerShell"
+      />,
+    );
+
+    await waitFor(() => expect(mocks.attach).toHaveBeenCalledTimes(1));
+  });
+
+  it("confirms a large keyboard paste before sending it to xterm", async () => {
+    mocks.readClipboardText.mockResolvedValue("x".repeat(10_000));
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(
+      <TerminalView
+        sessionId="session-one"
+        active
+        defaultTitle="PowerShell"
+      />,
+    );
+    await waitFor(() => expect(mocks.customKeyHandler).toBeTypeOf("function"));
+
+    mocks.customKeyHandler?.(
+      new KeyboardEvent("keydown", { key: "v", ctrlKey: true }),
+    );
+
+    await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+    expect(mocks.paste).not.toHaveBeenCalled();
   });
 });

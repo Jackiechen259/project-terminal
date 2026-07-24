@@ -3,6 +3,10 @@ import { persist } from "zustand/middleware";
 
 export const MIN_TERMINAL_FONT_SIZE = 10;
 export const MAX_TERMINAL_FONT_SIZE = 24;
+export const MIN_TERMINAL_SCROLLBACK_LINES = 1_000;
+export const MAX_TERMINAL_SCROLLBACK_LINES = 100_000;
+export const MIN_TERMINAL_SCROLLBACK_MEGABYTES = 1;
+export const MAX_TERMINAL_SCROLLBACK_MEGABYTES = 32;
 export type AppLanguage = "en" | "zh-CN";
 export type AppTheme = "dark" | "eye-care" | "light";
 
@@ -13,6 +17,8 @@ export interface GeneralSettings {
   confirmCloseTerminal: boolean;
   showTerminalCount: boolean;
   terminalFontSize: number;
+  terminalScrollbackLines: number;
+  terminalScrollbackMegabytes: number;
   cursorBlink: boolean;
   autoCheckForUpdates: boolean;
 }
@@ -24,6 +30,8 @@ export const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   confirmCloseTerminal: true,
   showTerminalCount: true,
   terminalFontSize: 14,
+  terminalScrollbackLines: 10_000,
+  terminalScrollbackMegabytes: 4,
   cursorBlink: true,
   autoCheckForUpdates: true,
 };
@@ -43,6 +51,26 @@ export function clampTerminalFontSize(value: number): number {
   );
 }
 
+export function clampTerminalScrollbackLines(value: number): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_GENERAL_SETTINGS.terminalScrollbackLines;
+  }
+  return Math.min(
+    MAX_TERMINAL_SCROLLBACK_LINES,
+    Math.max(MIN_TERMINAL_SCROLLBACK_LINES, Math.round(value)),
+  );
+}
+
+export function clampTerminalScrollbackMegabytes(value: number): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_GENERAL_SETTINGS.terminalScrollbackMegabytes;
+  }
+  return Math.min(
+    MAX_TERMINAL_SCROLLBACK_MEGABYTES,
+    Math.max(MIN_TERMINAL_SCROLLBACK_MEGABYTES, Math.round(value)),
+  );
+}
+
 export const useSettingsStore = create<SettingsStoreState>()(
   persist(
     (set) => ({
@@ -56,6 +84,16 @@ export const useSettingsStore = create<SettingsStoreState>()(
             patch.terminalFontSize === undefined
               ? state.terminalFontSize
               : clampTerminalFontSize(patch.terminalFontSize),
+          terminalScrollbackLines:
+            patch.terminalScrollbackLines === undefined
+              ? state.terminalScrollbackLines
+              : clampTerminalScrollbackLines(patch.terminalScrollbackLines),
+          terminalScrollbackMegabytes:
+            patch.terminalScrollbackMegabytes === undefined
+              ? state.terminalScrollbackMegabytes
+              : clampTerminalScrollbackMegabytes(
+                  patch.terminalScrollbackMegabytes,
+                ),
         })),
 
       rememberProject: (lastProjectId) => set({ lastProjectId }),
@@ -72,6 +110,8 @@ export const useSettingsStore = create<SettingsStoreState>()(
         confirmCloseTerminal: state.confirmCloseTerminal,
         showTerminalCount: state.showTerminalCount,
         terminalFontSize: state.terminalFontSize,
+        terminalScrollbackLines: state.terminalScrollbackLines,
+        terminalScrollbackMegabytes: state.terminalScrollbackMegabytes,
         cursorBlink: state.cursorBlink,
         autoCheckForUpdates: state.autoCheckForUpdates,
         lastProjectId: state.lastProjectId,

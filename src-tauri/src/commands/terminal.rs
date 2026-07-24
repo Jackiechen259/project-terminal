@@ -45,6 +45,8 @@ pub struct CreateTerminalRequest {
     pub profile_id: String,
     pub rows: u16,
     pub cols: u16,
+    #[serde(default)]
+    pub scrollback_megabytes: Option<u8>,
 }
 
 /// Per-session state we keep alongside the manager so restart can rebuild
@@ -226,6 +228,9 @@ fn build_session_spawn(
                 .then(|| format!("__PROJECT_TERMINAL_READY_{session_id}__")),
             rows: request.rows.max(1),
             cols: request.cols.max(1),
+            scrollback_bytes: usize::from(request.scrollback_megabytes.unwrap_or(4).clamp(1, 32))
+                * 1024
+                * 1024,
         },
         project_type,
         profile,
@@ -620,6 +625,7 @@ pub async fn restart_terminal(
         profile_id: profile_id.clone(),
         rows: 24,
         cols: 80,
+        scrollback_megabytes: Some(4),
     };
     let (spawn, project_type, profile) = build_session_spawn(&app, &request, &new_id)?;
     let manager = terminal.manager.clone_handle();
@@ -862,6 +868,7 @@ mod tests {
             profile_id: "profile-1".into(),
             rows: 24,
             cols: 80,
+            scrollback_megabytes: None,
         };
         let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
         assert_eq!(spawn.cwd.as_deref(), Some(dir.to_str().unwrap()));
@@ -873,6 +880,26 @@ mod tests {
         assert!(spawn.env.iter().any(|(k, v)| {
             k == "PROJECT_TERMINAL_READY" && v == "__PROJECT_TERMINAL_READY_session-1__"
         }));
+    }
+
+    #[test]
+    fn build_session_spawn_clamps_scrollback_memory() {
+        let app = test_state();
+        let _dir = seed_project(&app, "p1");
+        let mut profile = default_powershell_profile("profile-1".into(), "p1".into());
+        profile.shell_executable = Some("cmd.exe".into());
+        app.profiles.upsert(profile).unwrap();
+        let request = CreateTerminalRequest {
+            project_id: "p1".into(),
+            profile_id: "profile-1".into(),
+            rows: 24,
+            cols: 80,
+            scrollback_megabytes: Some(255),
+        };
+
+        let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
+
+        assert_eq!(spawn.scrollback_bytes, 32 * 1024 * 1024);
     }
 
     #[test]
@@ -907,6 +934,7 @@ mod tests {
             profile_id: "wsl-profile".into(),
             rows: 24,
             cols: 80,
+            scrollback_megabytes: None,
         };
         let (spawn, project_type, _) = build_session_spawn(&app, &request, "session-1").unwrap();
 
@@ -927,6 +955,7 @@ mod tests {
             profile_id: "profile-1".into(),
             rows: 24,
             cols: 80,
+            scrollback_megabytes: None,
         };
         let err = build_session_spawn(&app, &request, "session-1").unwrap_err();
         assert!(matches!(err, AppError::Configuration(_)));
@@ -959,6 +988,7 @@ mod tests {
             profile_id: "profile-1".into(),
             rows: 24,
             cols: 80,
+            scrollback_megabytes: None,
         };
         let err = build_session_spawn(&app, &request, "session-1").unwrap_err();
         assert!(matches!(err, AppError::ProjectPathNotFound(_)));
@@ -1100,6 +1130,7 @@ mod tests {
             profile_id: "profile-1".into(),
             rows: 24,
             cols: 80,
+            scrollback_megabytes: None,
         };
 
         let terminal = TerminalState::new();
@@ -1168,6 +1199,7 @@ mod tests {
             profile_id: "profile-1".into(),
             rows: 24,
             cols: 80,
+            scrollback_megabytes: None,
         };
 
         let terminal = TerminalState::new();
