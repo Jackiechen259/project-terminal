@@ -1,6 +1,14 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { Copy, Eye, EyeOff, RefreshCw, RotateCcw, ShieldCheck } from "lucide-react";
+import {
+  Copy,
+  Link2,
+  RefreshCw,
+  RotateCcw,
+  ShieldCheck,
+  WifiOff,
+} from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -47,6 +55,32 @@ export function GeneralSettingsPanel() {
     ReturnType<typeof daemonService.remoteAccessInfo>
   > | null>(null);
   const [showRemoteToken, setShowRemoteToken] = useState(false);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
+  const handleRemoteError = useCallback(
+    (error: unknown) => {
+      const message =
+        error !== null &&
+        typeof error === "object" &&
+        "message" in error &&
+        typeof error.message === "string"
+          ? error.message
+          : undefined;
+      setRemoteError(message ?? t("Session Host is unavailable"));
+    },
+    [t],
+  );
+  const loadRemoteInfo = useCallback(() => {
+    daemonService
+      .remoteAccessInfo()
+      .then((info) => {
+        setRemoteInfo(info);
+        setRemoteError(null);
+      })
+      .catch(handleRemoteError);
+  }, [handleRemoteError]);
+  useEffect(() => {
+    loadRemoteInfo();
+  }, [loadRemoteInfo]);
   useEffect(() => {
     void getVersion().then(setVersion);
   }, []);
@@ -266,54 +300,135 @@ export function GeneralSettingsPanel() {
           title={t("Mobile terminal gateway")}
           description={
             remoteInfo
-              ? `${remoteInfo.url} · ${remoteInfo.transportSecurity}`
-              : t("Access details are kept in Session Host memory only.")
+              ? remoteInfo.enabled
+                ? `${remoteInfo.url} · ${remoteInfo.transportSecurity}`
+                : t("Remote access is disabled.")
+              : remoteError
+                ? remoteError
+                : t("Access details are kept in Session Host memory only.")
           }
         >
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void daemonService.remoteAccessInfo().then(setRemoteInfo)}
-          >
-            <ShieldCheck className="h-4 w-4" />
-            {remoteInfo ? t("Refresh") : t("Show access")}
-          </Button>
+          <div className="flex items-center gap-2">
+            <SettingSwitch
+              label={t("Enable remote access")}
+              checked={remoteInfo?.enabled ?? false}
+              onCheckedChange={(checked) =>
+                void daemonService
+                  .setRemoteEnabled(checked)
+                  .then((info) => {
+                    setRemoteInfo(info);
+                    setRemoteError(null);
+                  })
+                  .catch((error) => {
+                    handleRemoteError(error);
+                    loadRemoteInfo();
+                  })
+              }
+            />
+            <Button variant="outline" size="sm" onClick={loadRemoteInfo}>
+              <ShieldCheck className="h-4 w-4" />
+              {remoteInfo ? t("Refresh") : t("Show access")}
+            </Button>
+          </div>
         </SettingRow>
-        {remoteInfo ? (
-          <SettingRow
-            title={t("Access token")}
-            description={t(
-              "This token is not saved to disk. Anyone holding it can view remote sessions.",
-            )}
-          >
-            <div className="flex max-w-sm gap-1">
-              <input
-                readOnly
-                aria-label={t("Remote access token")}
-                type={showRemoteToken ? "text" : "password"}
-                value={remoteInfo.token}
-                className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-2 font-mono text-xs"
+        {remoteInfo?.enabled ? (
+          <>
+            <SettingRow
+              title={t("Allow LAN access")}
+              description={t(
+                "Expose the gateway to your local network so a phone on the same Wi-Fi can connect. Token and terminal traffic travel in plaintext; only use on trusted networks.",
+              )}
+            >
+              <SettingSwitch
+                label={t("Allow LAN access")}
+                checked={remoteInfo.allowLan}
+                onCheckedChange={(checked) =>
+                  void daemonService
+                    .setRemoteLanAccess(checked)
+                    .then((info) => {
+                      setRemoteInfo(info);
+                      setRemoteError(null);
+                    })
+                    .catch((error) => {
+                      handleRemoteError(error);
+                      loadRemoteInfo();
+                    })
+                }
               />
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-9 w-9"
-                aria-label={t("Show or hide token")}
-                onClick={() => setShowRemoteToken((visible) => !visible)}
-              >
-                {showRemoteToken ? <EyeOff /> : <Eye />}
-              </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-9 w-9"
-                aria-label={t("Copy token")}
-                onClick={() => void navigator.clipboard.writeText(remoteInfo.token)}
-              >
-                <Copy />
-              </Button>
-            </div>
-          </SettingRow>
+            </SettingRow>
+            <SettingRow
+              title={t("Access token")}
+              description={t(
+                "This token is not saved to disk. Anyone holding it can view remote sessions.",
+              )}
+            >
+              <div className="flex max-w-sm items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setShowRemoteToken((visible) => !visible)}
+                  className="h-9 min-w-0 flex-1 truncate rounded-md border border-input bg-background px-2 text-left font-mono text-xs hover:bg-accent"
+                  aria-label={t("Show or hide token")}
+                  title={t("Show or hide token")}
+                >
+                  {showRemoteToken
+                    ? remoteInfo.token
+                    : `••••••••${remoteInfo.token.slice(-4)}`}
+                </button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-9 w-9"
+                  aria-label={t("Copy token")}
+                  onClick={() =>
+                    void navigator.clipboard.writeText(remoteInfo.token)
+                  }
+                >
+                  <Copy />
+                </Button>
+              </div>
+            </SettingRow>
+            <SettingRow
+              title={t("Scan to connect")}
+              description={
+                remoteInfo.transportSecurity === "loopback"
+                  ? t(
+                      "The phone cannot reach 127.0.0.1. Use Tailscale or an HTTPS reverse proxy; the QR code works only after the gateway is reachable from the phone.",
+                    )
+                  : t(
+                      "Scan with a phone camera to open the mobile terminal. The phone must be able to reach this address.",
+                    )
+              }
+            >
+              <div className="flex w-32 flex-col items-center gap-2">
+                <div className="rounded-md border border-input p-2">
+                  <QRCodeSVG
+                    value={`${remoteInfo.url}/?token=${encodeURIComponent(remoteInfo.token)}`}
+                    size={128}
+                    level="M"
+                  />
+                </div>
+                {remoteInfo.transportSecurity === "loopback" ? (
+                  <span className="flex items-center gap-1 rounded border border-danger px-1.5 py-0.5 text-[10px] font-medium text-danger">
+                    <WifiOff className="h-3 w-3" />
+                    {t("Unreachable")}
+                  </span>
+                ) : null}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  onClick={() =>
+                    void navigator.clipboard.writeText(
+                      `${remoteInfo.url}/?token=${encodeURIComponent(remoteInfo.token)}`,
+                    )
+                  }
+                >
+                  <Link2 className="h-4 w-4" />
+                  {t("Copy link")}
+                </Button>
+              </div>
+            </SettingRow>
+          </>
         ) : null}
       </SettingsGroup>
 

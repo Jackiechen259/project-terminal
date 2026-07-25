@@ -121,8 +121,6 @@ export function TerminalWorkspace() {
   const templatesLoaded = useTemplateStore((s) => s.loaded);
   const loadTemplates = useTemplateStore((s) => s.loadTemplates);
   const [error, setError] = useState<string | null>(null);
-  const [isCreatingTerminal, setIsCreatingTerminal] = useState(false);
-  const creatingTerminalRef = useRef(false);
   const [profiles, setProfiles] = useState<TerminalProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
@@ -198,9 +196,6 @@ export function TerminalWorkspace() {
 
   const handleNewTerminal = useCallback(
     async (projectId: string, preferredProfileId?: string) => {
-      if (creatingTerminalRef.current) return null;
-      creatingTerminalRef.current = true;
-      setIsCreatingTerminal(true);
       setError(null);
       let pendingTabId: string | null = null;
       try {
@@ -258,9 +253,6 @@ export function TerminalWorkspace() {
         }
         setError(err.message ?? t("Failed to start terminal"));
         return null;
-      } finally {
-        creatingTerminalRef.current = false;
-        setIsCreatingTerminal(false);
       }
     },
     [activeProjectId, profiles, registerTab, t, updateTab],
@@ -1338,8 +1330,7 @@ export function TerminalWorkspace() {
           aria-label={t("New terminal")}
           title={t("New terminal (right-click for presets)")}
           className="h-7 w-7 text-muted-foreground"
-          disabled={!activeProject || isCreatingTerminal}
-          aria-busy={isCreatingTerminal}
+          disabled={!activeProject}
           onClick={() =>
             activeProject &&
             void handleNewTerminal(activeProject.id, selectedProfileId)
@@ -1355,11 +1346,7 @@ export function TerminalWorkspace() {
             }
           }}
         >
-          {isCreatingTerminal ? (
-            <LoaderCircle className="h-4 w-4 animate-spin text-primary" />
-          ) : (
-            <Plus className="h-4 w-4" />
-          )}
+          <Plus className="h-4 w-4" />
         </Button>
       </div>
 

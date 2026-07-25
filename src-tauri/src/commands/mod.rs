@@ -1,6 +1,5 @@
 //! Tauri command modules.
 
-pub mod agent;
 pub mod clipboard;
 pub mod daemon;
 pub mod platform;

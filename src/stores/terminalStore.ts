@@ -94,6 +94,8 @@ export interface TerminalStoreState {
 
   /** Clear tabs for a deleted project after its PTYs have been closed. */
   removeProjectTabs: (projectId: string) => void;
+  /** Drop every tab and split view so nothing is restored on next launch. */
+  clearAllTabs: () => void;
 }
 
 export const TERMINAL_WORKSPACE_STORAGE_KEY =
@@ -143,6 +145,13 @@ export const useTerminalStore = create<TerminalStoreState>()(
         get().activeProjectId === projectId ? null : get().activeProjectId,
     });
   },
+  clearAllTabs: () =>
+    set({
+      activeProjectId: null,
+      tabsById: {},
+      tabGroupsByProjectId: {},
+      splitViewsByProjectId: {},
+    }),
 
   registerTab: (tab) => {
     const group = get().ensureGroup(tab.projectId);

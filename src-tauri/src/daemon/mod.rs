@@ -91,6 +91,8 @@ pub enum DaemonRequest {
         session_id: String,
     },
     RemoteInfo,
+    ReconfigureRemote { allow_lan: bool },
+    SetRemoteEnabled { enabled: bool },
     Shutdown,
 }
 
@@ -230,6 +232,14 @@ impl DaemonServer {
                 }))
             }
             DaemonRequest::RemoteInfo => Ok(self.remote.info()),
+            DaemonRequest::ReconfigureRemote { allow_lan } => {
+                self.remote.reconfigure(allow_lan)?;
+                Ok(self.remote.info())
+            }
+            DaemonRequest::SetRemoteEnabled { enabled } => {
+                self.remote.set_enabled(enabled)?;
+                Ok(self.remote.info())
+            }
             DaemonRequest::Shutdown => {
                 self.manager.close_all();
                 self.persist()?;
@@ -264,6 +274,7 @@ async fn run_daemon_async() -> AppResult<()> {
     let dirs = ConfigDirs::resolve()?;
     dirs.ensure_root()?;
     let server = Arc::new(DaemonServer::new(&dirs));
+    server.remote.attach(Arc::downgrade(&server));
 
     #[cfg(windows)]
     {
@@ -303,7 +314,7 @@ async fn run_windows_server(server: Arc<DaemonServer>) -> AppResult<()> {
         if !checkpoint_started {
             server.persist()?;
             spawn_state_checkpoint(server.clone());
-            server.remote.start(server.clone());
+            server.remote.start();
             checkpoint_started = true;
         }
         tokio::select! {
@@ -334,7 +345,7 @@ async fn run_unix_server(server: Arc<DaemonServer>, path: PathBuf) -> AppResult<
     let listener = UnixListener::bind(&path).map_err(AppError::Io)?;
     server.persist()?;
     spawn_state_checkpoint(server.clone());
-    server.remote.start(server.clone());
+    server.remote.start();
     loop {
         tokio::select! {
             accepted = listener.accept() => {

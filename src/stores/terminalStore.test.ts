@@ -245,4 +245,16 @@ describe("terminalStore", () => {
     expect(useTerminalStore.getState().tabGroupsByProjectId.p1).toBeUndefined();
     expect(useTerminalStore.getState().activeProjectId).toBeNull();
   });
+  it("clears every tab so nothing is restored on next launch", () => {
+    const { registerTab, setActiveProject, clearAllTabs } =
+      useTerminalStore.getState();
+    registerTab(makeTab("p1t1", "p1"));
+    registerTab(makeTab("p2t1", "p2"));
+    setActiveProject("p1");
+    clearAllTabs();
+    expect(useTerminalStore.getState().tabsById).toEqual({});
+    expect(useTerminalStore.getState().tabGroupsByProjectId).toEqual({});
+    expect(useTerminalStore.getState().splitViewsByProjectId).toEqual({});
+    expect(useTerminalStore.getState().activeProjectId).toBeNull();
+  });
 });

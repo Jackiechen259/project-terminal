@@ -55,14 +55,14 @@ impl ConfigDirs {
     pub fn ssh_connections_path(&self) -> PathBuf {
         self.root.join("ssh-connections.json")
     }
-    pub fn agent_profiles_path(&self) -> PathBuf {
-        self.root.join("agent-profiles.json")
-    }
     pub fn daemon_state_path(&self) -> PathBuf {
         self.root.join("daemon-state.json")
     }
     pub fn remote_audit_path(&self) -> PathBuf {
         self.root.join("remote-audit.jsonl")
+    }
+    pub fn remote_config_path(&self) -> PathBuf {
+        self.root.join("remote-config.json")
     }
     #[cfg(unix)]
     pub fn daemon_socket_path(&self) -> PathBuf {
@@ -113,10 +113,6 @@ mod tests {
             .ssh_connections_path()
             .to_string_lossy()
             .ends_with("ssh-connections.json"));
-        assert!(dirs
-            .agent_profiles_path()
-            .to_string_lossy()
-            .ends_with("agent-profiles.json"));
         assert!(dirs
             .daemon_state_path()
             .to_string_lossy()

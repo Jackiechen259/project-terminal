@@ -7,9 +7,6 @@
 import { Channel, invoke as tauriInvoke } from "@tauri-apps/api/core";
 
 import type {
-  AgentEvent,
-  AgentProfile,
-  AgentSession,
   PlatformInfo,
   ProfileTemplate,
   Project,
@@ -130,16 +127,6 @@ export interface SshConnectionInput {
   strictHostKeyChecking?: boolean;
   knownHostsFile?: string;
   extraArgs?: string[];
-}
-
-export interface AgentProfileInput {
-  id?: string;
-  name: string;
-  projectId: string;
-  terminalProfileId: string;
-  command: string;
-  waitingPatterns?: string[];
-  approvalPatterns?: string[];
 }
 
 export interface CreateTerminalRequest {
@@ -347,8 +334,7 @@ export interface DetectedWslDistribution {
 }
 
 export const environmentService = {
-  detectShells: () =>
-    invokeOrThrow<DetectedShell[]>(PROFILE_CMD.detectShells),
+  detectShells: () => invokeOrThrow<DetectedShell[]>(PROFILE_CMD.detectShells),
   detectPython: (projectId: string) =>
     invokeOrThrow<DetectedPythonEnvironment[]>(PROFILE_CMD.detectPython, {
       projectId,
@@ -366,42 +352,20 @@ export const platformService = {
   getPlatformInfo: () => invokeOrThrow<PlatformInfo>("get_platform_info"),
 };
 
-export const agentService = {
-  listProfiles: () =>
-    invokeOrThrow<ListResponse<AgentProfile>>("list_agent_profiles").then(
-      (response) => response.items,
-    ),
-  createProfile: (input: AgentProfileInput) =>
-    invokeOrThrow<AgentProfile>("create_agent_profile", { input }),
-  updateProfile: (input: AgentProfileInput) =>
-    invokeOrThrow<AgentProfile>("update_agent_profile", { input }),
-  deleteProfile: (id: string) =>
-    invokeOrThrow<void>("delete_agent_profile", { id }),
-  listSessions: () =>
-    invokeOrThrow<ListResponse<AgentSession>>("list_agent_sessions").then(
-      (response) => response.items,
-    ),
-  listEvents: (agentSessionId: string) =>
-    invokeOrThrow<ListResponse<AgentEvent>>("list_agent_events", {
-      agentSessionId,
-    }).then((response) => response.items),
-  start: (agentProfileId: string) =>
-    invokeOrThrow<AgentSession>("start_agent", { agentProfileId }),
-  stop: (agentSessionId: string) =>
-    invokeOrThrow<AgentSession>("stop_agent", { agentSessionId }),
-  restart: (agentSessionId: string) =>
-    invokeOrThrow<AgentSession>("restart_agent", { agentSessionId }),
-  respond: (agentSessionId: string, input: string) =>
-    invokeOrThrow<AgentSession>("respond_agent", { agentSessionId, input }),
-  interrupt: (agentSessionId: string) =>
-    invokeOrThrow<void>("interrupt_agent", { agentSessionId }),
-};
-
 export interface DaemonStatus {
   connected: boolean;
   endpoint: string;
   details?: { pid?: number; startedAt?: string };
   error?: string;
+}
+
+export interface RemoteAccessInfo {
+  enabled: boolean;
+  bind: string;
+  url: string;
+  token: string;
+  transportSecurity: "loopback" | "tailscale" | "tls-terminated" | "lan";
+  allowLan: boolean;
 }
 
 export const daemonService = {
@@ -410,16 +374,11 @@ export const daemonService = {
   listSessions: () =>
     invokeOrThrow<{
       sessions: SessionInfo[];
-      recoveredAsFailed: Array<
-        SessionInfo & { exitReason?: string }
-      >;
+      recoveredAsFailed: Array<SessionInfo & { exitReason?: string }>;
     }>("daemon_list_sessions"),
-  remoteAccessInfo: () =>
-    invokeOrThrow<{
-      enabled: boolean;
-      bind: string;
-      url: string;
-      token: string;
-      transportSecurity: "loopback" | "tailscale" | "tls-terminated";
-    }>("remote_access_info"),
+  remoteAccessInfo: () => invokeOrThrow<RemoteAccessInfo>("remote_access_info"),
+  setRemoteLanAccess: (allowLan: boolean) =>
+    invokeOrThrow<RemoteAccessInfo>("set_remote_lan_access", { allowLan }),
+  setRemoteEnabled: (enabled: boolean) =>
+    invokeOrThrow<RemoteAccessInfo>("set_remote_enabled", { enabled }),
 };

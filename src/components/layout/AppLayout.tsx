@@ -7,6 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/i18n";
+import { useTerminalStore } from "@/stores/terminalStore";
 
 /**
  * Top-level application shell: sidebar on the left, terminal workspace on the
@@ -33,7 +34,7 @@ export function AppLayout() {
           <DialogHeader>
             <DialogTitle>{t("Close Project Terminal?")}</DialogTitle>
             <DialogDescription>
-              {t("Choose whether running terminals and agents should continue.")}
+              {t("Choose whether running terminals should continue.")}
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-2 pt-2">
@@ -47,7 +48,10 @@ export function AppLayout() {
             </Button>
             <Button
               variant="destructive"
-              onClick={() => void invoke("exit_application")}
+              onClick={() => {
+                useTerminalStore.getState().clearAllTabs();
+                void invoke("exit_application");
+              }}
             >
               {t("Stop all terminals and quit")}
             </Button>

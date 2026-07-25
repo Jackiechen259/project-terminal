@@ -385,18 +385,9 @@ const zhCNWorkspace: Record<string, string> = {
   "Could not duplicate profile.": "无法复制配置。",
   "A split group can contain at most four panes.":
     "一个分屏组最多可包含四个窗格。",
-  Agents: "智能体",
-  Agent: "智能体",
-  "Agent name": "智能体名称",
-  "Agent command (for example: codex)": "智能体命令（例如：codex）",
-  "Create and start": "创建并启动",
-  "New agent": "新建智能体",
-  "Agent status changed": "智能体状态已变化",
-  "Session Host connected": "会话主机已连接",
-  "Reconnect Session Host": "重新连接会话主机",
   "Close Project Terminal?": "关闭 Project Terminal？",
-  "Choose whether running terminals and agents should continue.":
-    "请选择是否让正在运行的终端和智能体继续工作。",
+  "Choose whether running terminals should continue.":
+    "请选择是否让正在运行的终端继续工作。",
   "Hide to tray and keep running": "隐藏到系统托盘并继续运行",
   "Stop all terminals and quit": "停止所有终端并退出",
   "Remote access": "远程访问",
@@ -412,6 +403,19 @@ const zhCNWorkspace: Record<string, string> = {
   "Remote access token": "远程访问令牌",
   "Show or hide token": "显示或隐藏令牌",
   "Copy token": "复制令牌",
+  "Allow LAN access": "允许局域网访问",
+  "Expose the gateway to your local network so a phone on the same Wi-Fi can connect. Token and terminal traffic travel in plaintext; only use on trusted networks.":
+    "将网关开放到局域网，使同一 Wi-Fi 的手机可以连接。令牌与终端流量以明文传输，仅在可信网络中使用。",
+  "Copy link": "复制链接",
+  Unreachable: "不可达",
+  "Remote access is disabled.": "远程访问已禁用。",
+  "Enable remote access": "启用远程访问",
+  "Session Host is unavailable": "会话主机不可用",
+  "The phone cannot reach 127.0.0.1. Use Tailscale or an HTTPS reverse proxy; the QR code works only after the gateway is reachable from the phone.":
+    "手机无法访问 127.0.0.1。请改用 Tailscale 或 HTTPS 反向代理；只有当网关可被手机访问时，此二维码才会生效。",
+  "Scan to connect": "扫码连接",
+  "Scan with a phone camera to open the mobile terminal. The phone must be able to reach this address.":
+    "用手机相机扫码打开移动终端；手机需能访问此地址。",
   // --- Close confirmations ---
   'Close the running terminal "{name}"?': "关闭正在运行的终端“{name}？”",
   "Close both terminals in this split group?": "关闭此拆分组中的两个终端？",
