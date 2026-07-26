@@ -124,7 +124,7 @@ Before creating an SSH project, confirm that the target is reachable from a norm
 ssh user@example.com
 ```
 
-For key-based authentication, using `ssh-agent` is recommended. Project Terminal stores private-key **paths**, never private-key contents or SSH passwords.
+For key-based authentication, using `ssh-agent` is recommended. Project Terminal stores private-key **paths**, never private-key contents. Password authentication can optionally save the password in Windows Credential Manager; passwords are never written to `ssh-connections.json`.
 
 ## Configuration
 
@@ -193,7 +193,7 @@ For an SSH project, Project Terminal first establishes the interactive SSH sessi
 - Host-key verification is enabled by default.
 - Unknown host keys require explicit confirmation.
 - Changed host keys block the connection instead of being silently accepted.
-- Passwords and passphrases are entered directly into the PTY and are not persisted or logged.
+- Unsaved passwords and private-key passphrases are entered directly into the PTY and are not persisted or logged. Passwords explicitly saved by the user are protected by Windows Credential Manager and supplied to OpenSSH through the app's restricted askpass helper.
 - Private-key contents are never stored by the application.
 - Shell and SSH arguments are passed as argument arrays, not concatenated command strings.
 - Terminal input is forwarded byte-for-byte and is not parsed or recorded.

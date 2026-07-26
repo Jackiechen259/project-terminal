@@ -39,6 +39,9 @@ type Draft = {
   port: string;
   username: string;
   authenticationType: SshAuthenticationType;
+  password: string;
+  passwordSaved: boolean;
+  removeSavedPassword: boolean;
   identityFile: string;
   useSshAgent: boolean;
   jumpHost: string;
@@ -59,6 +62,9 @@ function emptyDraft(): Draft {
     port: "22",
     username: "",
     authenticationType: "agent",
+    password: "",
+    passwordSaved: false,
+    removeSavedPassword: false,
     identityFile: "",
     useSshAgent: true,
     jumpHost: "",
@@ -81,6 +87,9 @@ function draftFrom(connection: SshConnection): Draft {
     port: String(connection.port),
     username: connection.username,
     authenticationType: connection.authenticationType,
+    password: "",
+    passwordSaved: connection.passwordSaved,
+    removeSavedPassword: false,
     identityFile: connection.identityFile ?? "",
     useSshAgent: connection.useSshAgent,
     jumpHost: connection.jumpHost?.host ?? "",
@@ -131,6 +140,10 @@ function toInput(
     port: positiveNumber(draft.port, t("Port"), 65535, t),
     username: draft.username.trim(),
     authenticationType: draft.authenticationType,
+    password: draft.password || undefined,
+    clearSavedPassword:
+      draft.removeSavedPassword ||
+      (draft.passwordSaved && draft.authenticationType !== "password"),
     identityFile: draft.identityFile.trim() || undefined,
     useSshAgent: draft.useSshAgent,
     jumpHost,
@@ -161,7 +174,7 @@ function toInput(
   };
 }
 
-/** Manage reusable, non-secret SSH connection settings. */
+/** Manage reusable SSH settings and passwords held by the OS credential vault. */
 export function SshConnectionDialog({
   trigger,
   onClosed,
@@ -205,7 +218,17 @@ export function SshConnectionDialog({
   );
 
   function change<Key extends keyof Draft>(key: Key, value: Draft[Key]) {
-    setDraft((current) => (current ? { ...current, [key]: value } : current));
+    setDraft((current) =>
+      current
+        ? {
+            ...current,
+            [key]: value,
+            ...(key === "password" && value
+              ? { removeSavedPassword: false }
+              : {}),
+          }
+        : current,
+    );
   }
 
   async function save() {
@@ -295,7 +318,7 @@ export function SshConnectionDialog({
           <DialogTitle>{t("SSH connections")}</DialogTitle>
           <DialogDescription>
             {t(
-              "Reusable connection settings. Passwords and private-key contents are never stored.",
+              "Reusable connection settings. Saved passwords are protected by Windows Credential Manager; private-key contents are never stored.",
             )}
           </DialogDescription>
         </DialogHeader>
@@ -472,9 +495,7 @@ function ConnectionForm({
               {t("SSH agent (recommended)")}
             </SelectItem>
             <SelectItem value="key">{t("Private key file")}</SelectItem>
-            <SelectItem value="password">
-              {t("Password in terminal")}
-            </SelectItem>
+            <SelectItem value="password">{t("Password")}</SelectItem>
             <SelectItem value="keyboard-interactive">
               {t("Keyboard interactive")}
             </SelectItem>
@@ -489,6 +510,35 @@ function ConnectionForm({
             placeholder: "C:\\Users\\you\\.ssh\\id_ed25519",
           })
         : null}
+      {draft.authenticationType === "password" ? (
+        <div className="grid gap-2">
+          {field("password", t("Password"), {
+            type: "password",
+            placeholder: draft.passwordSaved
+              ? t("Saved password (leave blank to keep)")
+              : t("Leave blank to enter in terminal"),
+          })}
+          {draft.passwordSaved ? (
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={draft.removeSavedPassword}
+                disabled={busy || Boolean(draft.password)}
+                onChange={(event) =>
+                  onChange("removeSavedPassword", event.target.checked)
+                }
+              />
+              {t("Remove the saved password")}
+            </label>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              {t(
+                "Optional. Saved passwords are protected by Windows Credential Manager and are never written to the connection file.",
+              )}
+            </p>
+          )}
+        </div>
+      ) : null}
       <label className="flex items-center gap-2 text-sm">
         <input
           type="checkbox"

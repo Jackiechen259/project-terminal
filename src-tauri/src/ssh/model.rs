@@ -36,6 +36,10 @@ pub struct SshConnection {
 
     pub authentication_type: SshAuthenticationType,
 
+    /// Metadata only. The password itself lives in the OS credential vault.
+    #[serde(default)]
+    pub password_saved: bool,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub identity_file: Option<String>,
     pub use_ssh_agent: bool,
@@ -232,6 +236,7 @@ mod tests {
             port: 22,
             username: "user".into(),
             authentication_type: SshAuthenticationType::Agent,
+            password_saved: false,
             identity_file: None,
             use_ssh_agent: true,
             jump_host: None,
@@ -296,6 +301,7 @@ mod tests {
             "port": 2222,
             "username": "u",
             "authenticationType": "key",
+            "passwordSaved": false,
             "identityFile": "C:\\keys\\id_ed25519",
             "useSshAgent": false,
             "connectTimeoutSeconds": 15,
@@ -400,6 +406,7 @@ mod extra_args_tests {
             port: 22,
             username: "u".into(),
             authentication_type: SshAuthenticationType::Agent,
+            password_saved: false,
             identity_file: None,
             use_ssh_agent: true,
             jump_host: None,

@@ -174,8 +174,8 @@ const zhCNWorkspace: Record<string, string> = {
   "No subfolders in this directory.": "此目录中没有子文件夹。",
   "Use this folder": "使用此文件夹",
   "SSH connections": "SSH 连接",
-  "Reusable connection settings. Passwords and private-key contents are never stored.":
-    "可复用的连接设置。密码和私钥内容不会被保存。",
+  "Reusable connection settings. Saved passwords are protected by Windows Credential Manager; private-key contents are never stored.":
+    "可复用的连接设置。保存的密码由 Windows 凭据管理器保护；私钥内容不会被保存。",
   "Detecting OpenSSH client…": "正在检测 OpenSSH 客户端…",
   "OpenSSH: {path}": "OpenSSH：{path}",
   "OpenSSH client was not found. Install Windows OpenSSH Client to connect.":
@@ -207,7 +207,12 @@ const zhCNWorkspace: Record<string, string> = {
   Authentication: "身份验证",
   "SSH agent (recommended)": "SSH 代理（推荐）",
   "Private key file": "私钥文件",
-  "Password in terminal": "在终端中输入密码",
+  Password: "密码",
+  "Saved password (leave blank to keep)": "已保存密码（留空则保留）",
+  "Leave blank to enter in terminal": "留空则在终端中输入",
+  "Remove the saved password": "移除已保存的密码",
+  "Optional. Saved passwords are protected by Windows Credential Manager and are never written to the connection file.":
+    "可选。保存的密码由 Windows 凭据管理器保护，绝不会写入连接配置文件。",
   "Keyboard interactive": "键盘交互验证",
   "System SSH config": "系统 SSH 配置",
   "Identity file path": "私钥文件路径",

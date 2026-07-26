@@ -821,8 +821,11 @@ async fn websocket_loop(
     query: AttachQuery,
 ) {
     let attachment_id = format!("remote-{}", uuid::Uuid::new_v4());
-    let Ok((session, subscription)) = state.manager.attach(&session_id, attachment_id.clone())
-    else {
+    let Ok((session, subscription)) = state.manager.attach(
+        &session_id,
+        attachment_id.clone(),
+        crate::terminal::scrollback::ScrollbackSnapshotFormat::Flat,
+    ) else {
         return;
     };
     audit(

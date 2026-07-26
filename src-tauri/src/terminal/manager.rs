@@ -4,16 +4,18 @@
 //! Tauri's `manage()`. Closing a session kills the child process so it does
 //! not leak when the user closes the tab or quits the app.
 //!
-//! The sessions map lives behind an `Arc<Mutex<...>>` so the exit handler
-//! can hold a `clone_handle()` to the SAME map the managed state sees.
+//! The sessions map lives behind an `Arc<RwLock<...>>` so independent
+//! lookups can proceed concurrently while the exit handler's `clone_handle()`
+//! still sees the SAME map as the managed state.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 
 use crate::error::{AppError, AppResult};
 
+use super::scrollback::ScrollbackSnapshotFormat;
 use super::session::{SessionSpawn, SessionStatus, SessionSubscription, TerminalSession};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -41,7 +43,7 @@ impl From<&TerminalSession> for SessionInfo {
 }
 
 pub struct TerminalManager {
-    sessions: Arc<Mutex<HashMap<String, Arc<TerminalSession>>>>,
+    sessions: Arc<RwLock<HashMap<String, Arc<TerminalSession>>>>,
 }
 
 impl Default for TerminalManager {
@@ -53,7 +55,7 @@ impl Default for TerminalManager {
 impl TerminalManager {
     pub fn new() -> Self {
         Self {
-            sessions: Arc::new(Mutex::new(HashMap::new())),
+            sessions: Arc::new(RwLock::new(HashMap::new())),
         }
     }
     /// Clone the shared sessions handle. Used by the exit handler so it sees
@@ -68,13 +70,13 @@ impl TerminalManager {
     pub fn create(&self, spawn: SessionSpawn) -> AppResult<String> {
         let session = TerminalSession::spawn(spawn.clone())?;
         let id = spawn.session_id.clone();
-        self.sessions.lock().insert(id.clone(), Arc::new(session));
+        self.sessions.write().insert(id.clone(), Arc::new(session));
         Ok(id)
     }
 
     pub fn get(&self, session_id: &str) -> AppResult<Arc<TerminalSession>> {
         self.sessions
-            .lock()
+            .read()
             .get(session_id)
             .cloned()
             .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))
@@ -89,9 +91,10 @@ impl TerminalManager {
         &self,
         session_id: &str,
         client_id: String,
+        snapshot_format: ScrollbackSnapshotFormat,
     ) -> AppResult<(SessionInfo, SessionSubscription)> {
         let session = self.get(session_id)?;
-        let subscription = session.attach(client_id);
+        let subscription = session.attach(client_id, snapshot_format);
         // Read state after subscribing so an exit that races attach is
         // represented either in this snapshot or in the event receiver.
         let info = SessionInfo::from(session.as_ref());
@@ -104,9 +107,12 @@ impl TerminalManager {
     }
 
     pub fn list(&self) -> Vec<SessionInfo> {
-        self.sessions
-            .lock()
-            .values()
+        // Do not hold the registry lock while reading individual session
+        // state. A slow PTY write or resize in one session must not block
+        // lookups and lifecycle operations for every other session.
+        let sessions = self.sessions.read().values().cloned().collect::<Vec<_>>();
+        sessions
+            .iter()
             .map(|session| SessionInfo::from(session.as_ref()))
             .collect()
     }
@@ -141,7 +147,7 @@ impl TerminalManager {
     /// unknown session id is a no-op rather than an error, so the frontend
     /// can always call it on tab teardown.
     pub fn close(&self, session_id: &str) -> AppResult<()> {
-        let session = self.sessions.lock().remove(session_id);
+        let session = self.sessions.write().remove(session_id);
         if let Some(s) = session {
             s.close();
         }
@@ -152,7 +158,7 @@ impl TerminalManager {
     /// processes leak.
     pub fn close_all(&self) {
         let sessions: Vec<Arc<TerminalSession>> =
-            self.sessions.lock().drain().map(|(_, v)| v).collect();
+            self.sessions.write().drain().map(|(_, v)| v).collect();
         for s in sessions {
             s.close();
         }
@@ -237,11 +243,21 @@ mod tests {
     #[test]
     fn clone_handle_shares_session_map() {
         // The exit handler's clone_handle must see the SAME underlying map
-        // as the original - verified by Arc pointer equality on the shared
-        // sessions Mutex.
+        // as the original - verified by Arc pointer equality on the registry.
         let mgr = TerminalManager::new();
         let cloned = mgr.clone_handle();
         assert!(Arc::ptr_eq(&mgr.sessions, &cloned.sessions));
+    }
+
+    #[test]
+    fn session_registry_allows_concurrent_readers() {
+        let manager = TerminalManager::new();
+        let first_reader = manager.sessions.read();
+        assert!(
+            manager.sessions.try_read().is_some(),
+            "one session lookup should not serialize unrelated readers"
+        );
+        drop(first_reader);
     }
 
     #[test]
@@ -249,8 +265,12 @@ mod tests {
         let manager = TerminalManager::new();
         let id = manager.create(cmd_spawn("shared-session")).unwrap();
         manager.mark_running(&id).unwrap();
-        let (_, first) = manager.attach(&id, "first".into()).unwrap();
-        let (_, second) = manager.attach(&id, "second".into()).unwrap();
+        let (_, first) = manager
+            .attach(&id, "first".into(), ScrollbackSnapshotFormat::Replay)
+            .unwrap();
+        let (_, second) = manager
+            .attach(&id, "second".into(), ScrollbackSnapshotFormat::Replay)
+            .unwrap();
         let mut first_receiver = first.receiver;
         let mut second_receiver = second.receiver;
 
@@ -280,7 +300,9 @@ mod tests {
 
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
-            let (_, attachment) = manager.attach(&id, "history-client".into()).unwrap();
+            let (_, attachment) = manager
+                .attach(&id, "history-client".into(), ScrollbackSnapshotFormat::Flat)
+                .unwrap();
             let history = String::from_utf8_lossy(&attachment.snapshot.bytes).into_owned();
             if history.contains("RECOVERED_HISTORY") {
                 break;

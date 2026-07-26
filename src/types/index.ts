@@ -166,6 +166,8 @@ export interface SshConnection {
   username: string;
 
   authenticationType: SshAuthenticationType;
+  /** The secret itself stays in the operating-system credential vault. */
+  passwordSaved: boolean;
 
   identityFile?: string;
   useSshAgent: boolean;

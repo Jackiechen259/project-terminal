@@ -17,7 +17,9 @@ use tokio::sync::{broadcast, watch};
 
 use crate::error::{AppError, AppResult};
 
-use super::scrollback::{OutputRingBuffer, ScrollbackSnapshot, DEFAULT_SCROLLBACK_BYTES};
+use super::scrollback::{
+    OutputRingBuffer, ScrollbackSnapshot, ScrollbackSnapshotFormat, DEFAULT_SCROLLBACK_BYTES,
+};
 
 /// A terminal lifecycle event sent to the frontend.
 ///
@@ -473,10 +475,17 @@ impl TerminalSession {
     /// Atomically subscribe before taking the scrollback snapshot. The reader
     /// uses the same hub lock, so bytes can be in exactly one of the snapshot
     /// or subsequent events, never lost between them.
-    pub fn attach(&self, client_id: String) -> SessionSubscription {
+    pub fn attach(
+        &self,
+        client_id: String,
+        snapshot_format: ScrollbackSnapshotFormat,
+    ) -> SessionSubscription {
         let (receiver, snapshot) = {
             let hub = self.event_hub.lock();
-            (hub.sender.subscribe(), hub.scrollback.snapshot())
+            (
+                hub.sender.subscribe(),
+                hub.scrollback.snapshot(snapshot_format),
+            )
         };
         let (cancel_tx, cancel_rx) = watch::channel(false);
         if let Some(previous) = self.attachments.lock().insert(client_id, cancel_tx) {
@@ -567,7 +576,9 @@ mod tests {
             scrollback_bytes: DEFAULT_SCROLLBACK_BYTES,
         })
         .expect("spawn session");
-        let rx = session.attach("test-client".into()).receiver;
+        let rx = session
+            .attach("test-client".into(), ScrollbackSnapshotFormat::Replay)
+            .receiver;
         session.mark_running();
         (session, rx)
     }
@@ -651,7 +662,10 @@ mod tests {
         // Resize up then down; both must succeed.
         session.resize(30, 120).expect("resize up");
         session.resize(10, 40).expect("resize down");
-        let replay = session.attach("resize-history".into()).snapshot.replay;
+        let replay = session
+            .attach("resize-history".into(), ScrollbackSnapshotFormat::Replay)
+            .snapshot
+            .replay;
         let grids = replay
             .into_iter()
             .filter_map(|event| match event {
@@ -757,7 +771,9 @@ mod tests {
             scrollback_bytes: DEFAULT_SCROLLBACK_BYTES,
         })
         .expect("spawn session");
-        let mut rx = session.attach("ready-client".into()).receiver;
+        let mut rx = session
+            .attach("ready-client".into(), ScrollbackSnapshotFormat::Replay)
+            .receiver;
         let marker = "__PROJECT_TERMINAL_READY_test__";
         let encoded_marker = marker
             .chars()
@@ -808,7 +824,12 @@ mod tests {
             scrollback_bytes: DEFAULT_SCROLLBACK_BYTES,
         })
         .expect("spawn PowerShell session");
-        let mut rx = session.attach("powershell-ready-client".into()).receiver;
+        let mut rx = session
+            .attach(
+                "powershell-ready-client".into(),
+                ScrollbackSnapshotFormat::Replay,
+            )
+            .receiver;
         let marker = "__PROJECT_TERMINAL_READY_powershell__";
         session
             .wait_for_ready(

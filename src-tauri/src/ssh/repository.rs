@@ -91,6 +91,7 @@ pub fn new_ssh_connection(
         port,
         username,
         authentication_type: super::model::SshAuthenticationType::Agent,
+        password_saved: false,
         identity_file: None,
         use_ssh_agent: true,
         jump_host: None,

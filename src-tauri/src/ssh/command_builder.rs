@@ -33,16 +33,24 @@ pub fn build_ssh_argv_with_remote_command(
     SshCommand { args }
 }
 
-/// Build a bounded, non-interactive connection check. It never accepts a
-/// host key and never reads a password; failures are reported to the UI.
+/// Build a bounded connection check. A saved password may be supplied through
+/// SSH_ASKPASS; otherwise this remains fully non-interactive.
 pub fn build_ssh_test_argv(connection: &SshConnection) -> SshCommand {
     let mut args = common_args(connection);
+    let password_prompts = if connection.password_saved { "1" } else { "0" };
     args.extend([
         "-T".to_string(),
         "-o".to_string(),
-        "BatchMode=yes".to_string(),
+        format!(
+            "BatchMode={}",
+            if connection.password_saved {
+                "no"
+            } else {
+                "yes"
+            }
+        ),
         "-o".to_string(),
-        "NumberOfPasswordPrompts=0".to_string(),
+        format!("NumberOfPasswordPrompts={password_prompts}"),
         connection.host.clone(),
         "exit".to_string(),
     ]);
@@ -54,12 +62,20 @@ pub fn build_ssh_test_argv(connection: &SshConnection) -> SshCommand {
 /// the directory picker has no terminal attached for answering prompts.
 pub fn build_ssh_browse_argv(connection: &SshConnection, remote_command: String) -> SshCommand {
     let mut args = common_args(connection);
+    let password_prompts = if connection.password_saved { "1" } else { "0" };
     args.extend([
         "-T".to_string(),
         "-o".to_string(),
-        "BatchMode=yes".to_string(),
+        format!(
+            "BatchMode={}",
+            if connection.password_saved {
+                "no"
+            } else {
+                "yes"
+            }
+        ),
         "-o".to_string(),
-        "NumberOfPasswordPrompts=0".to_string(),
+        format!("NumberOfPasswordPrompts={password_prompts}"),
         connection.host.clone(),
         remote_command,
     ]);
@@ -149,6 +165,7 @@ mod tests {
             port: 2200,
             username: "dev".into(),
             authentication_type: SshAuthenticationType::Key,
+            password_saved: false,
             identity_file: Some("C:\\Keys\\id_ed25519".into()),
             use_ssh_agent: false,
             jump_host: Some(SshJumpHost {
@@ -212,5 +229,24 @@ mod tests {
             .windows(2)
             .any(|pair| pair == ["-o", "BatchMode=yes"]));
         assert_eq!(command.args.last(), Some(&"pwd".to_string()));
+    }
+
+    #[test]
+    fn saved_password_allows_exactly_one_askpass_prompt_for_headless_commands() {
+        let mut connection = sample();
+        connection.authentication_type = SshAuthenticationType::Password;
+        connection.password_saved = true;
+
+        for command in [
+            build_ssh_test_argv(&connection),
+            build_ssh_browse_argv(&connection, "pwd".into()),
+        ] {
+            assert!(command.args.iter().any(|arg| arg == "BatchMode=no"));
+            assert!(command
+                .args
+                .iter()
+                .any(|arg| arg == "NumberOfPasswordPrompts=1"));
+            assert!(!command.args.iter().any(|arg| arg.contains("password123")));
+        }
     }
 }

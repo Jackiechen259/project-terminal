@@ -22,6 +22,15 @@ pub enum ScrollbackReplayEvent {
     Resize { rows: u16, cols: u16 },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrollbackSnapshotFormat {
+    /// Flatten retained output for clients that do not understand resize
+    /// events, such as the mobile websocket protocol.
+    Flat,
+    /// Preserve output chunks and resize boundaries for the desktop client.
+    Replay,
+}
+
 #[derive(Debug)]
 pub struct OutputRingBuffer {
     events: VecDeque<ScrollbackReplayEvent>,
@@ -96,16 +105,24 @@ impl OutputRingBuffer {
         self.events.push_back(event);
     }
 
-    pub fn snapshot(&self) -> ScrollbackSnapshot {
-        let mut bytes = Vec::with_capacity(self.total_bytes);
-        for event in &self.events {
-            if let ScrollbackReplayEvent::Output(chunk) = event {
-                bytes.extend_from_slice(chunk);
+    pub fn snapshot(&self, format: ScrollbackSnapshotFormat) -> ScrollbackSnapshot {
+        let (bytes, replay) = match format {
+            ScrollbackSnapshotFormat::Flat => {
+                let mut bytes = Vec::with_capacity(self.total_bytes);
+                for event in &self.events {
+                    if let ScrollbackReplayEvent::Output(chunk) = event {
+                        bytes.extend_from_slice(chunk);
+                    }
+                }
+                (bytes, Vec::new())
             }
-        }
+            // `Bytes` clones share their backing allocation. This keeps the
+            // reader's critical section short even with a large scrollback.
+            ScrollbackSnapshotFormat::Replay => (Vec::new(), self.events.iter().cloned().collect()),
+        };
         ScrollbackSnapshot {
             bytes,
-            replay: self.events.iter().cloned().collect(),
+            replay,
             truncated: self.truncated,
         }
     }
@@ -142,8 +159,11 @@ mod tests {
         let mut buffer = OutputRingBuffer::new(16);
         buffer.push(Bytes::from_static(&[0, 0xff, 0x80, b'A']));
 
-        assert_eq!(buffer.snapshot().bytes, [0, 0xff, 0x80, b'A']);
-        assert!(!buffer.snapshot().truncated);
+        assert_eq!(
+            buffer.snapshot(ScrollbackSnapshotFormat::Flat).bytes,
+            [0, 0xff, 0x80, b'A']
+        );
+        assert!(!buffer.snapshot(ScrollbackSnapshotFormat::Flat).truncated);
     }
 
     #[test]
@@ -153,9 +173,12 @@ mod tests {
         buffer.push(Bytes::from_static(b"def"));
         buffer.push(Bytes::from_static(b"gh"));
 
-        assert_eq!(buffer.snapshot().bytes, b"defgh");
+        assert_eq!(
+            buffer.snapshot(ScrollbackSnapshotFormat::Flat).bytes,
+            b"defgh"
+        );
         assert_eq!(buffer.total_bytes(), 5);
-        assert!(buffer.snapshot().truncated);
+        assert!(buffer.snapshot(ScrollbackSnapshotFormat::Flat).truncated);
     }
 
     #[test]
@@ -163,9 +186,12 @@ mod tests {
         let mut buffer = OutputRingBuffer::new(4);
         buffer.push(Bytes::from_static(b"123456"));
 
-        assert_eq!(buffer.snapshot().bytes, b"3456");
+        assert_eq!(
+            buffer.snapshot(ScrollbackSnapshotFormat::Flat).bytes,
+            b"3456"
+        );
         assert_eq!(buffer.total_bytes(), 4);
-        assert!(buffer.snapshot().truncated);
+        assert!(buffer.snapshot(ScrollbackSnapshotFormat::Flat).truncated);
     }
 
     #[test]
@@ -173,8 +199,32 @@ mod tests {
         let mut buffer = OutputRingBuffer::new(8);
         buffer.push(Bytes::from_static(b"abc"));
 
-        assert_eq!(buffer.snapshot(), buffer.snapshot());
+        assert_eq!(
+            buffer.snapshot(ScrollbackSnapshotFormat::Flat),
+            buffer.snapshot(ScrollbackSnapshotFormat::Flat)
+        );
         assert_eq!(buffer.total_bytes(), 3);
+    }
+
+    #[test]
+    fn snapshot_format_does_not_duplicate_retained_output() {
+        let mut buffer = OutputRingBuffer::new(8);
+        buffer.resize(24, 80);
+        buffer.push(Bytes::from_static(b"abc"));
+
+        let flat = buffer.snapshot(ScrollbackSnapshotFormat::Flat);
+        assert_eq!(flat.bytes, b"abc");
+        assert!(flat.replay.is_empty());
+
+        let replay = buffer.snapshot(ScrollbackSnapshotFormat::Replay);
+        assert!(replay.bytes.is_empty());
+        assert_eq!(
+            replay.replay,
+            vec![
+                ScrollbackReplayEvent::Resize { rows: 24, cols: 80 },
+                ScrollbackReplayEvent::Output(Bytes::from_static(b"abc")),
+            ]
+        );
     }
 
     #[test]
@@ -182,8 +232,8 @@ mod tests {
         let mut buffer = OutputRingBuffer::new(4);
         buffer.push(Bytes::new());
 
-        assert_eq!(buffer.snapshot().bytes, b"");
-        assert!(!buffer.snapshot().truncated);
+        assert_eq!(buffer.snapshot(ScrollbackSnapshotFormat::Flat).bytes, b"");
+        assert!(!buffer.snapshot(ScrollbackSnapshotFormat::Flat).truncated);
     }
 
     #[test]
@@ -195,7 +245,7 @@ mod tests {
         buffer.push(Bytes::from_static(b"second"));
 
         assert_eq!(
-            buffer.snapshot().replay,
+            buffer.snapshot(ScrollbackSnapshotFormat::Replay).replay,
             vec![
                 ScrollbackReplayEvent::Resize { rows: 24, cols: 80 },
                 ScrollbackReplayEvent::Output(Bytes::from_static(b"first")),
@@ -217,7 +267,7 @@ mod tests {
         buffer.push(Bytes::from_static(b"newer"));
 
         assert_eq!(
-            buffer.snapshot().replay,
+            buffer.snapshot(ScrollbackSnapshotFormat::Replay).replay,
             vec![
                 ScrollbackReplayEvent::Resize {
                     rows: 30,

@@ -3,6 +3,7 @@
 
 pub mod client;
 pub mod command_builder;
+pub mod credential;
 pub mod model;
 pub mod repository;
 

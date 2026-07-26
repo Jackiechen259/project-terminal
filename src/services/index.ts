@@ -118,6 +118,9 @@ export interface SshConnectionInput {
   port: number;
   username: string;
   authenticationType: SshConnection["authenticationType"];
+  /** Write-only. Never returned by the backend. */
+  password?: string;
+  clearSavedPassword?: boolean;
   identityFile?: string;
   useSshAgent: boolean;
   jumpHost?: SshConnection["jumpHost"];

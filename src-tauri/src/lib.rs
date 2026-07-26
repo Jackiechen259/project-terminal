@@ -24,6 +24,12 @@ use state::AppState;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Manager;
 
+/// Used by the executable's lightweight SSH_ASKPASS entrypoint before Tauri
+/// is initialized.
+pub fn ssh_askpass_exit_code() -> Option<i32> {
+    ssh::credential::askpass_exit_code()
+}
+
 const APP_ERROR_TITLE: &str = "Project Terminal - startup failed";
 
 #[derive(Default)]

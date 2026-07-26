@@ -633,46 +633,59 @@
           padding: 3px 3px 1px;
         }
         .controlbar {
-          min-height: 40px;
-          padding: 0.25rem 0.4rem calc(0.25rem + env(safe-area-inset-bottom));
+          min-height: 86px;
+          padding: 0.35rem 0.45rem
+            calc(0.4rem + env(safe-area-inset-bottom));
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto auto;
+          grid-template-areas:
+            "status interrupt focus"
+            "keys keys keys";
           align-items: center;
-          gap: 0.3rem;
-          flex-wrap: nowrap;
+          gap: 0.35rem 0.4rem;
         }
         .control-pill {
+          grid-area: status;
           min-height: 30px;
-          flex: 0 1 auto;
+          width: 100%;
           gap: 0.35rem;
           font-size: 10px;
         }
         .control-pill strong {
           display: block;
-          max-width: 74px;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
+        #interrupt {
+          grid-area: interrupt;
+        }
         .action-button {
-          min-height: 32px;
-          padding: 0.3rem 0.5rem;
+          min-height: 36px;
+          padding: 0.35rem 0.6rem;
           font-size: 11px;
         }
         .keystrip {
-          width: auto;
+          grid-area: keys;
+          width: 100%;
           min-width: 0;
-          flex: 1;
-          order: initial;
-          gap: 0.25rem;
+          display: grid;
+          grid-template-columns: repeat(6, minmax(0, 1fr));
+          gap: 0.3rem;
+          overflow: visible;
         }
         .key-button {
-          min-width: 32px;
-          height: 30px;
-          padding: 0 0.4rem;
+          width: 100%;
+          min-width: 0;
+          height: 38px;
+          padding: 0 0.2rem;
           font-size: 11px;
+          touch-action: manipulation;
         }
         .focus-button {
-          width: 32px;
-          height: 32px;
+          grid-area: focus;
+          width: 36px;
+          height: 36px;
           font-size: 14px;
         }
         .notice {
@@ -706,7 +719,8 @@
         }
         .controlbar {
           min-height: 40px;
-          padding-block: 0.3rem;
+          padding-top: 0.3rem;
+          padding-bottom: calc(0.3rem + env(safe-area-inset-bottom));
         }
       }
     </style>

@@ -153,6 +153,7 @@ pub(crate) fn build_session_spawn(
         )));
     }
 
+    let mut ssh_environment = Vec::new();
     let (program, args, cwd) = match project.project_type {
         crate::project::ProjectType::Local => {
             let (program, args) = resolve_local_shell(&profile)?;
@@ -208,7 +209,11 @@ pub(crate) fn build_session_spawn(
             let ssh_project = project.ssh.as_ref().ok_or_else(|| {
                 AppError::Configuration("SSH project is missing SSH configuration".into())
             })?;
-            let connection = app.ssh.get(&ssh_project.connection_id)?;
+            let mut connection = app.ssh.get(&ssh_project.connection_id)?;
+            connection.password_saved = crate::ssh::credential::password_exists(&connection.id)?;
+            if connection.password_saved {
+                ssh_environment = crate::ssh::credential::askpass_environment(&connection.id)?;
+            }
             let client = crate::ssh::detect_ssh_client().ok_or(AppError::SshClientNotFound)?;
             let remote_command = remote_start_command(&profile, &ssh_project.remote_path)?;
             let command =
@@ -236,6 +241,7 @@ pub(crate) fn build_session_spawn(
         "PROJECT_TERMINAL_READY".into(),
         format!("__PROJECT_TERMINAL_READY_{session_id}__"),
     ));
+    env.extend(ssh_environment);
 
     let project_type = project.project_type;
     Ok((
@@ -714,7 +720,11 @@ pub fn session_attach(
     use base64::Engine;
     use tokio::sync::broadcast::error::RecvError;
 
-    let (info, subscription) = terminal.manager.attach(&session_id, client_id.clone())?;
+    let (info, subscription) = terminal.manager.attach(
+        &session_id,
+        client_id.clone(),
+        crate::terminal::scrollback::ScrollbackSnapshotFormat::Replay,
+    )?;
     let crate::terminal::scrollback::ScrollbackSnapshot {
         bytes,
         replay,
@@ -1267,7 +1277,11 @@ mod tests {
         let id = terminal.manager.create(spawn).unwrap();
         let (_, subscription) = terminal
             .manager
-            .attach(&id, "activation-test".into())
+            .attach(
+                &id,
+                "activation-test".into(),
+                crate::terminal::scrollback::ScrollbackSnapshotFormat::Replay,
+            )
             .unwrap();
         let mut rx = subscription.receiver;
 
@@ -1336,7 +1350,14 @@ mod tests {
         spawn.readiness_marker = None;
 
         let id = terminal.manager.create(spawn).unwrap();
-        let (_, subscription) = terminal.manager.attach(&id, "startup-test".into()).unwrap();
+        let (_, subscription) = terminal
+            .manager
+            .attach(
+                &id,
+                "startup-test".into(),
+                crate::terminal::scrollback::ScrollbackSnapshotFormat::Replay,
+            )
+            .unwrap();
         let mut rx = subscription.receiver;
 
         // Execute startup commands manually (replicating the wrapper).

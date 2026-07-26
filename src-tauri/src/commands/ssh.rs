@@ -44,6 +44,12 @@ pub struct SshConnectionInput {
     pub port: u16,
     pub username: String,
     pub authentication_type: crate::ssh::SshAuthenticationType,
+    /// Write-only secret. It is moved into the OS credential vault and is
+    /// never copied into `SshConnection`.
+    #[serde(default, skip_serializing)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub clear_saved_password: bool,
     #[serde(default)]
     pub identity_file: Option<String>,
     #[serde(default)]
@@ -86,6 +92,7 @@ fn build_connection_from_input(input: SshConnectionInput, id: String) -> AppResu
         port: input.port,
         username: input.username,
         authentication_type: input.authentication_type,
+        password_saved: false,
         identity_file: input.identity_file,
         use_ssh_agent: input.use_ssh_agent,
         jump_host: input.jump_host,
@@ -117,11 +124,61 @@ fn projects_referencing_connection(state: &AppState, connection_id: &str) -> Vec
         .unwrap_or_default()
 }
 
+fn validate_password_input(input: &SshConnectionInput) -> AppResult<()> {
+    if input.password.is_some() && input.clear_saved_password {
+        return Err(AppError::Configuration(
+            "Cannot save and remove an SSH password in the same update".into(),
+        ));
+    }
+    if let Some(password) = input.password.as_deref() {
+        if password.is_empty() {
+            return Err(AppError::Configuration(
+                "A saved SSH password must not be empty".into(),
+            ));
+        }
+        // Windows Credential Manager's documented generic-credential blob
+        // limit. Check before calling the OS so the UI gets a readable error.
+        if password.len() > 2560 {
+            return Err(AppError::Configuration(
+                "The SSH password is too large to save securely".into(),
+            ));
+        }
+        if input.authentication_type != crate::ssh::SshAuthenticationType::Password {
+            return Err(AppError::Configuration(
+                "A saved password requires password authentication".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn refresh_password_status(mut connection: SshConnection) -> AppResult<SshConnection> {
+    connection.password_saved = crate::ssh::credential::password_exists(&connection.id)?;
+    Ok(connection)
+}
+
+fn apply_saved_password_environment(
+    command: &mut Command,
+    connection: &SshConnection,
+) -> AppResult<()> {
+    if connection.password_saved {
+        command.envs(crate::ssh::credential::askpass_environment(&connection.id)?);
+    }
+    Ok(())
+}
+
 pub fn list_ssh_connections_inner(state: &AppState) -> AppResult<ListResponse<SshConnection>> {
-    Ok(ListResponse::new(state.ssh.list()?))
+    let connections = state
+        .ssh
+        .list()?
+        .into_iter()
+        .map(refresh_password_status)
+        .collect::<AppResult<Vec<_>>>()?;
+    Ok(ListResponse::new(connections))
 }
 
 pub fn validate_ssh_connection_inner(input: SshConnectionInput) -> AppResult<()> {
+    validate_password_input(&input)?;
     let conn = build_connection_from_input(input, "scratch".to_string())?;
     conn.validate()
 }
@@ -131,9 +188,24 @@ pub fn create_ssh_connection_inner(
     input: SshConnectionInput,
 ) -> AppResult<SshConnection> {
     state.with_config_write(|| {
+        validate_password_input(&input)?;
+        let password = input.password.clone();
         let id = crate::state::new_id("ssh");
-        let conn = build_connection_from_input(input, id)?;
-        state.ssh.upsert(conn)
+        let mut conn = build_connection_from_input(input, id)?;
+        conn.validate()?;
+        if let Some(password) = password.as_deref() {
+            crate::ssh::credential::save_password(&conn.id, password)?;
+            conn.password_saved = true;
+        }
+        match state.ssh.upsert(conn.clone()) {
+            Ok(saved) => Ok(saved),
+            Err(error) => {
+                if conn.password_saved {
+                    let _ = crate::ssh::credential::delete_password(&conn.id);
+                }
+                Err(error)
+            }
+        }
     })
 }
 
@@ -142,6 +214,10 @@ pub fn update_ssh_connection_inner(
     input: SshConnectionInput,
 ) -> AppResult<SshConnection> {
     state.with_config_write(|| {
+        validate_password_input(&input)?;
+        let replacement_password = input.password.clone();
+        let clear_saved_password = input.clear_saved_password
+            || input.authentication_type != crate::ssh::SshAuthenticationType::Password;
         let id = input.id.clone().ok_or_else(|| {
             AppError::Configuration("update_ssh_connection requires an id".into())
         })?;
@@ -153,6 +229,7 @@ pub fn update_ssh_connection_inner(
             port: input.port,
             username: input.username,
             authentication_type: input.authentication_type,
+            password_saved: false,
             identity_file: input.identity_file,
             use_ssh_agent: input.use_ssh_agent,
             jump_host: input.jump_host,
@@ -165,6 +242,16 @@ pub fn update_ssh_connection_inner(
             created_at: existing.created_at,
             updated_at: Utc::now(),
         };
+        updated.validate()?;
+        let mut updated = updated;
+        if let Some(password) = replacement_password.as_deref() {
+            crate::ssh::credential::save_password(&id, password)?;
+            updated.password_saved = true;
+        } else if clear_saved_password {
+            crate::ssh::credential::delete_password(&id)?;
+        } else {
+            updated.password_saved = crate::ssh::credential::password_exists(&id)?;
+        }
         state.ssh.upsert(updated)
     })
 }
@@ -174,16 +261,22 @@ pub fn delete_ssh_connection_inner(state: &AppState, id: &str) -> AppResult<()> 
     // and surface the referencing project id.
     state.with_config_write(|| {
         let references = projects_referencing_connection(state, id);
+        if let Some(project_id) = references.first() {
+            return Err(AppError::SshConnectionInUse(project_id.clone()));
+        }
+        crate::ssh::credential::delete_password(id)?;
         state.ssh.delete(id, &references)
     })
 }
 
 pub fn test_ssh_connection_inner(state: &AppState, id: &str) -> AppResult<String> {
-    let connection = state.ssh.get(id)?;
+    let connection = refresh_password_status(state.ssh.get(id)?)?;
     let client = crate::ssh::detect_ssh_client().ok_or(AppError::SshClientNotFound)?;
     let command = crate::ssh::build_ssh_test_argv(&connection);
-    let mut child = Command::new(&client.executable)
-        .args(&command.args)
+    let mut process = Command::new(&client.executable);
+    process.args(&command.args);
+    apply_saved_password_environment(&mut process, &connection)?;
+    let mut child = process
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -321,12 +414,14 @@ pub fn list_remote_directories_inner(
     connection_id: &str,
     path: &str,
 ) -> AppResult<RemoteDirectoryListing> {
-    let connection = state.ssh.get(connection_id)?;
+    let connection = refresh_password_status(state.ssh.get(connection_id)?)?;
     let client = crate::ssh::detect_ssh_client().ok_or(AppError::SshClientNotFound)?;
     let command = remote_directory_command(path)?;
     let ssh_command = crate::ssh::build_ssh_browse_argv(&connection, command);
-    let mut child = Command::new(&client.executable)
-        .args(&ssh_command.args)
+    let mut process = Command::new(&client.executable);
+    process.args(&ssh_command.args);
+    apply_saved_password_environment(&mut process, &connection)?;
+    let mut child = process
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -432,17 +527,32 @@ pub fn delete_ssh_connection(state: tauri::State<'_, AppState>, id: String) -> A
 }
 
 #[tauri::command]
-pub fn test_ssh_connection(state: tauri::State<'_, AppState>, id: String) -> AppResult<String> {
-    test_ssh_connection_inner(&state, &id)
+pub async fn test_ssh_connection(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> AppResult<String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || test_ssh_connection_inner(&state, &id))
+        .await
+        .map_err(|error| {
+            AppError::SshConnectionFailed(format!("SSH test worker failed: {error}"))
+        })?
 }
 
 #[tauri::command]
-pub fn list_remote_directories(
+pub async fn list_remote_directories(
     state: tauri::State<'_, AppState>,
     connection_id: String,
     path: String,
 ) -> AppResult<RemoteDirectoryListing> {
-    list_remote_directories_inner(&state, &connection_id, &path)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        list_remote_directories_inner(&state, &connection_id, &path)
+    })
+    .await
+    .map_err(|error| {
+        AppError::SshConnectionFailed(format!("Remote directory worker failed: {error}"))
+    })?
 }
 
 #[tauri::command]
@@ -484,6 +594,8 @@ mod tests {
             port: 22,
             username: "user".into(),
             authentication_type: crate::ssh::SshAuthenticationType::Agent,
+            password: None,
+            clear_saved_password: false,
             identity_file: None,
             use_ssh_agent: true,
             jump_host: None,
@@ -552,6 +664,19 @@ mod tests {
     fn validate_ssh_connection_rejects_empty_host() {
         let mut input = sample_input();
         input.host = "".into();
+        assert!(validate_ssh_connection_inner(input).is_err());
+    }
+
+    #[test]
+    fn password_input_is_write_only_and_requires_password_authentication() {
+        let mut input = sample_input();
+        input.password = Some("secret".into());
+        assert!(validate_ssh_connection_inner(input.clone()).is_err());
+
+        input.authentication_type = crate::ssh::SshAuthenticationType::Password;
+        validate_ssh_connection_inner(input.clone()).unwrap();
+
+        input.clear_saved_password = true;
         assert!(validate_ssh_connection_inner(input).is_err());
     }
 
