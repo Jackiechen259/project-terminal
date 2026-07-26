@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import { getVersion } from "@tauri-apps/api/app";
 import {
   Copy,
   Link2,
@@ -14,7 +13,8 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
 import { requestUpdateCheck } from "@/services/updater";
-import { daemonService } from "@/services";
+import { remoteAccessService } from "@/services";
+import { nativeAppService } from "@/services/native";
 import {
   DEFAULT_GENERAL_SETTINGS,
   useSettingsStore,
@@ -52,7 +52,7 @@ export function GeneralSettingsPanel() {
   const reset = useSettingsStore((state) => state.resetGeneralSettings);
   const [version, setVersion] = useState("");
   const [remoteInfo, setRemoteInfo] = useState<Awaited<
-    ReturnType<typeof daemonService.remoteAccessInfo>
+    ReturnType<typeof remoteAccessService.remoteAccessInfo>
   > | null>(null);
   const [showRemoteToken, setShowRemoteToken] = useState(false);
   const [remoteError, setRemoteError] = useState<string | null>(null);
@@ -70,7 +70,7 @@ export function GeneralSettingsPanel() {
     [t],
   );
   const loadRemoteInfo = useCallback(() => {
-    daemonService
+    remoteAccessService
       .remoteAccessInfo()
       .then((info) => {
         setRemoteInfo(info);
@@ -82,7 +82,7 @@ export function GeneralSettingsPanel() {
     loadRemoteInfo();
   }, [loadRemoteInfo]);
   useEffect(() => {
-    void getVersion().then(setVersion);
+    void nativeAppService.version().then(setVersion);
   }, []);
 
   const isDefault =
@@ -313,7 +313,7 @@ export function GeneralSettingsPanel() {
               label={t("Enable remote access")}
               checked={remoteInfo?.enabled ?? false}
               onCheckedChange={(checked) =>
-                void daemonService
+                void remoteAccessService
                   .setRemoteEnabled(checked)
                   .then((info) => {
                     setRemoteInfo(info);
@@ -343,7 +343,7 @@ export function GeneralSettingsPanel() {
                 label={t("Allow LAN access")}
                 checked={remoteInfo.allowLan}
                 onCheckedChange={(checked) =>
-                  void daemonService
+                  void remoteAccessService
                     .setRemoteLanAccess(checked)
                     .then((info) => {
                       setRemoteInfo(info);

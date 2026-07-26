@@ -105,7 +105,7 @@ impl RemoteGateway {
     }
 
     /// Switch the gateway between loopback-only and LAN-wide bind without
-    /// restarting the daemon. Existing WebSocket clients drop (the address
+    /// restarting the desktop process. Existing WebSocket clients drop (the address
     /// changed) and must re-scan; terminal sessions are unaffected.
     pub(crate) fn reconfigure(&self, allow_lan: bool) -> AppResult<()> {
         if !*self.enabled.lock() {
@@ -113,7 +113,7 @@ impl RemoteGateway {
                 "Remote access is disabled by the host".into(),
             ));
         }
-        // Persist so the choice survives a daemon restart.
+        // Persist so the choice survives an application restart.
         let mut config = read_remote_config(&self.config_path);
         config.allow_lan = allow_lan;
         write_remote_config(&self.config_path, &config)?;
@@ -130,7 +130,7 @@ impl RemoteGateway {
         Ok(())
     }
 
-    /// Turn the entire remote gateway on or off without restarting the daemon.
+    /// Turn the entire remote gateway on or off without restarting the app.
     /// When disabled the listener is stopped and no remote connections are
     /// accepted; when re-enabled the listener starts on the stored bind. The
     /// host env var (`PROJECT_TERMINAL_REMOTE_DISABLED=1`) is a hard override
@@ -745,6 +745,7 @@ async fn close_session(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sensitive_action(
     state: RemoteState,
     peer: SocketAddr,
@@ -967,6 +968,9 @@ fn handle_ws_message(
     }
 }
 
+// Axum handlers return the framework Response directly on authorization
+// failure; boxing it would only add allocation and unboxing at every caller.
+#[allow(clippy::result_large_err)]
 fn authorize(
     state: &RemoteState,
     peer: SocketAddr,
@@ -993,6 +997,7 @@ fn authorize(
     Ok(())
 }
 
+#[allow(clippy::result_large_err)]
 fn acquire_control(
     state: &RemoteState,
     session_id: &str,
@@ -1017,6 +1022,7 @@ fn acquire_control(
     Ok(response)
 }
 
+#[allow(clippy::result_large_err)]
 fn validate_lease(
     state: &RemoteState,
     session_id: &str,
@@ -1230,7 +1236,7 @@ fn compute_advertise_url(bind: SocketAddr) -> String {
         IpAddr::V4(ip) => ip.to_string(),
         IpAddr::V6(ip) => format!("[{ip}]"),
     };
-    // The daemon listener itself remains HTTP even when TLS is terminated by
+    // The gateway listener itself remains HTTP even when TLS is terminated by
     // a reverse proxy. Set PROJECT_TERMINAL_REMOTE_URL to advertise the
     // proxy's external HTTPS URL instead of this direct listener address.
     format!("http://{host}:{}", bind.port())
@@ -1285,7 +1291,7 @@ const MOBILE_PAGE: &str = include_str!("remote_page.html");
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::profile::{default_local_profile, ProfileRepository, TemplateRepository};
+    use crate::profile::{default_local_profile, ProfileRepository, ShellType, TemplateRepository};
     use crate::project::{LocalProjectConfig, Project, ProjectRepository, ProjectType};
     use crate::ssh::SshConnectionRepository;
     use crate::terminal::SessionSpawn;
@@ -1398,9 +1404,18 @@ mod tests {
                 updated_at: now,
             })
             .unwrap();
-        app.profiles
-            .upsert(default_local_profile(profile_id, project_id.clone()))
-            .unwrap();
+        // Use the platform's lightweight system shell explicitly. The host
+        // default may be PowerShell, whose startup time becomes nondeterministic
+        // when the full PTY-heavy test suite runs in parallel.
+        let mut profile = default_local_profile(profile_id, project_id.clone());
+        if cfg!(windows) {
+            profile.shell_type = ShellType::Cmd;
+            profile.shell_executable = Some("cmd.exe".into());
+        } else {
+            profile.shell_type = ShellType::Sh;
+            profile.shell_executable = Some("/bin/sh".into());
+        }
+        app.profiles.upsert(profile).unwrap();
         let terminal = TerminalState::new();
         let state = RemoteState {
             manager: terminal.manager.clone_handle(),

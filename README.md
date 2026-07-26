@@ -154,7 +154,8 @@ Rust application backend
         │
         ├── Project, profile, SSH, and settings repositories
         ├── Shell and environment resolution
-        ├── Terminal session manager
+        ├── Single desktop-owned terminal session manager
+        ├── Authenticated remote HTTP/WebSocket gateway
         └── portable-pty
                 │
                 ├── PowerShell / CMD / Git Bash
@@ -165,6 +166,11 @@ Rust application backend
 ### Terminal sessions
 
 Every terminal tab owns an independent PTY created by Rust through `portable-pty`. The frontend sends input bytes to the backend and receives terminal output through a Tauri channel associated with the session ID.
+
+The desktop process is the sole owner of live PTYs. Both the Tauri command
+adapter and the optional remote gateway share the same terminal manager, so
+session lifecycle and status cannot diverge between local and remote clients.
+Hiding the window keeps that process running; fully quitting stops all PTYs.
 
 ### Project tab groups
 
@@ -280,12 +286,12 @@ cargo test --manifest-path src-tauri/Cargo.toml
 project-terminal/
 ├── src/                         React and TypeScript frontend
 │   ├── components/
-│   │   ├── common/              Shared feedback and dialog components
 │   │   ├── layout/              Main layout and custom title bar
-│   │   ├── profiles/            Terminal profile UI
 │   │   ├── projects/            Project sidebar and project dialogs
+│   │   ├── settings/            Preferences, profiles, and templates
 │   │   ├── ssh/                 SSH connection UI
-│   │   └── terminal/            Terminal tabs, views, and workspace
+│   │   ├── terminal/            Terminal tabs, views, and workspace
+│   │   └── ui/                  Shared UI primitives
 │   ├── services/                Tauri command bindings
 │   ├── stores/                  Zustand stores
 │   ├── types/                   Frontend domain types
@@ -293,9 +299,9 @@ project-terminal/
 ├── src-tauri/
 │   ├── src/
 │   │   ├── commands/            Tauri command handlers
-│   │   ├── environment/         Environment activation and resolution
 │   │   ├── profile/             Terminal profile model and persistence
 │   │   ├── project/             Project model and persistence
+│   │   ├── remote/              Authenticated remote-access gateway
 │   │   ├── ssh/                 SSH configuration and command building
 │   │   └── terminal/            PTY sessions and terminal management
 │   ├── capabilities/            Tauri permission configuration

@@ -55,21 +55,11 @@ impl ConfigDirs {
     pub fn ssh_connections_path(&self) -> PathBuf {
         self.root.join("ssh-connections.json")
     }
-    pub fn daemon_state_path(&self) -> PathBuf {
-        self.root.join("daemon-state.json")
-    }
     pub fn remote_audit_path(&self) -> PathBuf {
         self.root.join("remote-audit.jsonl")
     }
     pub fn remote_config_path(&self) -> PathBuf {
         self.root.join("remote-config.json")
-    }
-    #[cfg(unix)]
-    pub fn daemon_socket_path(&self) -> PathBuf {
-        std::env::var_os("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(std::env::temp_dir)
-            .join("project-terminal.sock")
     }
     #[cfg(test)]
     pub fn settings_path(&self) -> PathBuf {
@@ -113,10 +103,6 @@ mod tests {
             .ssh_connections_path()
             .to_string_lossy()
             .ends_with("ssh-connections.json"));
-        assert!(dirs
-            .daemon_state_path()
-            .to_string_lossy()
-            .ends_with("daemon-state.json"));
         assert!(dirs
             .remote_audit_path()
             .to_string_lossy()

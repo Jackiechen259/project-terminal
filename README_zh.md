@@ -152,7 +152,8 @@ Rust 应用后端
         │
         ├── 项目 (Project)、配置 (Profile)、SSH 与设置存储仓 (Repositories)
         ├── Shell 与开发环境解析器
-        ├── 终端会话管理器 (Terminal session manager)
+        ├── 桌面进程唯一持有的终端会话管理器
+        ├── 经身份验证的远程 HTTP/WebSocket 网关
         └── portable-pty
                 │
                 ├── PowerShell / CMD / Git Bash
@@ -163,6 +164,8 @@ Rust 应用后端
 ### 终端会话 (Terminal Sessions)
 
 每个终端标签页都在 Rust 后端通过 `portable-pty` 创建并拥有独立的 PTY。前端向后端发送输入字节流，并通过与会话 ID 绑定的 Tauri Channel 实时接收终端输出。
+
+桌面进程是实时 PTY 的唯一所有者。Tauri 命令适配器与可选远程网关共享同一个终端管理器，因此本地端与远程端的会话生命周期和状态不会产生分歧。隐藏窗口会保持该进程运行；完全退出应用时会停止全部 PTY。
 
 ### 项目标签页组 (Project Tab Groups)
 
@@ -279,12 +282,12 @@ cargo test --manifest-path src-tauri/Cargo.toml
 project-terminal/
 ├── src/                         React & TypeScript 前端代码
 │   ├── components/
-│   │   ├── common/              通用反馈与对话框组件
 │   │   ├── layout/              主布局与自定义标题栏
-│   │   ├── profiles/            终端 Profile 配置 UI
 │   │   ├── projects/            项目侧边栏与项目对话框
+│   │   ├── settings/            偏好设置、Profile 与模板
 │   │   ├── ssh/                 SSH 连接管理 UI
-│   │   └── terminal/            终端标签页、视图与工作区
+│   │   ├── terminal/            终端标签页、视图与工作区
+│   │   └── ui/                  通用 UI 基础组件
 │   ├── services/                Tauri 命令绑定
 │   ├── stores/                  Zustand 状态管理
 │   ├── types/                   前端领域类型定义
@@ -292,9 +295,9 @@ project-terminal/
 ├── src-tauri/
 │   ├── src/
 │   │   ├── commands/            Tauri 命令处理函数
-│   │   ├── environment/         开发环境激活与解析
 │   │   ├── profile/             终端 Profile 模型与持久化
 │   │   ├── project/             项目模型与持久化
+│   │   ├── remote/              经身份验证的远程访问网关
 │   │   ├── ssh/                 SSH 配置与命令构建
 │   │   └── terminal/            PTY 会话与终端管理
 │   ├── capabilities/            Tauri 权限配置

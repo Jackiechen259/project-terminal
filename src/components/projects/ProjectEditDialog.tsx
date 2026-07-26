@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
 import { FolderOpen } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -27,6 +26,7 @@ import { environmentService } from "@/services";
 import type { Project } from "@/types";
 import { RemoteFolderPicker } from "@/components/ssh/RemoteFolderPicker";
 import { useTranslation } from "@/i18n";
+import { nativeDialogService } from "@/services/native";
 
 export function ProjectEditDialog({
   project,
@@ -79,8 +79,8 @@ export function ProjectEditDialog({
   }, [openState, project, loadConnections, wslSupported]);
 
   async function chooseFolder() {
-    const selected = await open({ directory: true, multiple: false });
-    if (typeof selected === "string") setLocalPath(selected);
+    const selected = await nativeDialogService.selectDirectory();
+    if (selected) setLocalPath(selected);
   }
 
   async function save() {

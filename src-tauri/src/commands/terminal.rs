@@ -106,6 +106,23 @@ impl TerminalState {
         self.meta.lock().remove(session_id);
     }
 
+    /// Close every live terminal belonging to a project and discard restart
+    /// metadata. Project deletion uses this as one backend-owned operation so
+    /// callers cannot leave sessions detached from their persisted project.
+    pub(crate) fn close_project_sessions(&self, project_id: &str) {
+        let session_ids = self
+            .manager
+            .list()
+            .into_iter()
+            .filter(|session| session.project_id == project_id)
+            .map(|session| session.session_id)
+            .collect::<Vec<_>>();
+        for session_id in session_ids {
+            let _ = self.manager.close(&session_id);
+            self.forget(&session_id);
+        }
+    }
+
     #[allow(dead_code)]
     fn meta_for(&self, session_id: &str) -> Option<(String, String)> {
         self.meta
@@ -582,9 +599,9 @@ pub async fn create_terminal_inner(
     // Load the project and profile once for the whole launch. Previously the
     // same JSON files were read and parsed again for project-type detection,
     // readiness and startup-command injection.
-    let (spawn, project_type, profile) = build_session_spawn(&app, &request, &session_id)?;
+    let (spawn, project_type, profile) = build_session_spawn(app, &request, &session_id)?;
     let manager = terminal.manager.clone_handle();
-    let id = run_terminal_launch(&terminal, move || {
+    let id = run_terminal_launch(terminal, move || {
         launch_terminal(&manager, spawn, project_type, &profile)
     })
     .await?;
@@ -653,9 +670,9 @@ pub async fn restart_terminal_inner(
         cols: 80,
         scrollback_megabytes: Some(4),
     };
-    let (spawn, project_type, profile) = build_session_spawn(&app, &request, &new_id)?;
+    let (spawn, project_type, profile) = build_session_spawn(app, &request, &new_id)?;
     let manager = terminal.manager.clone_handle();
-    let id = run_terminal_launch(&terminal, move || {
+    let id = run_terminal_launch(terminal, move || {
         launch_terminal(&manager, spawn, project_type, &profile)
     })
     .await?;
@@ -878,6 +895,50 @@ mod tests {
             normalize_initialization_script(ShellType::Powershell, "first\r\nsecond\r\n"),
             "first\rsecond\r"
         );
+    }
+
+    #[test]
+    fn close_project_sessions_only_closes_the_target_project() {
+        fn spawn(session_id: &str, project_id: &str) -> SessionSpawn {
+            SessionSpawn {
+                session_id: session_id.into(),
+                project_id: project_id.into(),
+                profile_id: format!("profile-{project_id}"),
+                program: if cfg!(windows) {
+                    "cmd.exe".into()
+                } else {
+                    "/bin/sh".into()
+                },
+                args: if cfg!(windows) {
+                    vec!["/Q".into()]
+                } else {
+                    Vec::new()
+                },
+                cwd: None,
+                env: Vec::new(),
+                readiness_marker: None,
+                rows: 24,
+                cols: 80,
+                scrollback_bytes: 1024,
+            }
+        }
+
+        let terminal = TerminalState::new();
+        terminal.manager.create(spawn("session-p1", "p1")).unwrap();
+        terminal.manager.create(spawn("session-p2", "p2")).unwrap();
+        terminal.remember("session-p1", "p1", "profile-p1");
+        terminal.remember("session-p2", "p2", "profile-p2");
+
+        terminal.close_project_sessions("p1");
+
+        assert!(terminal.manager.get("session-p1").is_err());
+        assert!(terminal.meta_for("session-p1").is_none());
+        assert!(terminal.manager.get("session-p2").is_ok());
+        assert_eq!(
+            terminal.meta_for("session-p2"),
+            Some(("p2".into(), "profile-p2".into()))
+        );
+        terminal.manager.close_all();
     }
 
     fn test_state() -> AppState {

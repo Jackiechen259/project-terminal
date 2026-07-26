@@ -19,7 +19,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   useProjectStore.setState({
     projects: [],
-    activeProjectId: null,
     loading: false,
     error: null,
   });
@@ -74,7 +73,7 @@ describe("projectStore", () => {
   });
 
   describe("deleteProject", () => {
-    it("removes the project and re-selects the first when active is deleted", async () => {
+    it("removes the deleted project", async () => {
       useProjectStore.setState({
         projects: [
           {
@@ -94,17 +93,15 @@ describe("projectStore", () => {
             updatedAt: "",
           },
         ],
-        activeProjectId: "p1",
       });
       projectServiceMock.delete.mockResolvedValueOnce(undefined);
       await useProjectStore.getState().deleteProject("p1");
       expect(useProjectStore.getState().projects.map((p) => p.id)).toEqual([
         "p2",
       ]);
-      expect(useProjectStore.getState().activeProjectId).toBe("p2");
     });
 
-    it("keeps activeProjectId when deleting a non-active project", async () => {
+    it("keeps the other projects when one is deleted", async () => {
       useProjectStore.setState({
         projects: [
           {
@@ -124,11 +121,34 @@ describe("projectStore", () => {
             updatedAt: "",
           },
         ],
-        activeProjectId: "p1",
       });
       projectServiceMock.delete.mockResolvedValueOnce(undefined);
       await useProjectStore.getState().deleteProject("p2");
-      expect(useProjectStore.getState().activeProjectId).toBe("p1");
+      expect(useProjectStore.getState().projects.map((p) => p.id)).toEqual([
+        "p1",
+      ]);
+    });
+
+    it("exposes a structured deletion error and preserves cached projects", async () => {
+      const projects = [
+        {
+          id: "p1",
+          name: "A",
+          type: "local" as const,
+          local: { path: "D:\\A" },
+          createdAt: "",
+          updatedAt: "",
+        },
+      ];
+      useProjectStore.setState({ projects });
+      const error = { code: "io", message: "Could not delete project" };
+      projectServiceMock.delete.mockRejectedValueOnce(error);
+
+      await expect(
+        useProjectStore.getState().deleteProject("p1"),
+      ).rejects.toEqual(error);
+      expect(useProjectStore.getState().projects).toEqual(projects);
+      expect(useProjectStore.getState().error).toEqual(error);
     });
   });
 });

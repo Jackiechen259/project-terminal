@@ -410,7 +410,6 @@ const zhCNWorkspace: Record<string, string> = {
   Unreachable: "不可达",
   "Remote access is disabled.": "远程访问已禁用。",
   "Enable remote access": "启用远程访问",
-  "Session Host is unavailable": "会话主机不可用",
   "Remote gateway is unavailable": "远程网关不可用",
   "The phone cannot reach 127.0.0.1. Use Tailscale or an HTTPS reverse proxy; the QR code works only after the gateway is reachable from the phone.":
     "手机无法访问 127.0.0.1。请改用 Tailscale 或 HTTPS 反向代理；只有当网关可被手机访问时，此二维码才会生效。",

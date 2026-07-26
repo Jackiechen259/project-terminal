@@ -17,6 +17,7 @@ use std::path::Path;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
+use crate::commands::terminal::TerminalState;
 use crate::commands::ListResponse;
 use crate::error::{AppError, AppResult};
 use crate::profile::{default_local_profile, default_remote_profile, default_wsl_profile};
@@ -320,6 +321,22 @@ pub fn update_project(
 #[tauri::command]
 pub fn delete_project(state: tauri::State<'_, AppState>, id: String) -> AppResult<()> {
     delete_project_inner(&state, &id)
+}
+
+/// Delete persisted project resources and then close all of its live PTYs.
+///
+/// Configuration deletion is performed first because it is the fallible,
+/// rollback-aware part of the operation. Closing a known or already-exited
+/// terminal is idempotent.
+#[tauri::command]
+pub fn delete_project_workspace(
+    state: tauri::State<'_, AppState>,
+    terminal: tauri::State<'_, TerminalState>,
+    id: String,
+) -> AppResult<()> {
+    delete_project_inner(&state, &id)?;
+    terminal.close_project_sessions(&id);
+    Ok(())
 }
 
 #[tauri::command]

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
 import { FolderOpen } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -28,6 +27,7 @@ import { environmentService, type ProjectInput } from "@/services";
 import { SshConnectionDialog } from "@/components/ssh/SshConnectionDialog";
 import { RemoteFolderPicker } from "@/components/ssh/RemoteFolderPicker";
 import { useTranslation } from "@/i18n";
+import { nativeDialogService } from "@/services/native";
 
 type ProjectType = "local" | "ssh" | "wsl";
 
@@ -135,8 +135,8 @@ export function ProjectDialog({
   }
 
   async function pickFolder() {
-    const selected = await open({ directory: true, multiple: false });
-    if (typeof selected === "string") {
+    const selected = await nativeDialogService.selectDirectory();
+    if (selected) {
       setLocalPath(selected);
     }
   }

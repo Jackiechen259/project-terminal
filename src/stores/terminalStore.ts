@@ -1,14 +1,9 @@
 /**
  * Zustand store for terminal tabs.
  *
- * Mirrors plan §9.3 - `tabsById: Record<id, TerminalTab>` and
- * `tabGroupsByProjectId: Record<projectId, ProjectTabGroup>`. Switching
- * projects only changes `activeProjectId` - tabs stay mounted, PTY readers
- * keep running, xterm instances are not disposed (plan §10).
- *
- * Phase 3/3.5 will add `createTerminal` that calls the backend PTY command.
- * For Phase 2 the store exists so components can be wired; terminal/session
- * management commands arrive in Phase 3.
+ * Tabs and recursive pane layouts are indexed by project. Switching projects
+ * only changes `activeProjectId`: tabs stay mounted, PTY readers keep running,
+ * and xterm instances are not disposed.
  */
 
 import { create } from "zustand";

@@ -1,11 +1,11 @@
 //! Tauri command modules.
 
 pub mod clipboard;
-pub mod daemon;
 pub mod platform;
 pub mod profile;
 pub mod profile_template;
 pub mod project;
+pub mod remote;
 pub mod ssh;
 pub mod terminal;
 use serde::Serialize;

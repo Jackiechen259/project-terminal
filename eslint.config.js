@@ -32,4 +32,21 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    files: ["src/components/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@tauri-apps/*"],
+              message:
+                "Use a typed adapter under src/services instead of importing Tauri in UI components.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 );

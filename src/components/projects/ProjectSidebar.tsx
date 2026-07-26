@@ -29,7 +29,7 @@ import {
 } from "@/stores/collectionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTerminalStore } from "@/stores/terminalStore";
-import { projectService, sshService, terminalService } from "@/services";
+import { projectService, sshService } from "@/services";
 import { cn } from "@/lib/utils";
 import { useDragPreviewPosition } from "@/lib/useDragPreviewPosition";
 import { listenForAppCommands } from "@/lib/appCommands";
@@ -38,6 +38,7 @@ import type { Project } from "@/types";
 import type { SettingsSection } from "@/components/settings/SettingsDialog";
 
 import { ProjectContextMenu } from "./ProjectContextMenu";
+import { useRemoveProject } from "./useRemoveProject";
 
 const loadProjectDialog = () => import("./ProjectDialog");
 const loadProjectEditDialog = () => import("./ProjectEditDialog");
@@ -1139,17 +1140,7 @@ function ProjectRow({
     ["starting", "connecting", "initializing", "running"].includes(tab.status),
   ).length;
   const hasError = tabs.some((tab) => tab.status === "error");
-  const deleteProject = useProjectStore((s) => s.deleteProject);
-  const projectGroup = useTerminalStore(
-    (s) => s.tabGroupsByProjectId[project.id],
-  );
-  const allTabs = useTerminalStore((s) => s.tabsById);
-  const projectTabs = useMemo(
-    () => projectGroup?.tabIds.map((id) => allTabs[id]).filter(Boolean) ?? [],
-    [allTabs, projectGroup],
-  );
-  const removeProjectTabs = useTerminalStore((s) => s.removeProjectTabs);
-  const setActiveProject = useTerminalStore((s) => s.setActiveProject);
+  const removeProjectWorkspace = useRemoveProject();
   const [menuPosition, setMenuPosition] = useState<{
     x: number;
     y: number;
@@ -1158,37 +1149,11 @@ function ProjectRow({
 
   async function removeProject() {
     if (window.confirm(t('Remove project "{name}"?', { name: project.name }))) {
-      let switchedTerminalProject = false;
-      let nextProjectId: string | null = null;
       try {
-        await Promise.all(
-          projectTabs
-            .filter((tab) => tab.sessionId)
-            .map((tab) => terminalService.close(tab.sessionId!)),
-        );
-        // Switch the terminal workspace before removing the active project
-        // from the project store. Otherwise TerminalWorkspace briefly has no
-        // active project and unmounts every TerminalView, which restarts PTYs
-        // belonging to the projects that were not deleted.
-        if (useTerminalStore.getState().activeProjectId === project.id) {
-          const remaining = useProjectStore
-            .getState()
-            .projects.filter((candidate) => candidate.id !== project.id);
-          nextProjectId = remaining[0]?.id ?? null;
-          setActiveProject(nextProjectId);
-          switchedTerminalProject = true;
-        }
-        await deleteProject(project.id);
-        removeProjectTabs(project.id);
+        await removeProjectWorkspace(project.id);
       } catch {
-        // Keep the existing project selected if persistence failed. Do not
-        // undo a newer selection made by the user while the request ran.
-        if (
-          switchedTerminalProject &&
-          useTerminalStore.getState().activeProjectId === nextProjectId
-        ) {
-          setActiveProject(project.id);
-        }
+        // The hook restores the prior selection if persistence fails. The
+        // project store exposes the structured error to the owning surface.
       }
     }
   }

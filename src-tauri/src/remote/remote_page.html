@@ -1266,7 +1266,7 @@
           if (!response.ok) {
             if (response.status === 401)
               throw new Error("The access token was rejected.");
-            throw new Error(`Session Host returned ${response.status}.`);
+            throw new Error(`Project Terminal returned ${response.status}.`);
           }
           const payload = await response.json();
           const sessions = (payload.sessions || []).filter(
@@ -1299,7 +1299,7 @@
           setConnection("Disconnected", "error");
           $("authLayer").classList.remove("hidden");
           $("authMessage").textContent =
-            error?.message || "Could not reach the Session Host.";
+            error?.message || "Could not reach Project Terminal.";
         }
       }
 
@@ -1393,7 +1393,7 @@
           if (!intentionalClose && authenticated) {
             setEmpty(
               "Connection lost",
-              "Trying to reconnect to the Session Host…",
+              "Trying to reconnect to Project Terminal…",
               "Reconnect",
             );
             reconnectTimer = setTimeout(connectSocket, RECONNECT_DELAY_MS);

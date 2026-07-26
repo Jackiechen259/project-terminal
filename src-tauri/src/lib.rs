@@ -9,11 +9,11 @@
 
 mod commands;
 mod config_dirs;
-pub mod daemon;
 pub mod error;
 mod platform;
 mod profile;
 mod project;
+mod remote;
 mod ssh;
 mod state;
 mod storage;
@@ -88,11 +88,10 @@ pub fn run() {
             std::process::exit(1);
         }
     };
-    // Remote clients must use the same manager as the desktop terminal
-    // commands. A gateway in the separate Session Host process only sees its
-    // own empty manager, so authenticated clients incorrectly get no sessions.
+    // Remote and desktop clients share the same manager, making the desktop
+    // process the single owner of every live PTY.
     let remote_gateway =
-        daemon::RemoteGateway::new(&remote_dirs, state.clone(), terminal_state.clone());
+        remote::RemoteGateway::new(&remote_dirs, state.clone(), terminal_state.clone());
 
     // Build the app. The RunEvent handler closes all PTY child processes on
     // ExitRequested so no PowerShell / SSH / etc. children leak.
@@ -145,16 +144,7 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
-                app.state::<daemon::RemoteGateway>().start();
-                tauri::async_runtime::spawn(async {
-                    let status = commands::daemon::ensure_running().await;
-                    if !status.connected {
-                        tracing::warn!(
-                            "Session Host is unavailable: {}",
-                            status.error.as_deref().unwrap_or("unknown error")
-                        );
-                    }
-                });
+                app.state::<remote::RemoteGateway>().start();
                 Ok(())
             })
             .invoke_handler(tauri::generate_handler![
@@ -162,13 +152,10 @@ pub fn run() {
                 commands::platform::get_platform_info,
                 // Clipboard (native read avoids a WebView paste permission prompt)
                 commands::clipboard::read_clipboard_text,
-                // Background Session Host lifecycle and reconnection
-                commands::daemon::daemon_status,
-                commands::daemon::reconnect_daemon,
-                commands::daemon::daemon_list_sessions,
-                commands::daemon::remote_access_info,
-                commands::daemon::set_remote_lan_access,
-                commands::daemon::set_remote_enabled,
+                // Remote access gateway (shares the desktop terminal manager)
+                commands::remote::remote_access_info,
+                commands::remote::set_remote_lan_access,
+                commands::remote::set_remote_enabled,
                 exit_application,
                 // Project CRUD (plan §12.1)
                 commands::project::list_projects,
@@ -176,6 +163,7 @@ pub fn run() {
                 commands::project::create_project,
                 commands::project::update_project,
                 commands::project::delete_project,
+                commands::project::delete_project_workspace,
                 commands::project::open_project_in_explorer,
                 // Profile CRUD (plan §12.2)
                 commands::profile::list_terminal_profiles,
@@ -253,7 +241,6 @@ fn quit_application(app: &tauri::AppHandle) {
         .quitting
         .store(true, Ordering::SeqCst);
     app.state::<TerminalState>().manager.close_all();
-    let _ = tauri::async_runtime::block_on(daemon::request(daemon::DaemonRequest::Shutdown));
     app.exit(0);
 }
 

@@ -9,8 +9,8 @@ import {
   Terminal,
   X,
 } from "lucide-react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTranslation } from "@/i18n";
+import { nativeWindowService } from "@/services/native";
 
 /**
  * Application-owned title bar for the undecorated desktop window. Keeping the
@@ -30,7 +30,7 @@ export function WindowTitleBar({
   const [isMaximized, setIsMaximized] = useState(false);
 
   useEffect(() => {
-    const win = getCurrentWindow();
+    const win = nativeWindowService.current();
     const syncMaximized = () => {
       void win
         .isMaximized()
@@ -46,12 +46,12 @@ export function WindowTitleBar({
 
   function startDragging(event: MouseEvent<HTMLElement>) {
     if (event.button === 0) {
-      void getCurrentWindow().startDragging();
+      void nativeWindowService.startDragging();
     }
   }
 
   function toggleMaximize() {
-    void getCurrentWindow().toggleMaximize();
+    void nativeWindowService.toggleMaximize();
   }
 
   return (
@@ -106,7 +106,7 @@ export function WindowTitleBar({
       >
         <WindowControl
           label={t("Minimize")}
-          onClick={() => void getCurrentWindow().minimize()}
+          onClick={() => void nativeWindowService.minimize()}
         >
           <Minus />
         </WindowControl>
@@ -120,7 +120,7 @@ export function WindowTitleBar({
           label={t("Close")}
           close
           onClick={() =>
-            onCloseRequest ? onCloseRequest() : void getCurrentWindow().close()
+            onCloseRequest ? onCloseRequest() : void nativeWindowService.close()
           }
         >
           <X />

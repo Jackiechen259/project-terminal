@@ -2,17 +2,13 @@ import { ProjectSidebar } from "@/components/projects/ProjectSidebar";
 import { TerminalWorkspace } from "@/components/terminal/TerminalWorkspace";
 import { WindowTitleBar } from "@/components/layout/WindowTitleBar";
 import { useState } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { invoke } from "@tauri-apps/api/core";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/i18n";
 import { useTerminalStore } from "@/stores/terminalStore";
+import { nativeAppService, nativeWindowService } from "@/services/native";
 
-/**
- * Top-level application shell: sidebar on the left, terminal workspace on the
- * right. Phase 1 renders placeholders; later phases wire real stores.
- */
+/** Top-level application shell and close-to-tray workflow. */
 export function AppLayout() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [closePromptOpen, setClosePromptOpen] = useState(false);
@@ -41,7 +37,7 @@ export function AppLayout() {
             <Button
               onClick={() => {
                 setClosePromptOpen(false);
-                void getCurrentWindow().hide();
+                void nativeWindowService.hide();
               }}
             >
               {t("Hide to tray and keep running")}
@@ -50,7 +46,7 @@ export function AppLayout() {
               variant="destructive"
               onClick={() => {
                 useTerminalStore.getState().clearAllTabs();
-                void invoke("exit_application");
+                void nativeAppService.exit();
               }}
             >
               {t("Stop all terminals and quit")}

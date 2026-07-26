@@ -25,7 +25,7 @@ const PROJECT_CMD = {
   validate: "validate_project",
   create: "create_project",
   update: "update_project",
-  delete: "delete_project",
+  delete: "delete_project_workspace",
   explorer: "open_project_in_explorer",
 } as const;
 
@@ -352,13 +352,6 @@ export const platformService = {
   getPlatformInfo: () => invokeOrThrow<PlatformInfo>("get_platform_info"),
 };
 
-export interface DaemonStatus {
-  connected: boolean;
-  endpoint: string;
-  details?: { pid?: number; startedAt?: string };
-  error?: string;
-}
-
 export interface RemoteAccessInfo {
   enabled: boolean;
   bind: string;
@@ -368,14 +361,7 @@ export interface RemoteAccessInfo {
   allowLan: boolean;
 }
 
-export const daemonService = {
-  status: () => invokeOrThrow<DaemonStatus>("daemon_status"),
-  reconnect: () => invokeOrThrow<DaemonStatus>("reconnect_daemon"),
-  listSessions: () =>
-    invokeOrThrow<{
-      sessions: SessionInfo[];
-      recoveredAsFailed: Array<SessionInfo & { exitReason?: string }>;
-    }>("daemon_list_sessions"),
+export const remoteAccessService = {
   remoteAccessInfo: () => invokeOrThrow<RemoteAccessInfo>("remote_access_info"),
   setRemoteLanAccess: (allowLan: boolean) =>
     invokeOrThrow<RemoteAccessInfo>("set_remote_lan_access", { allowLan }),
