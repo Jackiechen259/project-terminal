@@ -24,7 +24,7 @@ Project Terminal is a Windows-first desktop terminal workspace for developers wh
 
 Instead of keeping unrelated sessions in one global tab bar, Project Terminal organizes terminals by **project**. Each project owns its own tab group and terminal profiles. Switching projects changes the visible workspace without destroying running PTY sessions.
 
-The current release is **v0.2.1**.
+The current release is **v0.5.1**.
 
 ## Features
 
@@ -33,6 +33,8 @@ The current release is **v0.2.1**.
 - **WSL projects** — select a distribution and start in a Linux working directory.
 - **SSH projects** — connect to remote machines and enter the configured remote path.
 - **Persistent sessions while switching projects** — hidden terminal views remain mounted and active.
+- **Terminal split panes** — split the workspace into up to 4 recursive panes (side-by-side or stacked) with keyboard shortcuts and drag-and-drop support.
+- **Authenticated remote gateway** — secure HTTP/WebSocket gateway to access and control terminal sessions from web browsers or mobile devices.
 - **Reusable terminal profiles** — save shell, environment, startup command, arguments, and environment-variable settings.
 - **Multiple shell types** — PowerShell, CMD, Git Bash, WSL, remote Bash/Zsh/Fish, and custom executables.
 - **Development environment activation** — Conda, Python venv, Poetry, uv, or a custom activation command.
@@ -139,6 +141,7 @@ projects.json         Saved local, WSL, and SSH projects
 profiles.json         Terminal profiles and environment settings
 ssh-connections.json  SSH connection definitions
 settings.json         Application preferences
+remote-config.json    Remote gateway preferences and LAN settings
 ```
 
 Writes are atomic: data is serialized to a temporary file, flushed, and then renamed. When a corrupt configuration file is detected, it is backed up with a timestamp rather than silently overwritten.
@@ -350,7 +353,6 @@ The repository must contain the Actions secret `TAURI_SIGNING_PRIVATE_KEY`. The 
 - Running terminal sessions are not restored after restarting the application.
 - Terminal output history is not persisted to disk.
 - Unknown SSH host keys are never accepted automatically.
-- Split panes are not currently available.
 - There is no built-in file manager, editor, SFTP browser, Git GUI, or port-forwarding UI.
 - There is no cloud synchronization or multi-device profile synchronization.
 - The application currently uses a single main window.
