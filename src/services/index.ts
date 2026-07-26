@@ -199,6 +199,15 @@ async function invokeOrThrow<T>(
 
 /** Decode a base64 string into bytes the frontend can hand to xterm.write. */
 function decodeBase64(b64: string): Uint8Array {
+  const nativeDecoder = (
+    Uint8Array as typeof Uint8Array & {
+      fromBase64?: (value: string) => Uint8Array;
+    }
+  ).fromBase64;
+  if (nativeDecoder) {
+    return nativeDecoder.call(Uint8Array, b64);
+  }
+
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);

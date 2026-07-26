@@ -4,17 +4,21 @@ import { TerminalOutputQueue } from "./terminalOutputQueue";
 
 function createTimerScheduler() {
   let nextHandle = 1;
+  let currentTime = 0;
   const timers = new Map<number, () => void>();
   const delays = new Map<number, number>();
+  const dueTimes = new Map<number, number>();
   const schedule = vi.fn((callback: () => void, delay: number) => {
     const handle = nextHandle++;
     timers.set(handle, callback);
     delays.set(handle, delay);
+    dueTimes.set(handle, currentTime + delay);
     return handle;
   });
   const cancel = vi.fn((handle: number) => {
     timers.delete(handle);
     delays.delete(handle);
+    dueTimes.delete(handle);
   });
   /** Run all pending timers whose delay matches `delay`. */
   const run = (delay?: number) => {
@@ -22,13 +26,20 @@ function createTimerScheduler() {
       ([h]) => delay === undefined || delays.get(h) === delay,
     );
     for (const [handle, callback] of matching) {
+      currentTime = Math.max(currentTime, dueTimes.get(handle) ?? currentTime);
       timers.delete(handle);
+      delays.delete(handle);
+      dueTimes.delete(handle);
       callback();
     }
   };
+  const advance = (milliseconds: number) => {
+    currentTime += milliseconds;
+  };
+  const now = () => currentTime;
   const pendingCount = () => timers.size;
 
-  return { schedule, cancel, run, pendingCount };
+  return { schedule, cancel, run, advance, now, pendingCount };
 }
 
 const DEBOUNCE = 4;
@@ -42,15 +53,16 @@ describe("TerminalOutputQueue", () => {
       (data) => writes.push([...data]),
       timers.schedule,
       timers.cancel,
+      timers.now,
     );
 
     queue.send(Uint8Array.from([1, 2]));
     queue.send(Uint8Array.from([3]));
     queue.send(Uint8Array.from([4, 5]));
 
-    // First send schedules a max-wait + debounce (2 calls); each
-    // subsequent send resets the debounce (1 call each). Total = 4.
-    expect(timers.schedule).toHaveBeenCalledTimes(4);
+    // One max-wait and one debounce timer serve the entire synchronous burst.
+    expect(timers.schedule).toHaveBeenCalledTimes(2);
+    expect(timers.cancel).not.toHaveBeenCalled();
     expect(writes).toEqual([]);
 
     timers.run(DEBOUNCE);
@@ -64,6 +76,7 @@ describe("TerminalOutputQueue", () => {
       (data) => writes.push([...data]),
       timers.schedule,
       timers.cancel,
+      timers.now,
     );
 
     queue.send(Uint8Array.from([1, 2, 3]));
@@ -85,10 +98,11 @@ describe("TerminalOutputQueue", () => {
       (data) => writes.push([...data]),
       timers.schedule,
       timers.cancel,
+      timers.now,
     );
 
-    // Simulate continuous data: each send resets the debounce, so the
-    // debounce timer never fires. The max-wait timer must force a flush.
+    // Simulate continuous data: the max-wait timer must force a flush even
+    // when the quiet-window deadline keeps moving.
     queue.send(Uint8Array.from([1]));
     queue.send(Uint8Array.from([2]));
     queue.send(Uint8Array.from([3]));
@@ -107,6 +121,7 @@ describe("TerminalOutputQueue", () => {
       (data) => writes.push([...data]),
       timers.schedule,
       timers.cancel,
+      timers.now,
     );
 
     queue.send(Uint8Array.from([1, 2]));
@@ -131,6 +146,7 @@ describe("TerminalOutputQueue", () => {
       write,
       timers.schedule,
       timers.cancel,
+      timers.now,
     );
 
     queue.send(Uint8Array.from([1]));
@@ -142,5 +158,27 @@ describe("TerminalOutputQueue", () => {
 
     expect(write).not.toHaveBeenCalled();
     expect(timers.cancel).toHaveBeenCalledTimes(2);
+  });
+
+  it("reschedules once when a fragment arrives near the debounce deadline", () => {
+    const writes: number[][] = [];
+    const timers = createTimerScheduler();
+    const queue = new TerminalOutputQueue(
+      (data) => writes.push([...data]),
+      timers.schedule,
+      timers.cancel,
+      timers.now,
+    );
+
+    queue.send(Uint8Array.from([1]));
+    timers.advance(3);
+    queue.send(Uint8Array.from([2]));
+
+    timers.run(DEBOUNCE);
+    expect(writes).toEqual([]);
+    expect(timers.schedule).toHaveBeenCalledTimes(3);
+
+    timers.run(3);
+    expect(writes).toEqual([[1, 2]]);
   });
 });

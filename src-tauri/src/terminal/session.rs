@@ -21,6 +21,9 @@ use super::scrollback::{
     OutputRingBuffer, ScrollbackSnapshot, ScrollbackSnapshotFormat, DEFAULT_SCROLLBACK_BYTES,
 };
 
+const PTY_READ_BUFFER_BYTES: usize = 16 * 1024;
+const LIVE_OUTPUT_BUFFER_EVENTS: usize = DEFAULT_SCROLLBACK_BYTES / PTY_READ_BUFFER_BYTES;
+
 /// A terminal lifecycle event sent to the frontend.
 ///
 /// Output bytes are base64 encoded because terminal output is not guaranteed
@@ -282,7 +285,10 @@ impl TerminalSession {
             exit_error: None,
         }));
         let session_id = spawn.session_id.clone();
-        let (event_tx, _) = broadcast::channel(1024);
+        // Larger reads reduce syscall, Base64 and IPC overhead during output
+        // bursts. Scale the event count down proportionally so a stalled
+        // subscriber still retains roughly the same 4 MiB raw-data ceiling.
+        let (event_tx, _) = broadcast::channel(LIVE_OUTPUT_BUFFER_EVENTS);
         let mut scrollback =
             OutputRingBuffer::new(spawn.scrollback_bytes.max(DEFAULT_SCROLLBACK_BYTES / 4));
         scrollback.resize(spawn.rows, spawn.cols);
@@ -299,7 +305,7 @@ impl TerminalSession {
         let watcher_for_reader = ready_watcher.clone();
         thread::spawn(move || {
             let mut reader = reader;
-            let mut buf = [0u8; 4096];
+            let mut buf = [0u8; PTY_READ_BUFFER_BYTES];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
@@ -533,6 +539,14 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn live_output_queue_keeps_a_bounded_raw_byte_budget() {
+        assert_eq!(
+            PTY_READ_BUFFER_BYTES * LIVE_OUTPUT_BUFFER_EVENTS,
+            DEFAULT_SCROLLBACK_BYTES
+        );
+    }
 
     /// Decode base64 back to bytes for assertions.
     fn decode(b64: &str) -> Vec<u8> {
