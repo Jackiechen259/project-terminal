@@ -1,0 +1,1250 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#090d14" />
+    <title>Project Terminal Remote</title>
+    <link rel="stylesheet" href="/xterm.css" />
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #090d14;
+        --surface: #101722;
+        --surface-raised: #151e2b;
+        --border: #253247;
+        --border-strong: #34445e;
+        --fg: #edf3fb;
+        --muted: #8fa0b8;
+        --muted-strong: #bac6d6;
+        --accent: #68a3ff;
+        --accent-strong: #397ee8;
+        --accent-soft: rgba(80, 145, 244, 0.14);
+        --danger: #ff7b84;
+        --warning: #f7c766;
+        --success: #4ed7a0;
+        --terminal: #05070b;
+        --shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+      }
+
+      * {
+        box-sizing: border-box;
+        -webkit-tap-highlight-color: transparent;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        overflow: hidden;
+        background:
+          radial-gradient(
+            circle at 50% -20%,
+            rgba(55, 112, 199, 0.18),
+            transparent 38%
+          ),
+          var(--bg);
+        color: var(--fg);
+        font:
+          14px/1.4 Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+      button {
+        color: inherit;
+      }
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      .shell {
+        height: 100%;
+        min-height: 0;
+        display: grid;
+        grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+      }
+
+      .topbar {
+        min-height: 58px;
+        padding: calc(0.65rem + env(safe-area-inset-top)) 0.9rem 0.65rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        background: rgba(12, 18, 27, 0.92);
+        border-bottom: 1px solid var(--border);
+        backdrop-filter: blur(16px);
+      }
+
+      .brand {
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+      }
+      .brand-mark {
+        width: 32px;
+        height: 32px;
+        flex: none;
+        display: grid;
+        place-items: center;
+        border: 1px solid rgba(104, 163, 255, 0.42);
+        border-radius: 9px;
+        background: linear-gradient(
+          145deg,
+          rgba(104, 163, 255, 0.24),
+          rgba(57, 126, 232, 0.08)
+        );
+        color: #a9caff;
+        font:
+          700 16px/1 ui-monospace,
+          monospace;
+      }
+      .brand-copy {
+        min-width: 0;
+      }
+      .brand-title {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-weight: 680;
+        letter-spacing: -0.01em;
+      }
+      .brand-subtitle {
+        margin-top: 1px;
+        color: var(--muted);
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .connection-pill,
+      .control-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        white-space: nowrap;
+        color: var(--muted-strong);
+        font-size: 12px;
+      }
+      .connection-pill {
+        min-height: 30px;
+        padding: 0 0.7rem;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.025);
+      }
+      .status-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--muted);
+        box-shadow: 0 0 0 3px rgba(143, 160, 184, 0.1);
+      }
+      .connection-pill.connecting .status-dot {
+        background: var(--warning);
+        box-shadow: 0 0 0 3px rgba(247, 199, 102, 0.12);
+      }
+      .connection-pill.connected .status-dot {
+        background: var(--success);
+        box-shadow: 0 0 0 3px rgba(78, 215, 160, 0.12);
+      }
+      .connection-pill.error .status-dot {
+        background: var(--danger);
+        box-shadow: 0 0 0 3px rgba(255, 123, 132, 0.12);
+      }
+
+      .sessionbar {
+        min-height: 54px;
+        padding: 0.55rem 0.8rem;
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+      }
+
+      .session-select-wrap {
+        position: relative;
+        min-width: 0;
+        flex: 1;
+      }
+      .session-select-wrap::after {
+        content: "⌄";
+        position: absolute;
+        top: 50%;
+        right: 0.8rem;
+        translate: 0 -55%;
+        color: var(--muted);
+        pointer-events: none;
+      }
+      select {
+        width: 100%;
+        min-height: 38px;
+        padding: 0 2.1rem 0 0.75rem;
+        appearance: none;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface-raised);
+        color: var(--fg);
+      }
+
+      .icon-button,
+      .action-button,
+      .key-button,
+      .send-button {
+        border: 1px solid var(--border-strong);
+        border-radius: 8px;
+        background: var(--surface-raised);
+        cursor: pointer;
+        transition:
+          border-color 0.15s ease,
+          background 0.15s ease,
+          color 0.15s ease,
+          transform 0.08s ease;
+      }
+      button:not(:disabled):active {
+        transform: translateY(1px);
+      }
+      button:disabled {
+        cursor: default;
+        opacity: 0.45;
+      }
+      .icon-button {
+        width: 38px;
+        height: 38px;
+        flex: none;
+        display: grid;
+        place-items: center;
+        color: var(--muted-strong);
+        font-size: 17px;
+      }
+      .icon-button:hover,
+      .key-button:hover {
+        border-color: #4a6388;
+        background: #192538;
+      }
+
+      .mode-switch {
+        height: 38px;
+        padding: 3px;
+        display: inline-flex;
+        flex: none;
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        background: #0c121b;
+      }
+      .mode-switch button {
+        min-width: 68px;
+        padding: 0 0.65rem;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 620;
+        cursor: pointer;
+      }
+      .mode-switch button.active {
+        background: var(--surface-raised);
+        color: var(--fg);
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+      }
+
+      .terminal-frame {
+        position: relative;
+        min-height: 0;
+        overflow: hidden;
+        background: var(--terminal);
+      }
+      #terminal {
+        width: 100%;
+        height: 100%;
+      }
+      #terminal .xterm {
+        height: 100%;
+        padding: 8px 8px 3px;
+      }
+      #terminal .xterm-viewport {
+        background: var(--terminal) !important;
+      }
+
+      .empty-state {
+        position: absolute;
+        inset: 0;
+        z-index: 5;
+        display: grid;
+        place-items: center;
+        padding: 2rem;
+        background: rgba(5, 7, 11, 0.94);
+      }
+      .empty-card {
+        max-width: 360px;
+        text-align: center;
+      }
+      .empty-icon {
+        width: 48px;
+        height: 48px;
+        margin: 0 auto 1rem;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: var(--surface);
+        color: var(--accent);
+        font:
+          700 20px/1 ui-monospace,
+          monospace;
+      }
+      .empty-card h2 {
+        margin: 0;
+        font-size: 17px;
+        letter-spacing: -0.01em;
+      }
+      .empty-card p {
+        margin: 0.55rem 0 1.1rem;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.6;
+      }
+
+      .action-button {
+        min-height: 38px;
+        padding: 0.45rem 0.8rem;
+        font-size: 12px;
+        font-weight: 670;
+      }
+      .action-button.primary,
+      .send-button {
+        border-color: var(--accent-strong);
+        background: var(--accent-strong);
+        color: white;
+      }
+      .action-button.primary:hover,
+      .send-button:hover {
+        background: #478ced;
+      }
+      .action-button.danger {
+        color: #ffb0b6;
+      }
+
+      .controlbar {
+        min-height: 46px;
+        padding: 0.42rem 0.7rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        border-top: 1px solid var(--border);
+        border-bottom: 1px solid var(--border);
+        background: #0d141e;
+      }
+      .control-pill {
+        min-width: 0;
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .control-pill strong {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: var(--fg);
+        font-weight: 620;
+      }
+      .control-pill[data-mode="control"] .status-dot {
+        background: var(--success);
+      }
+      .control-pill[data-mode="readonly"] .status-dot {
+        background: var(--accent);
+      }
+      .control-pill[data-mode="waiting"] .status-dot {
+        background: var(--warning);
+      }
+
+      .keystrip {
+        display: flex;
+        align-items: center;
+        gap: 0.38rem;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+      .keystrip::-webkit-scrollbar {
+        display: none;
+      }
+      .key-button {
+        min-width: 38px;
+        height: 32px;
+        padding: 0 0.55rem;
+        color: var(--muted-strong);
+        font:
+          600 12px/1 ui-monospace,
+          monospace;
+      }
+
+      .composer {
+        padding: 0.55rem 0.7rem calc(0.55rem + env(safe-area-inset-bottom));
+        display: flex;
+        gap: 0.5rem;
+        background: var(--surface);
+      }
+      .composer input {
+        min-width: 0;
+        min-height: 42px;
+        flex: 1;
+        padding: 0.55rem 0.75rem;
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        background: #0b111a;
+        color: var(--fg);
+      }
+      .composer input::placeholder {
+        color: #667790;
+      }
+      .send-button {
+        min-width: 68px;
+        min-height: 42px;
+        padding: 0.5rem 0.9rem;
+        font-weight: 680;
+      }
+
+      .auth-layer {
+        position: fixed;
+        inset: 0;
+        z-index: 30;
+        display: grid;
+        place-items: center;
+        padding: max(1.2rem, env(safe-area-inset-top)) 1.2rem
+          max(1.2rem, env(safe-area-inset-bottom));
+        overflow: auto;
+        background:
+          radial-gradient(
+            circle at 50% 12%,
+            rgba(61, 126, 226, 0.2),
+            transparent 42%
+          ),
+          rgba(7, 10, 16, 0.97);
+      }
+      .auth-card {
+        width: min(100%, 400px);
+        padding: 1.25rem;
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        background: rgba(16, 23, 34, 0.96);
+        box-shadow: var(--shadow);
+      }
+      .auth-card .brand-mark {
+        width: 42px;
+        height: 42px;
+        margin-bottom: 1.2rem;
+        border-radius: 12px;
+      }
+      .auth-card h1 {
+        margin: 0;
+        font-size: 22px;
+        letter-spacing: -0.025em;
+      }
+      .auth-card p {
+        margin: 0.55rem 0 1.2rem;
+        color: var(--muted);
+        line-height: 1.55;
+      }
+      .field-label {
+        display: block;
+        margin-bottom: 0.42rem;
+        color: var(--muted-strong);
+        font-size: 12px;
+        font-weight: 620;
+      }
+      .token-row {
+        display: flex;
+        gap: 0.5rem;
+      }
+      .token-row input {
+        min-width: 0;
+        min-height: 44px;
+        flex: 1;
+        padding: 0.6rem 0.75rem;
+        border: 1px solid var(--border-strong);
+        border-radius: 9px;
+        background: #090e16;
+        color: var(--fg);
+        font-family: ui-monospace, monospace;
+      }
+      .auth-message {
+        min-height: 18px;
+        margin-top: 0.65rem;
+        color: var(--danger);
+        font-size: 12px;
+      }
+      .auth-hint {
+        margin-top: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border);
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .notice {
+        position: fixed;
+        left: 50%;
+        bottom: calc(6.5rem + env(safe-area-inset-bottom));
+        z-index: 40;
+        max-width: calc(100% - 2rem);
+        padding: 0.55rem 0.8rem;
+        translate: -50% 12px;
+        opacity: 0;
+        pointer-events: none;
+        border: 1px solid var(--border-strong);
+        border-radius: 8px;
+        background: #192334;
+        color: var(--fg);
+        box-shadow: var(--shadow);
+        font-size: 12px;
+        transition:
+          opacity 0.18s ease,
+          translate 0.18s ease;
+      }
+      .notice.visible {
+        translate: -50% 0;
+        opacity: 1;
+      }
+      .hidden {
+        display: none !important;
+      }
+
+      @media (max-width: 620px) {
+        .brand-subtitle {
+          display: none;
+        }
+        .connection-pill {
+          padding: 0 0.55rem;
+        }
+        .sessionbar {
+          flex-wrap: wrap;
+        }
+        .session-select-wrap {
+          flex-basis: calc(100% - 46px);
+        }
+        .mode-switch {
+          flex: 1;
+        }
+        .mode-switch button {
+          flex: 1;
+        }
+        #terminal .xterm {
+          padding: 5px 4px 2px;
+        }
+        .controlbar {
+          align-items: flex-start;
+          flex-wrap: wrap;
+        }
+        .control-pill {
+          min-height: 32px;
+        }
+        .keystrip {
+          width: 100%;
+          order: 3;
+        }
+      }
+
+      @media (max-height: 560px) {
+        .topbar {
+          min-height: 46px;
+          padding-top: calc(0.4rem + env(safe-area-inset-top));
+          padding-bottom: 0.4rem;
+        }
+        .brand-mark {
+          width: 28px;
+          height: 28px;
+        }
+        .sessionbar {
+          min-height: 46px;
+          padding-block: 0.35rem;
+        }
+        .controlbar {
+          min-height: 40px;
+          padding-block: 0.3rem;
+        }
+        .composer {
+          padding-top: 0.4rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell" aria-label="Project Terminal remote console">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">&gt;_</div>
+          <div class="brand-copy">
+            <div class="brand-title">Project Terminal</div>
+            <div class="brand-subtitle">Remote console</div>
+          </div>
+        </div>
+        <div id="connection" class="connection-pill">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="connectionText">Disconnected</span>
+        </div>
+      </header>
+
+      <section class="sessionbar" aria-label="Session controls">
+        <div class="session-select-wrap">
+          <select id="sessions" aria-label="Terminal session">
+            <option value="">No active sessions</option>
+          </select>
+        </div>
+        <button
+          id="refresh"
+          class="icon-button"
+          type="button"
+          aria-label="Refresh sessions"
+          title="Refresh sessions"
+        >
+          ↻
+        </button>
+        <div class="mode-switch" role="group" aria-label="Connection mode">
+          <button id="viewMode" type="button">View</button>
+          <button id="controlMode" type="button" class="active">Control</button>
+        </div>
+      </section>
+
+      <section class="terminal-frame" aria-label="Terminal output">
+        <div id="terminal"></div>
+        <div id="emptyState" class="empty-state">
+          <div class="empty-card">
+            <div class="empty-icon" aria-hidden="true">&gt;_</div>
+            <h2 id="emptyTitle">Connect to a session</h2>
+            <p id="emptyMessage">
+              Choose an active terminal session to view its output and request
+              control.
+            </p>
+            <button
+              id="emptyAction"
+              type="button"
+              class="action-button primary"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section class="controlbar" aria-label="Terminal control status">
+        <div id="controlStatus" class="control-pill" data-mode="waiting">
+          <span class="status-dot" aria-hidden="true"></span>
+          <strong id="controlText">Waiting for a session</strong>
+        </div>
+        <button
+          id="takeControl"
+          type="button"
+          class="action-button primary"
+          disabled
+        >
+          Take control
+        </button>
+        <button
+          id="interrupt"
+          type="button"
+          class="action-button danger"
+          disabled
+        >
+          Ctrl+C
+        </button>
+        <div class="keystrip" aria-label="Special keys">
+          <button class="key-button" type="button" data-key="esc">Esc</button>
+          <button class="key-button" type="button" data-key="tab">Tab</button>
+          <button
+            class="key-button"
+            type="button"
+            data-key="up"
+            aria-label="Arrow up"
+          >
+            ↑
+          </button>
+          <button
+            class="key-button"
+            type="button"
+            data-key="down"
+            aria-label="Arrow down"
+          >
+            ↓
+          </button>
+          <button
+            class="key-button"
+            type="button"
+            data-key="left"
+            aria-label="Arrow left"
+          >
+            ←
+          </button>
+          <button
+            class="key-button"
+            type="button"
+            data-key="right"
+            aria-label="Arrow right"
+          >
+            →
+          </button>
+        </div>
+      </section>
+
+      <form id="inputForm" class="composer">
+        <input
+          id="commandInput"
+          autocomplete="off"
+          autocapitalize="none"
+          spellcheck="false"
+          placeholder="Take control to send a command"
+          enterkeyhint="send"
+          disabled
+        />
+        <button id="send" class="send-button" type="submit" disabled>
+          Send
+        </button>
+      </form>
+    </main>
+
+    <section
+      id="authLayer"
+      class="auth-layer"
+      aria-label="Remote access sign in"
+    >
+      <form id="authForm" class="auth-card">
+        <div class="brand-mark" aria-hidden="true">&gt;_</div>
+        <h1>Remote console</h1>
+        <p>
+          Use the access token shown in Project Terminal settings. Tokens stay
+          in this browser tab only.
+        </p>
+        <label class="field-label" for="token">Access token</label>
+        <div class="token-row">
+          <input
+            id="token"
+            type="password"
+            autocomplete="off"
+            autocapitalize="none"
+            spellcheck="false"
+            placeholder="Paste access token"
+          />
+          <button id="connect" class="action-button primary" type="submit">
+            Connect
+          </button>
+        </div>
+        <div id="authMessage" class="auth-message" role="alert"></div>
+        <div class="auth-hint">
+          Tip: scanning the QR code from the desktop app fills the token
+          automatically.
+        </div>
+      </form>
+    </section>
+
+    <div id="notice" class="notice" role="status"></div>
+
+    <script src="/xterm.js"></script>
+    <script src="/xterm-addon-fit.js"></script>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const CONTROL_RENEW_MS = 10000;
+      const RECONNECT_DELAY_MS = 1800;
+      const SPECIAL_KEYS = {
+        esc: "\u001b",
+        tab: "\t",
+        up: "\u001b[A",
+        down: "\u001b[B",
+        right: "\u001b[C",
+        left: "\u001b[D",
+      };
+
+      let socket = null;
+      let terminal = null;
+      let fitAddon = null;
+      let leaseId = null;
+      let leaseTimer = null;
+      let reconnectTimer = null;
+      let resizeTimer = null;
+      let noticeTimer = null;
+      let pendingOutput = [];
+      let authenticated = false;
+      let intentionalClose = false;
+
+      function createClientId() {
+        if (globalThis.crypto?.randomUUID) return crypto.randomUUID();
+        if (globalThis.crypto?.getRandomValues) {
+          const bytes = crypto.getRandomValues(new Uint8Array(16));
+          bytes[6] = (bytes[6] & 15) | 64;
+          bytes[8] = (bytes[8] & 63) | 128;
+          const hex = [...bytes]
+            .map((byte) => byte.toString(16).padStart(2, "0"))
+            .join("");
+          return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+        }
+        return `remote-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      }
+
+      const clientId = createClientId();
+      const isReadOnly = () => $("viewMode").classList.contains("active");
+      const hasControl = () =>
+        Boolean(leaseId && socket?.readyState === WebSocket.OPEN);
+
+      function decodeBase64(value) {
+        try {
+          const binary = atob(value);
+          return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+        } catch {
+          return new Uint8Array();
+        }
+      }
+
+      function setConnection(text, state = "") {
+        $("connectionText").textContent = text;
+        $("connection").className = `connection-pill ${state}`.trim();
+      }
+
+      function setEmpty(title, message, actionText = "Retry", visible = true) {
+        $("emptyTitle").textContent = title;
+        $("emptyMessage").textContent = message;
+        $("emptyAction").textContent = actionText;
+        $("emptyState").classList.toggle("hidden", !visible);
+      }
+
+      function showNotice(message) {
+        clearTimeout(noticeTimer);
+        $("notice").textContent = message;
+        $("notice").classList.add("visible");
+        noticeTimer = setTimeout(
+          () => $("notice").classList.remove("visible"),
+          2600,
+        );
+      }
+
+      function send(message) {
+        if (socket?.readyState !== WebSocket.OPEN) return false;
+        socket.send(JSON.stringify(message));
+        return true;
+      }
+
+      function updateControls(mode = null) {
+        const connected = socket?.readyState === WebSocket.OPEN;
+        const controlled = hasControl();
+        const readOnly = isReadOnly();
+        const resolvedMode =
+          mode ||
+          (controlled
+            ? "control"
+            : readOnly
+              ? "readonly"
+              : connected
+                ? "waiting"
+                : "waiting");
+        const labels = {
+          control: "You have control",
+          readonly: "Viewing only",
+          waiting: connected
+            ? "Ready to request control"
+            : "Waiting for a session",
+        };
+
+        $("controlStatus").dataset.mode = resolvedMode;
+        $("controlText").textContent = labels[resolvedMode];
+        $("takeControl").disabled = !connected || readOnly;
+        $("takeControl").textContent = controlled
+          ? "Release control"
+          : "Take control";
+        $("takeControl").classList.toggle("primary", !controlled);
+        $("interrupt").disabled = !controlled;
+        $("commandInput").disabled = !controlled;
+        $("send").disabled = !controlled;
+        $("commandInput").placeholder = controlled
+          ? "Type a command…"
+          : readOnly
+            ? "View-only mode"
+            : "Take control to send a command";
+        document.querySelectorAll(".key-button").forEach((button) => {
+          button.disabled = !controlled;
+        });
+        if (terminal) terminal.options.disableStdin = !controlled;
+      }
+
+      function clearLease(message = null) {
+        leaseId = null;
+        clearInterval(leaseTimer);
+        leaseTimer = null;
+        updateControls();
+        if (message) showNotice(message);
+      }
+
+      function startLeaseHeartbeat() {
+        if (leaseTimer) return;
+        leaseTimer = setInterval(() => {
+          if (!hasControl()) return;
+          send({ type: "renew", lease_id: leaseId });
+        }, CONTROL_RENEW_MS);
+      }
+
+      function acceptLease(lease) {
+        leaseId = lease?.leaseId || null;
+        if (!leaseId) return;
+        startLeaseHeartbeat();
+        updateControls("control");
+        try {
+          fitAddon?.fit();
+          terminal?.focus();
+        } catch {}
+      }
+
+      function initTerminal() {
+        if (terminal) return true;
+        try {
+          terminal = new Terminal({
+            allowProposedApi: true,
+            convertEol: false,
+            cursorBlink: true,
+            cursorStyle: "bar",
+            disableStdin: true,
+            fontFamily:
+              '"Cascadia Mono", "SFMono-Regular", Consolas, ui-monospace, monospace',
+            fontSize: window.innerWidth < 540 ? 12 : 13,
+            lineHeight: 1.12,
+            scrollback: 5000,
+            theme: {
+              background: "#05070b",
+              foreground: "#dce6f3",
+              cursor: "#75aaff",
+              selectionBackground: "#244b80",
+              black: "#111827",
+              brightBlack: "#66758a",
+              blue: "#68a3ff",
+              brightBlue: "#8ab8ff",
+              cyan: "#56c7d9",
+              brightCyan: "#78dbea",
+              green: "#4ed7a0",
+              brightGreen: "#72e5b7",
+              magenta: "#bc91f4",
+              brightMagenta: "#d0adff",
+              red: "#ff7b84",
+              brightRed: "#ff9ba2",
+              white: "#dce6f3",
+              brightWhite: "#ffffff",
+              yellow: "#f7c766",
+              brightYellow: "#ffdb85",
+            },
+          });
+          fitAddon = new FitAddon.FitAddon();
+          terminal.loadAddon(fitAddon);
+          terminal.open($("terminal"));
+          terminal.onData((data) => {
+            if (hasControl() && data)
+              send({ type: "input", lease_id: leaseId, data });
+          });
+          terminal.onResize(({ cols, rows }) => {
+            if (!hasControl()) return;
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(() => {
+              if (hasControl())
+                send({ type: "resize", lease_id: leaseId, cols, rows });
+            }, 160);
+          });
+          new ResizeObserver(() => {
+            try {
+              fitAddon?.fit();
+            } catch {}
+          }).observe($("terminal"));
+          for (const bytes of pendingOutput) terminal.write(bytes);
+          pendingOutput = [];
+          return true;
+        } catch (error) {
+          terminal = null;
+          fitAddon = null;
+          setEmpty(
+            "Terminal unavailable",
+            error?.message || "The terminal renderer could not start.",
+            "Reload",
+          );
+          return false;
+        }
+      }
+
+      function resetTerminal() {
+        if (terminal) terminal.clear();
+        pendingOutput = [];
+        clearLease();
+      }
+
+      function writeOutput(encoded) {
+        const bytes = decodeBase64(encoded);
+        if (!bytes.length) return;
+        if (terminal) terminal.write(bytes);
+        else pendingOutput.push(bytes);
+      }
+
+      async function api(path, options = {}) {
+        return fetch(path, {
+          ...options,
+          headers: {
+            Authorization: `Bearer ${$("token").value.trim()}`,
+            "Content-Type": "application/json",
+            ...(options.headers || {}),
+          },
+        });
+      }
+
+      function renderSessions(sessions, preferredId = "") {
+        const select = $("sessions");
+        select.replaceChildren();
+        for (const session of sessions) {
+          const option = document.createElement("option");
+          option.value = session.sessionId;
+          const state =
+            session.status && session.status !== "running"
+              ? ` · ${session.status}`
+              : "";
+          option.textContent = `${session.projectId} · ${session.sessionId.slice(-8)}${state}`;
+          select.append(option);
+        }
+        if (
+          preferredId &&
+          sessions.some((session) => session.sessionId === preferredId)
+        )
+          select.value = preferredId;
+        return select.value;
+      }
+
+      async function loadSessions({ reconnect = true } = {}) {
+        const previousId = $("sessions").value;
+        setConnection("Connecting…", "connecting");
+        try {
+          const response = await api("/api/sessions");
+          if (!response.ok) {
+            if (response.status === 401)
+              throw new Error("The access token was rejected.");
+            throw new Error(`Session Host returned ${response.status}.`);
+          }
+          const payload = await response.json();
+          const sessions = (payload.sessions || []).filter(
+            (session) => session.status !== "exited",
+          );
+          authenticated = true;
+          sessionStorage.setItem("remoteToken", $("token").value.trim());
+          $("authLayer").classList.add("hidden");
+          $("authMessage").textContent = "";
+
+          const selectedId = renderSessions(sessions, previousId);
+          if (!selectedId) {
+            closeSocket(true);
+            setConnection("No sessions", "");
+            setEmpty(
+              "No active sessions",
+              "Open a terminal in the desktop app, then refresh this page.",
+              "Refresh",
+            );
+            updateControls();
+            return;
+          }
+          if (reconnect || !socket || socket.readyState > WebSocket.OPEN)
+            connectSocket();
+        } catch (error) {
+          authenticated = false;
+          closeSocket(true);
+          setConnection("Disconnected", "error");
+          $("authLayer").classList.remove("hidden");
+          $("authMessage").textContent =
+            error?.message || "Could not reach the Session Host.";
+        }
+      }
+
+      function closeSocket(intentional = false) {
+        intentionalClose = intentional;
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+        if (socket) {
+          const current = socket;
+          socket = null;
+          current.close();
+        }
+        clearLease();
+      }
+
+      function connectSocket() {
+        const sessionId = $("sessions").value;
+        if (!sessionId) return;
+        closeSocket(true);
+        intentionalClose = false;
+        resetTerminal();
+        setConnection("Connecting…", "connecting");
+        setEmpty(
+          "Opening session",
+          "Loading terminal history and live output…",
+          "Retry",
+        );
+
+        const query = new URLSearchParams({
+          token: $("token").value.trim(),
+          clientId,
+          readOnly: String(isReadOnly()),
+        });
+        const protocol = location.protocol === "https:" ? "wss" : "ws";
+        const nextSocket = new WebSocket(
+          `${protocol}://${location.host}/api/sessions/${encodeURIComponent(sessionId)}/attach?${query}`,
+        );
+        socket = nextSocket;
+
+        nextSocket.onopen = () => {
+          if (socket !== nextSocket) return;
+          setConnection("Connected", "connected");
+          initTerminal();
+          setEmpty("", "", "", false);
+          updateControls();
+          setTimeout(() => {
+            try {
+              fitAddon?.fit();
+            } catch {}
+          }, 60);
+        };
+
+        nextSocket.onmessage = (event) => {
+          if (socket !== nextSocket) return;
+          let message;
+          try {
+            message = JSON.parse(event.data);
+          } catch {
+            return;
+          }
+
+          if (message.type === "snapshot") {
+            writeOutput(message.data);
+          } else if (message.type === "output" && message.event?.data) {
+            writeOutput(message.event.data);
+          } else if (message.type === "lease") {
+            acceptLease(message.lease);
+          } else if (
+            message.type === "released" ||
+            message.type === "lease_released"
+          ) {
+            clearLease("Control released");
+          } else if (message.type === "error") {
+            const text = message.message || "Remote operation failed";
+            if (/lease|control/i.test(text)) clearLease(text);
+            else showNotice(text);
+          }
+        };
+
+        nextSocket.onerror = () => {
+          if (socket === nextSocket) setConnection("Connection error", "error");
+        };
+
+        nextSocket.onclose = () => {
+          if (socket !== nextSocket) return;
+          socket = null;
+          clearLease();
+          setConnection("Disconnected", "error");
+          updateControls();
+          if (!intentionalClose && authenticated) {
+            setEmpty(
+              "Connection lost",
+              "Trying to reconnect to the Session Host…",
+              "Reconnect",
+            );
+            reconnectTimer = setTimeout(connectSocket, RECONNECT_DELAY_MS);
+          }
+        };
+      }
+
+      function setMode(readOnly) {
+        $("viewMode").classList.toggle("active", readOnly);
+        $("controlMode").classList.toggle("active", !readOnly);
+        if (leaseId) send({ type: "release", lease_id: leaseId });
+        clearLease();
+        updateControls();
+        if (socket || authenticated) connectSocket();
+      }
+
+      $("authForm").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const token = $("token").value.trim();
+        if (!token) {
+          $("authMessage").textContent =
+            "Enter the access token from the desktop app.";
+          return;
+        }
+        loadSessions();
+      });
+      $("refresh").addEventListener("click", () => loadSessions());
+      $("emptyAction").addEventListener("click", () =>
+        authenticated
+          ? loadSessions()
+          : $("authLayer").classList.remove("hidden"),
+      );
+      $("sessions").addEventListener("change", connectSocket);
+      $("viewMode").addEventListener("click", () => setMode(true));
+      $("controlMode").addEventListener("click", () => setMode(false));
+      $("takeControl").addEventListener("click", () => {
+        if (leaseId) {
+          send({ type: "release", lease_id: leaseId });
+          clearLease();
+        } else {
+          updateControls("waiting");
+          send({ type: "acquire" });
+        }
+      });
+      $("interrupt").addEventListener("click", () => {
+        if (hasControl() && confirm("Send Ctrl+C to this terminal?")) {
+          send({ type: "interrupt", lease_id: leaseId, confirm: true });
+        }
+      });
+      $("inputForm").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const input = $("commandInput");
+        if (!hasControl() || !input.value) return;
+        send({ type: "input", lease_id: leaseId, data: `${input.value}\r` });
+        input.value = "";
+        terminal?.focus();
+      });
+      document.querySelectorAll(".key-button").forEach((button) => {
+        button.addEventListener("click", () => {
+          const data = SPECIAL_KEYS[button.dataset.key];
+          if (hasControl() && data) {
+            send({ type: "input", lease_id: leaseId, data });
+            terminal?.focus();
+          }
+        });
+      });
+      window.addEventListener("resize", () => {
+        try {
+          fitAddon?.fit();
+        } catch {}
+      });
+      window.addEventListener("beforeunload", () => {
+        if (leaseId) send({ type: "release", lease_id: leaseId });
+      });
+
+      (() => {
+        const query = new URLSearchParams(location.search);
+        const queryToken = query.get("token");
+        const savedToken = sessionStorage.getItem("remoteToken");
+        $("token").value = queryToken || savedToken || "";
+        if (queryToken) history.replaceState(null, "", location.pathname);
+        updateControls();
+        if ($("token").value) loadSessions();
+        else setConnection("Sign in required", "");
+      })();
+    </script>
+  </body>
+</html>

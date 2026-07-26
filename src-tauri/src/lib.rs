@@ -79,6 +79,20 @@ pub fn run() {
     };
 
     let terminal_state = TerminalState::new();
+    let remote_dirs = match config_dirs::ConfigDirs::resolve() {
+        Ok(dirs) => dirs,
+        Err(error) => {
+            let message = format!("Failed to initialize remote access: {error}");
+            tracing::error!("{message}");
+            show_fatal_error(&message);
+            std::process::exit(1);
+        }
+    };
+    // Remote clients must use the same manager as the desktop terminal
+    // commands. A gateway in the separate Session Host process only sees its
+    // own empty manager, so authenticated clients incorrectly get no sessions.
+    let remote_gateway =
+        daemon::RemoteGateway::new(&remote_dirs, terminal_state.manager.clone_handle());
 
     // Build the app. The RunEvent handler closes all PTY child processes on
     // ExitRequested so no PowerShell / SSH / etc. children leak.
@@ -90,6 +104,7 @@ pub fn run() {
             .plugin(tauri_plugin_updater::Builder::new().build())
             .manage(state)
             .manage(terminal_state)
+            .manage(remote_gateway)
             .manage(AppLifecycleState::default())
             .setup(|app| {
                 use tauri::menu::{Menu, MenuItem};
@@ -130,6 +145,7 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+                app.state::<daemon::RemoteGateway>().start();
                 tauri::async_runtime::spawn(async {
                     let status = commands::daemon::ensure_running().await;
                     if !status.connected {

@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -16,20 +16,21 @@ use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use tauri::async_runtime::JoinHandle;
 use tokio::sync::broadcast;
-use tokio::task::JoinHandle;
 
-use super::DaemonServer;
 use crate::config_dirs::ConfigDirs;
 use crate::error::{AppError, AppResult};
+use crate::terminal::TerminalManager;
 
 const DEFAULT_BIND: &str = "127.0.0.1:4097";
 const LEASE_TTL: Duration = Duration::from_secs(30);
 const REQUESTS_PER_MINUTE: usize = 180;
 const WS_MESSAGES_PER_SECOND: usize = 60;
 
-pub(super) struct RemoteGateway {
+pub(crate) struct RemoteGateway {
     token: String,
+    manager: TerminalManager,
     bind: Mutex<SocketAddr>,
     url: Mutex<String>,
     transport_security: Mutex<&'static str>,
@@ -37,25 +38,24 @@ pub(super) struct RemoteGateway {
     config_path: PathBuf,
     audit_path: PathBuf,
     enabled: Mutex<bool>,
-    daemon: Mutex<Weak<DaemonServer>>,
     listener_handle: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl RemoteGateway {
-    pub(super) fn new(dirs: &ConfigDirs) -> Self {
+    pub(crate) fn new(dirs: &ConfigDirs, manager: TerminalManager) -> Self {
         let token = format!("{}{}", uuid::Uuid::new_v4(), uuid::Uuid::new_v4()).replace('-', "");
         let config_path = dirs.remote_config_path();
         let config = read_remote_config(&config_path);
         let allow_lan = config.allow_lan;
         // The env var is a hard override for locked-down hosts; the persisted
         // config otherwise decides whether the gateway accepts connections.
-        let env_disabled =
-            std::env::var("PROJECT_TERMINAL_REMOTE_DISABLED").as_deref() == Ok("1");
+        let env_disabled = std::env::var("PROJECT_TERMINAL_REMOTE_DISABLED").as_deref() == Ok("1");
         let enabled = !env_disabled && config.enabled;
         let (bind, transport_security) = compute_bind_and_security(allow_lan);
         let url = compute_advertise_url(bind);
         Self {
             token,
+            manager,
             bind: Mutex::new(bind),
             url: Mutex::new(url),
             transport_security: Mutex::new(transport_security),
@@ -63,19 +63,11 @@ impl RemoteGateway {
             config_path,
             audit_path: dirs.remote_audit_path(),
             enabled: Mutex::new(enabled),
-            daemon: Mutex::new(Weak::new()),
             listener_handle: Mutex::new(None),
         }
     }
 
-    /// Store a back-reference to the owning daemon so the listener can be
-    /// restarted without re-spawning the process. Called once after the
-    /// `Arc<DaemonServer>` is constructed.
-    pub(super) fn attach(&self, daemon: Weak<DaemonServer>) {
-        *self.daemon.lock() = daemon;
-    }
-
-    pub(super) fn info(&self) -> serde_json::Value {
+    pub(crate) fn info(&self) -> serde_json::Value {
         serde_json::json!({
             "enabled": *self.enabled.lock(),
             "bind": *self.bind.lock(),
@@ -88,17 +80,28 @@ impl RemoteGateway {
         })
     }
 
-    pub(super) fn start(&self) {
-        if !*self.enabled.lock() || self.listener_handle.lock().is_some() {
+    pub(crate) fn start(&self) {
+        if !*self.enabled.lock() {
             return;
         }
+        let mut listener_handle = self.listener_handle.lock();
+        if listener_handle
+            .as_ref()
+            .is_some_and(|handle| !handle.inner().is_finished())
+        {
+            return;
+        }
+        // A failed bind leaves a completed JoinHandle behind. Clear it here
+        // so toggling the gateway or asking it to start again can recover.
+        listener_handle.take();
+        drop(listener_handle);
         self.spawn_listener();
     }
 
     /// Switch the gateway between loopback-only and LAN-wide bind without
     /// restarting the daemon. Existing WebSocket clients drop (the address
     /// changed) and must re-scan; terminal sessions are unaffected.
-    pub(super) fn reconfigure(&self, allow_lan: bool) -> AppResult<()> {
+    pub(crate) fn reconfigure(&self, allow_lan: bool) -> AppResult<()> {
         if !*self.enabled.lock() {
             return Err(AppError::Configuration(
                 "Remote access is disabled by the host".into(),
@@ -126,7 +129,7 @@ impl RemoteGateway {
     /// accepted; when re-enabled the listener starts on the stored bind. The
     /// host env var (`PROJECT_TERMINAL_REMOTE_DISABLED=1`) is a hard override
     /// and cannot be cleared from the UI.
-    pub(super) fn set_enabled(&self, enabled: bool) -> AppResult<()> {
+    pub(crate) fn set_enabled(&self, enabled: bool) -> AppResult<()> {
         if std::env::var("PROJECT_TERMINAL_REMOTE_DISABLED").as_deref() == Ok("1") {
             return Err(AppError::Configuration(
                 "Remote access is disabled by the host environment".into(),
@@ -145,20 +148,16 @@ impl RemoteGateway {
     }
 
     fn spawn_listener(&self) {
-        let daemon = match self.daemon.lock().upgrade() {
-            Some(arc) => arc,
-            None => return,
-        };
         let bind = *self.bind.lock();
         let state = RemoteState {
-            daemon,
+            manager: self.manager.clone_handle(),
             token: self.token.clone(),
             leases: Arc::new(Mutex::new(HashMap::new())),
             rate_limits: Arc::new(Mutex::new(HashMap::new())),
             audit_path: self.audit_path.clone(),
             audit_lock: Arc::new(Mutex::new(())),
         };
-        let handle = tokio::spawn(async move {
+        let handle = tauri::async_runtime::spawn(async move {
             let router = build_router(state);
             // Retry briefly: the previous listener's socket may still be
             // releasing when toggling between 0.0.0.0 and 127.0.0.1 binds.
@@ -183,14 +182,26 @@ impl RemoteGateway {
     }
 }
 
-#[derive(Clone)]
 struct RemoteState {
-    daemon: Arc<DaemonServer>,
+    manager: TerminalManager,
     token: String,
     leases: Arc<Mutex<HashMap<String, LeaseRecord>>>,
     rate_limits: Arc<Mutex<HashMap<IpAddr, VecDeque<Instant>>>>,
     audit_path: PathBuf,
     audit_lock: Arc<Mutex<()>>,
+}
+
+impl Clone for RemoteState {
+    fn clone(&self) -> Self {
+        Self {
+            manager: self.manager.clone_handle(),
+            token: self.token.clone(),
+            leases: self.leases.clone(),
+            rate_limits: self.rate_limits.clone(),
+            audit_path: self.audit_path.clone(),
+            audit_lock: self.audit_lock.clone(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -316,7 +327,10 @@ async fn mobile_page() -> Html<&'static str> {
 
 async fn xterm_js() -> impl IntoResponse {
     (
-        [(axum::http::header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/javascript; charset=utf-8",
+        )],
         XTERM_JS,
     )
 }
@@ -330,7 +344,10 @@ async fn xterm_css() -> impl IntoResponse {
 
 async fn xterm_addon_fit_js() -> impl IntoResponse {
     (
-        [(axum::http::header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/javascript; charset=utf-8",
+        )],
         XTERM_ADDON_FIT_JS,
     )
 }
@@ -364,7 +381,7 @@ async fn list_sessions(
     if let Err(response) = authorize(&state, peer, &headers, query.token.as_deref(), "sessions") {
         return response;
     }
-    Json(serde_json::json!({ "sessions": state.daemon.manager.list() })).into_response()
+    Json(serde_json::json!({ "sessions": state.manager.list() })).into_response()
 }
 
 async fn get_session(
@@ -377,7 +394,7 @@ async fn get_session(
     if let Err(response) = authorize(&state, peer, &headers, query.token.as_deref(), "session") {
         return response;
     }
-    match state.daemon.manager.info(&session_id) {
+    match state.manager.info(&session_id) {
         Ok(session) => Json(session).into_response(),
         Err(_) => api_error(StatusCode::NOT_FOUND, "Session not found"),
     }
@@ -400,7 +417,7 @@ async fn acquire_lease(
     ) {
         return response;
     }
-    if state.daemon.manager.info(&session_id).is_err() {
+    if state.manager.info(&session_id).is_err() {
         return api_error(StatusCode::NOT_FOUND, "Session not found");
     }
     if request.read_only {
@@ -523,11 +540,7 @@ async fn input_session(
     ) {
         return response;
     }
-    match state
-        .daemon
-        .manager
-        .write(&session_id, request.data.as_bytes())
-    {
+    match state.manager.write(&session_id, request.data.as_bytes()) {
         Ok(()) => {
             audit(&state, peer, &request.client_id, &session_id, "input", true);
             StatusCode::NO_CONTENT.into_response()
@@ -567,7 +580,6 @@ async fn resize_session(
         return response;
     }
     match state
-        .daemon
         .manager
         .resize(&session_id, request.rows, request.cols)
     {
@@ -612,7 +624,7 @@ async fn interrupt_session(
         query,
         request,
         "interrupt",
-        |state, id| state.daemon.manager.write(id, b"\x03"),
+        |state, id| state.manager.write(id, b"\x03"),
     )
 }
 
@@ -632,10 +644,7 @@ async fn close_session(
         query,
         request,
         "close",
-        |state, id| {
-            state.daemon.manager.close(id)?;
-            state.daemon.persist()
-        },
+        |state, id| state.manager.close(id),
     )
 }
 
@@ -699,7 +708,7 @@ async fn attach_session(
     ) {
         return response;
     }
-    if state.daemon.manager.info(&session_id).is_err() {
+    if state.manager.info(&session_id).is_err() {
         return api_error(StatusCode::NOT_FOUND, "Session not found");
     }
     ws.on_upgrade(move |socket| websocket_loop(socket, state, peer, session_id, query))
@@ -714,10 +723,7 @@ async fn websocket_loop(
     query: AttachQuery,
 ) {
     let attachment_id = format!("remote-{}", uuid::Uuid::new_v4());
-    let Ok((session, subscription)) = state
-        .daemon
-        .manager
-        .attach(&session_id, attachment_id.clone())
+    let Ok((session, subscription)) = state.manager.attach(&session_id, attachment_id.clone())
     else {
         return;
     };
@@ -795,7 +801,7 @@ async fn websocket_loop(
             }
         }
     }
-    let _ = state.daemon.manager.detach(&session_id, &attachment_id);
+    let _ = state.manager.detach(&session_id, &attachment_id);
     release_control(&state, &session_id, &query.client_id, None);
     audit(
         &state,
@@ -839,11 +845,7 @@ fn handle_ws_message(
             if validate_lease(state, session_id, client_id, &lease_id, true).is_err() {
                 return serde_json::json!({ "type": "error", "message": "A control lease is required" });
             }
-            let ok = state
-                .daemon
-                .manager
-                .write(session_id, data.as_bytes())
-                .is_ok();
+            let ok = state.manager.write(session_id, data.as_bytes()).is_ok();
             serde_json::json!({ "type": "ack", "action": "input", "ok": ok })
         }
         WsClientMessage::Resize {
@@ -854,14 +856,14 @@ fn handle_ws_message(
             if validate_lease(state, session_id, client_id, &lease_id, true).is_err() {
                 return serde_json::json!({ "type": "error", "message": "A control lease is required" });
             }
-            let ok = state.daemon.manager.resize(session_id, rows, cols).is_ok();
+            let ok = state.manager.resize(session_id, rows, cols).is_ok();
             serde_json::json!({ "type": "ack", "action": "resize", "ok": ok })
         }
         WsClientMessage::Interrupt { lease_id, confirm } => {
             if !confirm || validate_lease(state, session_id, client_id, &lease_id, true).is_err() {
                 return serde_json::json!({ "type": "error", "message": "Confirmation and a control lease are required" });
             }
-            let ok = state.daemon.manager.write(session_id, b"\x03").is_ok();
+            let ok = state.manager.write(session_id, b"\x03").is_ok();
             audit(state, peer, client_id, session_id, "ws.interrupt", ok);
             serde_json::json!({ "type": "ack", "action": "interrupt", "ok": ok })
         }
@@ -1090,18 +1092,13 @@ fn compute_bind_and_security(allow_lan: bool) -> (SocketAddr, &'static str) {
     } else {
         DEFAULT_BIND
     };
-    let requested = std::env::var("PROJECT_TERMINAL_REMOTE_BIND")
-        .unwrap_or_else(|_| default_bind.into());
+    let requested =
+        std::env::var("PROJECT_TERMINAL_REMOTE_BIND").unwrap_or_else(|_| default_bind.into());
     let mut bind = requested
         .parse::<SocketAddr>()
         .unwrap_or_else(|_| DEFAULT_BIND.parse().expect("valid default remote bind"));
-    let tls_terminated =
-        std::env::var("PROJECT_TERMINAL_TLS_TERMINATED").as_deref() == Ok("1");
-    if !bind.ip().is_loopback()
-        && !is_tailscale_ip(bind.ip())
-        && !tls_terminated
-        && !allow_lan
-    {
+    let tls_terminated = std::env::var("PROJECT_TERMINAL_TLS_TERMINATED").as_deref() == Ok("1");
+    if !bind.ip().is_loopback() && !is_tailscale_ip(bind.ip()) && !tls_terminated && !allow_lan {
         tracing::warn!(
             "Refusing insecure non-loopback remote bind {bind}; use a Tailscale address, set PROJECT_TERMINAL_TLS_TERMINATED=1 behind HTTPS, or enable LAN access in Settings"
         );
@@ -1120,12 +1117,26 @@ fn compute_bind_and_security(allow_lan: bool) -> (SocketAddr, &'static str) {
 }
 
 fn compute_advertise_url(bind: SocketAddr) -> String {
+    if let Ok(url) = std::env::var("PROJECT_TERMINAL_REMOTE_URL") {
+        let url = url.trim().trim_end_matches('/');
+        if url.starts_with("http://") || url.starts_with("https://") {
+            return url.to_string();
+        }
+        tracing::warn!("Ignoring PROJECT_TERMINAL_REMOTE_URL because it is not an http(s) URL");
+    }
     let advertise_ip = if bind.ip().is_unspecified() {
         detect_lan_ip().unwrap_or_else(|| bind.ip())
     } else {
         bind.ip()
     };
-    format!("http://{advertise_ip}:{}", bind.port())
+    let host = match advertise_ip {
+        IpAddr::V4(ip) => ip.to_string(),
+        IpAddr::V6(ip) => format!("[{ip}]"),
+    };
+    // The daemon listener itself remains HTTP even when TLS is terminated by
+    // a reverse proxy. Set PROJECT_TERMINAL_REMOTE_URL to advertise the
+    // proxy's external HTTPS URL instead of this direct listener address.
+    format!("http://{host}:{}", bind.port())
 }
 
 /// Bind with a short retry so a rapid 0.0.0.0 <-> 127.0.0.1 toggle does not
@@ -1170,154 +1181,14 @@ fn is_tailscale_ip(ip: IpAddr) -> bool {
 
 const XTERM_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/xterm.js"));
 const XTERM_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/xterm.css"));
-const XTERM_ADDON_FIT_JS: &str =
-    include_str!(concat!(env!("OUT_DIR"), "/xterm-addon-fit.js"));
+const XTERM_ADDON_FIT_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/xterm-addon-fit.js"));
 
-const MOBILE_PAGE: &str = r#"<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
-  <title>Project Terminal Remote</title>
-  <link rel="stylesheet" href="/xterm.css">
-  <style>
-    :root{color-scheme:dark;--bg:#0c1017;--panel:#151b25;--border:#293142;--input:#101620;--fg:#e5e7eb;--muted:#93a4bd;--accent:#2563eb;--danger:#f87171;--ok:#34d399}
-    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-    html,body{height:100%}body{margin:0;display:flex;flex-direction:column;background:var(--bg);color:var(--fg);font:15px system-ui}
-    header{display:flex;gap:.5rem;padding:.6rem;background:var(--panel);border-bottom:1px solid var(--border);align-items:center}
-    header input{flex:1;min-width:0}header.collapsed .bar-row{display:none}
-    input,select,button{min-height:44px;border:1px solid #364153;border-radius:8px;background:var(--input);color:inherit;padding:.5rem .6rem;font:inherit}
-    button{font-weight:600;cursor:pointer;border-color:#3b475c}button.primary{background:var(--accent);border-color:var(--accent)}button:active{opacity:.7}
-    #status{font-size:.8rem;color:var(--muted);padding:.35rem .75rem;display:flex;align-items:center;gap:.4rem;background:var(--panel);border-bottom:1px solid var(--border)}
-    #status .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}#status.connecting .dot{background:#fbbf24}#status.connected .dot{background:var(--ok)}#status.error .dot{background:var(--danger)}
-    #term-wrap{flex:1;min-height:0;position:relative;background:#000;overflow:hidden}
-    #term-wrap .xterm{height:100%;padding:6px}
-    #term-wrap .xterm-viewport{background:#000!important}
-    .bar-row{display:flex;gap:.5rem;padding:.5rem .6rem;background:var(--panel);border-bottom:1px solid var(--border);align-items:center}
-    .bar-row select{flex:1;min-width:0}.bar-row label{display:flex;align-items:center;gap:.3rem;font-size:.85rem;color:var(--muted);white-space:nowrap}
-    #take,#interrupt{flex:none;padding:.4rem .6rem;min-height:36px;font-size:.85rem}
-    form{display:flex;gap:.5rem;padding:.5rem .6rem;background:var(--panel);border-top:1px solid var(--border)}
-    form input{flex:1;min-width:0}form button{flex:none}
-    .overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:.75rem;padding:2rem;text-align:center;background:rgba(12,16,23,.92);z-index:10}
-    .overlay h2{margin:0;font-size:1.1rem}.overlay p{margin:0;color:var(--muted);font-size:.9rem;line-height:1.5}
-    .overlay button{min-width:140px}
-    .hidden{display:none!important}
-    @media(max-width:560px){header,.bar-row,form{padding:.4rem .5rem}#term-wrap .xterm{padding:4px}}
-  </style>
-</head>
-<body>
-  <header>
-    <input id="token" type="password" autocomplete="off" placeholder="Access token">
-    <button id="connect" class="primary">Connect</button>
-  </header>
-  <div class="bar-row">
-    <select id="sessions"></select>
-    <label><input id="readonly" type="checkbox"> Read only</label>
-    <button id="take">Take control</button>
-    <button id="interrupt">Ctrl+C</button>
-  </div>
-  <div id="status"><span class="dot"></span><span id="status-text">Disconnected</span></div>
-  <div id="term-wrap">
-    <div id="terminal"></div>
-    <div id="overlay" class="overlay">
-      <h2 id="overlay-title">Connecting</h2>
-      <p id="overlay-msg"></p>
-      <button id="overlay-btn" class="primary hidden">Retry</button>
-    </div>
-  </div>
-  <form id="inputForm">
-    <input id="input" autocomplete="off" placeholder="Type a command and press Enter" enterkeyhint="send">
-    <button class="primary">Send</button>
-  </form>
-  <script src="/xterm.js"></script>
-  <script src="/xterm-addon-fit.js"></script>
-  <script>
-  const $=id=>document.getElementById(id);
-  let ws,lease,client=crypto.randomUUID(),term,fit,hasLease=false,resizeTimer,pending=[];
-
-  function decode(v){try{return new TextDecoder().decode(Uint8Array.from(atob(v),c=>c.charCodeAt(0)))}catch{return""}}
-  function setStatus(text,cls){$("status-text").textContent=text;$("status").className=cls||""}
-  function showOverlay(title,msg,btn){$("overlay-title").textContent=title;$("overlay-msg").textContent=msg||"";$("overlay-btn").classList.toggle("hidden",!btn);$("overlay").classList.remove("hidden")}
-  function hideOverlay(){$("overlay").classList.add("hidden")}
-
-  function initTerm(){
-    if(term)return true;
-    try{
-      term=new Terminal({cursorBlink:true,cursorStyle:"bar",fontFamily:"ui-monospace,monospace",fontSize:13,allowProposedApi:true,convertEol:false,scrollback:3000});
-      fit=new FitAddon.FitAddon();term.loadAddon(fit);term.open($("terminal"));fit.fit();
-      term.onData(d=>{if(ws&&hasLease&&d)ws.send(JSON.stringify({type:"input",lease_id:lease,data:d}))});
-      term.onResize(({cols,rows})=>{if(ws&&hasLease){clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>ws.send(JSON.stringify({type:"resize",cols,rows})),200)}});
-      new ResizeObserver(()=>{try{fit.fit()}catch(e){}}).observe($("term-wrap"));
-      window.addEventListener("resize",()=>{try{fit.fit()}catch(e){}});
-      // Drain any output that arrived before the terminal was ready.
-      for(const d of pending)term.write(d);pending=[];
-      return true;
-    }catch(e){
-      term=null;fit=null;
-      setStatus("Terminal rendering failed","error");
-      showOverlay("Terminal rendering failed",(e&&e.message)||"xterm.js could not initialise. Try reloading the page.","Retry");
-      return false;
-    }
-  }
-  function disposeTerm(){if(term){term.dispose();term=null;fit=null}lease=null;hasLease=false;pending=[]}
-
-  async function api(path,options={}){let token=$("token").value;return fetch(path,{...options,headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json",...(options.headers||{})}})}
-
-  async function connect(){
-    sessionStorage.token=$("token").value;
-    setStatus("Connecting…","connecting");hideOverlay();
-    try{
-      let r=await api("/api/sessions");
-      if(!r.ok){setStatus("Unauthorized","error");showOverlay("Unauthorized","The access token was rejected. Scan a fresh QR code from the desktop app.","Retry");return}
-      let j=await r.json();
-      $("sessions").innerHTML=(j.sessions||[]).map(s=>`<option value="${s.sessionId}">${s.projectId} · ${s.sessionId.slice(-8)}</option>`).join("");
-      if(!$("sessions").value){setStatus("No active sessions","error");showOverlay("No active sessions","Open a terminal in the desktop app first, then tap Retry.","Retry");return}
-      connectWs();
-    }catch(e){
-      setStatus("Connection failed","error");
-      showOverlay("Connection failed",(e&&e.message)||"Could not reach the Session Host. Check the network and retry.","Retry");
-    }
-  }
-  $("connect").onclick=connect;
-
-  function connectWs(){
-    if(ws)ws.close();disposeTerm();
-    let id=$("sessions").value;if(!id)return;
-    let q=new URLSearchParams({token:$("token").value,clientId:client,readOnly:$("readonly").checked});
-    setStatus("Connecting…","connecting");
-    ws=new WebSocket(`${location.protocol==="https:"?"wss":"ws"}://${location.host}/api/sessions/${id}/attach?${q}`);
-    ws.onopen=()=>{
-      let s=$("sessions").selectedOptions[0]?.textContent||"";
-      setStatus(s?`Connected · ${s}`:"Connected","connected");hideOverlay();
-      // Initialise the terminal AFTER the WS is open so a rendering failure
-      // never blocks the connection status from updating.
-      initTerm();
-      setTimeout(()=>{try{fit&&fit.fit()}catch(e){}},50);
-    };
-    ws.onclose=()=>{setStatus("Disconnected","");lease=null;hasLease=false};
-    ws.onerror=()=>{setStatus("Connection error","error")};
-    ws.onmessage=e=>{
-      let m;try{m=JSON.parse(e.data)}catch(err){return}
-      if(m.type==="snapshot"){let d=decode(m.data);if(term)term.write(d);else pending.push(d)}
-      else if(m.type==="output"&&m.event&&m.event.data){let d=decode(m.event.data);if(term)term.write(d);else pending.push(d)}
-      else if(m.type==="lease"){lease=m.lease.leaseId;hasLease=true;$("input").disabled=false;$("take").disabled=true}
-      else if(m.type==="released"||m.type==="lease_released"){lease=null;hasLease=false;$("input").disabled=true;$("take").disabled=false}
-      else if(m.type==="error"){setStatus(m.message||"Error","error")}
-    };
-  }
-
-  $("sessions").onchange=connectWs;
-  $("take").onclick=()=>ws?.send(JSON.stringify({type:"acquire"}));
-  $("interrupt").onclick=()=>{if(lease&&confirm("Send Ctrl+C?"))ws?.send(JSON.stringify({type:"interrupt",lease_id:lease,confirm:true}))};
-  $("inputForm").onsubmit=e=>{e.preventDefault();let v=$("input").value;if(ws&&hasLease&&v){ws.send(JSON.stringify({type:"input",lease_id:lease,data:v+"\\r"}));$("input").value=""}};
-  $("overlay-btn").onclick=()=>connect();
-
-  (()=>{let t=new URLSearchParams(location.search).get("token");if(t){$("token").value=t;sessionStorage.token=t;history.replaceState(null,"",location.pathname)}else{$("token").value=sessionStorage.token||""}if($("token").value)connect();else showOverlay("Connect","Enter the access token shown in the desktop app, or scan its QR code.",null)})();
-  </script>
-</body></html>"#;
+const MOBILE_PAGE: &str = include_str!("remote_page.html");
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::terminal::SessionSpawn;
     use std::net::Ipv4Addr;
 
     #[test]
@@ -1344,9 +1215,8 @@ mod tests {
         let dirs = ConfigDirs::from_root(
             std::env::temp_dir().join(format!("pt-remote-{}", uuid::Uuid::new_v4())),
         );
-        let daemon = Arc::new(DaemonServer::new(&dirs));
         let state = RemoteState {
-            daemon,
+            manager: TerminalManager::new(),
             token: "secret".into(),
             leases: Arc::new(Mutex::new(HashMap::new())),
             rate_limits: Arc::new(Mutex::new(HashMap::new())),
@@ -1357,5 +1227,77 @@ mod tests {
         assert!(acquire_control(&state, "session-1", "phone-b").is_err());
         release_control(&state, "session-1", "phone-a", Some(&first.lease_id));
         assert!(acquire_control(&state, "session-1", "phone-b").is_ok());
+    }
+
+    #[test]
+    fn lease_renewal_keeps_the_same_control_identity() {
+        let dirs = ConfigDirs::from_root(
+            std::env::temp_dir().join(format!("pt-remote-{}", uuid::Uuid::new_v4())),
+        );
+        let state = RemoteState {
+            manager: TerminalManager::new(),
+            token: "secret".into(),
+            leases: Arc::new(Mutex::new(HashMap::new())),
+            rate_limits: Arc::new(Mutex::new(HashMap::new())),
+            audit_path: dirs.remote_audit_path(),
+            audit_lock: Arc::new(Mutex::new(())),
+        };
+        let first = acquire_control(&state, "session-1", "phone-a").unwrap();
+        let renewed =
+            validate_lease(&state, "session-1", "phone-a", &first.lease_id, true).unwrap();
+
+        assert_eq!(renewed.lease_id, first.lease_id);
+        assert_eq!(renewed.client_id, "phone-a");
+        assert!(renewed.expires_in_seconds > 0);
+    }
+
+    #[test]
+    fn mobile_page_includes_resilient_control_protocol() {
+        assert!(MOBILE_PAGE.contains("CONTROL_RENEW_MS"));
+        assert!(MOBILE_PAGE.contains(r#"type: "resize", lease_id: leaseId"#));
+        assert!(MOBILE_PAGE.contains("crypto.randomUUID"));
+        assert!(MOBILE_PAGE.contains("crypto.getRandomValues"));
+        assert!(MOBILE_PAGE.contains(r#"type: "release", lease_id: leaseId"#));
+    }
+
+    #[test]
+    fn gateway_reads_sessions_from_the_desktop_manager() {
+        let dirs = ConfigDirs::from_root(
+            std::env::temp_dir().join(format!("pt-remote-{}", uuid::Uuid::new_v4())),
+        );
+        let desktop_manager = TerminalManager::new();
+        let gateway = RemoteGateway::new(&dirs, desktop_manager.clone_handle());
+        let session_id = format!("remote-visible-{}", uuid::Uuid::new_v4());
+        let created = desktop_manager
+            .create(SessionSpawn {
+                session_id: session_id.clone(),
+                project_id: "project-visible".into(),
+                profile_id: "profile-visible".into(),
+                program: if cfg!(windows) {
+                    "cmd.exe".into()
+                } else {
+                    "/bin/sh".into()
+                },
+                args: if cfg!(windows) {
+                    vec!["/Q".into()]
+                } else {
+                    Vec::new()
+                },
+                cwd: None,
+                env: Vec::new(),
+                readiness_marker: None,
+                rows: 24,
+                cols: 80,
+                scrollback_bytes: 64 * 1024,
+            })
+            .unwrap();
+
+        assert_eq!(created, session_id);
+        let sessions = gateway.manager.list();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, session_id);
+        assert_eq!(sessions[0].project_id, "project-visible");
+
+        desktop_manager.close_all();
     }
 }

@@ -394,8 +394,8 @@ const zhCNWorkspace: Record<string, string> = {
   "The gateway binds to loopback by default. Use Tailscale or an HTTPS reverse proxy for other devices.":
     "网关默认仅监听本机。其他设备请使用 Tailscale 或 HTTPS 反向代理。",
   "Mobile terminal gateway": "手机终端网关",
-  "Access details are kept in Session Host memory only.":
-    "访问凭据仅保存在会话主机内存中。",
+  "Access details are kept in app memory only.":
+    "访问凭据仅保存在应用内存中。",
   "Show access": "显示访问方式",
   "Access token": "访问令牌",
   "This token is not saved to disk. Anyone holding it can view remote sessions.":
@@ -411,6 +411,7 @@ const zhCNWorkspace: Record<string, string> = {
   "Remote access is disabled.": "远程访问已禁用。",
   "Enable remote access": "启用远程访问",
   "Session Host is unavailable": "会话主机不可用",
+  "Remote gateway is unavailable": "远程网关不可用",
   "The phone cannot reach 127.0.0.1. Use Tailscale or an HTTPS reverse proxy; the QR code works only after the gateway is reachable from the phone.":
     "手机无法访问 127.0.0.1。请改用 Tailscale 或 HTTPS 反向代理；只有当网关可被手机访问时，此二维码才会生效。",
   "Scan to connect": "扫码连接",

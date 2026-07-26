@@ -1,6 +1,7 @@
 use serde::Serialize;
+use tauri::State;
 
-use crate::daemon::{self, DaemonRequest};
+use crate::daemon::{self, DaemonRequest, RemoteGateway};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -117,61 +118,28 @@ pub async fn daemon_list_sessions() -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-pub async fn remote_access_info() -> Result<serde_json::Value, String> {
-    let status = ensure_running().await;
-    if !status.connected {
-        return Err(status
-            .error
-            .unwrap_or_else(|| "Session Host is unavailable".into()));
-    }
-    let response = daemon::request(DaemonRequest::RemoteInfo)
-        .await
-        .map_err(|error| error.to_string())?;
-    if response.ok {
-        Ok(response.data.unwrap_or(serde_json::Value::Null))
-    } else {
-        Err(response
-            .error
-            .unwrap_or_else(|| "Remote gateway information is unavailable".into()))
-    }
+pub fn remote_access_info(remote: State<'_, RemoteGateway>) -> serde_json::Value {
+    remote.info()
 }
 
 #[tauri::command]
-pub async fn set_remote_lan_access(allow_lan: bool) -> Result<serde_json::Value, String> {
-    let status = ensure_running().await;
-    if !status.connected {
-        return Err(status
-            .error
-            .unwrap_or_else(|| "Session Host is unavailable".into()));
-    }
-    let response = daemon::request(DaemonRequest::ReconfigureRemote { allow_lan })
-        .await
+pub fn set_remote_lan_access(
+    remote: State<'_, RemoteGateway>,
+    allow_lan: bool,
+) -> Result<serde_json::Value, String> {
+    remote
+        .reconfigure(allow_lan)
         .map_err(|error| error.to_string())?;
-    if response.ok {
-        Ok(response.data.unwrap_or(serde_json::Value::Null))
-    } else {
-        Err(response
-            .error
-            .unwrap_or_else(|| "Could not reconfigure remote access".into()))
-    }
+    Ok(remote.info())
 }
 
 #[tauri::command]
-pub async fn set_remote_enabled(enabled: bool) -> Result<serde_json::Value, String> {
-    let status = ensure_running().await;
-    if !status.connected {
-        return Err(status
-            .error
-            .unwrap_or_else(|| "Session Host is unavailable".into()));
-    }
-    let response = daemon::request(DaemonRequest::SetRemoteEnabled { enabled })
-        .await
+pub fn set_remote_enabled(
+    remote: State<'_, RemoteGateway>,
+    enabled: bool,
+) -> Result<serde_json::Value, String> {
+    remote
+        .set_enabled(enabled)
         .map_err(|error| error.to_string())?;
-    if response.ok {
-        Ok(response.data.unwrap_or(serde_json::Value::Null))
-    } else {
-        Err(response
-            .error
-            .unwrap_or_else(|| "Could not toggle remote access".into()))
-    }
+    Ok(remote.info())
 }

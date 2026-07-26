@@ -65,7 +65,7 @@ export function GeneralSettingsPanel() {
         typeof error.message === "string"
           ? error.message
           : undefined;
-      setRemoteError(message ?? t("Session Host is unavailable"));
+      setRemoteError(message ?? t("Remote gateway is unavailable"));
     },
     [t],
   );
@@ -305,7 +305,7 @@ export function GeneralSettingsPanel() {
                 : t("Remote access is disabled.")
               : remoteError
                 ? remoteError
-                : t("Access details are kept in Session Host memory only.")
+                : t("Access details are kept in app memory only.")
           }
         >
           <div className="flex items-center gap-2">
