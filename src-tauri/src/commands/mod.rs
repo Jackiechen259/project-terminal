@@ -8,6 +8,7 @@ pub mod project;
 pub mod remote;
 pub mod ssh;
 pub mod terminal;
+pub mod windows_terminal;
 use serde::Serialize;
 
 /// Generic serializable payload wrapper used by commands that return a list.

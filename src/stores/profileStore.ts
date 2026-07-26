@@ -9,6 +9,7 @@ import {
   profileService,
   type FrontendError,
   type ProfileInput,
+  type WindowsTerminalImportResult,
 } from "@/services";
 import type { TerminalProfile } from "@/types";
 
@@ -21,6 +22,9 @@ export interface ProfileStoreState {
   createProfile: (input: ProfileInput) => Promise<TerminalProfile>;
   updateProfile: (input: ProfileInput) => Promise<TerminalProfile>;
   duplicateProfile: (id: string) => Promise<TerminalProfile>;
+  importFromWindowsTerminal: (
+    projectId: string,
+  ) => Promise<WindowsTerminalImportResult>;
   deleteProfile: (id: string, projectId: string) => Promise<void>;
   defaultForProject: (projectId: string) => TerminalProfile | null;
   clearError: () => void;
@@ -91,6 +95,31 @@ export const useProfileStore = create<ProfileStoreState>((set, get) => ({
       },
     });
     return profile;
+  },
+
+  importFromWindowsTerminal: async (projectId) => {
+    const result = await profileService.importWindowsTerminal(projectId);
+    if (result.imported.length) {
+      const importedIds = new Set(result.imported.map((profile) => profile.id));
+      const existing = (get().byProjectId[projectId] ?? []).filter(
+        (profile) => !importedIds.has(profile.id),
+      );
+      const importedDefault = result.imported.some(
+        (profile) => profile.isDefault,
+      );
+      set({
+        byProjectId: {
+          ...get().byProjectId,
+          [projectId]: [
+            ...existing.map((profile) =>
+              importedDefault ? { ...profile, isDefault: false } : profile,
+            ),
+            ...result.imported,
+          ],
+        },
+      });
+    }
+    return result;
   },
 
   deleteProfile: async (id, projectId) => {

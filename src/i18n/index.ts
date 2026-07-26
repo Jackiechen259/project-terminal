@@ -92,6 +92,14 @@ const zhCN: Record<string, string> = {
   "No profiles yet.": "暂无配置。",
   "Add a project to create profiles.": "添加项目后即可创建配置。",
   "New profile": "新建配置",
+  "Import from Windows Terminal": "从 Windows Terminal 导入",
+  "Importing…": "正在导入…",
+  "Imported {count} Windows Terminal profile(s).":
+    "已导入 {count} 个 Windows Terminal 配置。",
+  "No new Windows Terminal profiles to import.":
+    "没有可导入的新 Windows Terminal 配置。",
+  "Could not import Windows Terminal profiles.":
+    "无法导入 Windows Terminal 配置。",
   Templates: "模板",
   "No templates yet.": "暂无模板。",
   "New template": "新建模板",

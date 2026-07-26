@@ -183,6 +183,8 @@ Tabs are grouped by project. Switching projects changes which group is visible, 
 
 Profiles are stored as first-class project resources. The Rust backend resolves the executable, arguments, working directory, environment activation, startup commands, and environment variables from saved configuration.
 
+On Windows, the profile settings page can import visible profiles from installed Stable, Preview, Canary, or unpackaged Windows Terminal settings. Re-importing skips profiles whose launch configuration is already present in the selected local project.
+
 ### Remote initialization
 
 For an SSH project, Project Terminal first establishes the interactive SSH session, enters the configured remote directory, and then runs the selected remote initialization commands. If initialization fails, the error is shown while leaving the remote shell usable.

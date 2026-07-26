@@ -3,6 +3,7 @@ import {
   Check,
   ChevronLeft,
   Copy,
+  Download,
   EyeOff,
   LayoutTemplate,
   Plus,
@@ -306,6 +307,9 @@ export function SettingsDialog({
   const [editing, setEditing] = useState<ProfileDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importNotice, setImportNotice] = useState<string | null>(null);
+  const hostOs = usePlatformStore((state) => state.info?.os);
 
   const profiles = useProfileStore((s) =>
     projectId ? (s.byProjectId[projectId] ?? EMPTY_PROFILES) : EMPTY_PROFILES,
@@ -317,6 +321,9 @@ export function SettingsDialog({
   const createProfile = useProfileStore((s) => s.createProfile);
   const updateProfile = useProfileStore((s) => s.updateProfile);
   const duplicateProfile = useProfileStore((s) => s.duplicateProfile);
+  const importFromWindowsTerminal = useProfileStore(
+    (s) => s.importFromWindowsTerminal,
+  );
   const deleteProfile = useProfileStore((s) => s.deleteProfile);
   const templates = useTemplateStore((s) => s.templates ?? EMPTY_TEMPLATES);
   const templatesLoaded = useTemplateStore((s) => s.loaded);
@@ -349,6 +356,7 @@ export function SettingsDialog({
     setProjectId(initialId);
     setEditing(null);
     setError(null);
+    setImportNotice(null);
     setEditingTemplate(null);
     setTemplateError(null);
   }, [open, activeProjectId, initialSection, projects]);
@@ -369,12 +377,41 @@ export function SettingsDialog({
     setProjectId(nextProjectId);
     setEditing(null);
     setError(null);
+    setImportNotice(null);
   }
 
   function startCreate() {
     if (!selectedProject) return;
     setEditing(blankDraft(selectedProject.type));
     setError(null);
+  }
+
+  async function importWindowsTerminalProfiles() {
+    if (!selectedProject) return;
+    try {
+      setImporting(true);
+      setError(null);
+      setImportNotice(null);
+      const result = await importFromWindowsTerminal(selectedProject.id);
+      setImportNotice(
+        result.imported.length
+          ? t("Imported {count} Windows Terminal profile(s).", {
+              count: result.imported.length,
+            })
+          : t("No new Windows Terminal profiles to import."),
+      );
+      dispatchAppCommand({
+        type: "profiles-changed",
+        projectId: selectedProject.id,
+      });
+    } catch (cause) {
+      setError(
+        (cause as { message?: string }).message ??
+          t("Could not import Windows Terminal profiles."),
+      );
+    } finally {
+      setImporting(false);
+    }
   }
 
   async function saveProfile() {
@@ -717,6 +754,29 @@ export function SettingsDialog({
                 >
                   <Plus className="h-4 w-4" /> {t("New profile")}
                 </Button>
+                {hostOs === "windows" && selectedProject?.type === "local" ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void importWindowsTerminalProfiles()}
+                    disabled={importing}
+                    className="mt-1 w-full justify-start"
+                  >
+                    <Download className="h-4 w-4" />
+                    {importing
+                      ? t("Importing…")
+                      : t("Import from Windows Terminal")}
+                  </Button>
+                ) : null}
+                {importNotice ? (
+                  <p
+                    className="mt-2 px-2 text-xs text-ok"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    {importNotice}
+                  </p>
+                ) : null}
               </div>
             ) : section === "templates" ? (
               <div className="mt-4 flex min-h-0 flex-1 flex-col border-t pt-4">

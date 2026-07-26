@@ -172,6 +172,7 @@ pub fn run() {
                 commands::profile::test_terminal_profile,
                 commands::profile::detect_local_shells,
                 commands::profile::detect_python_environments,
+                commands::windows_terminal::import_windows_terminal_profiles,
                 // Profile templates (global reusable presets)
                 commands::profile_template::list_profile_templates,
                 commands::profile_template::create_profile_template,

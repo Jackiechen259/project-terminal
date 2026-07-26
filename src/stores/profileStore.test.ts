@@ -9,6 +9,8 @@ vi.mock("@/services", () => ({
     create: vi.fn(),
     update: vi.fn(),
     delete: vi.fn(),
+    duplicate: vi.fn(),
+    importWindowsTerminal: vi.fn(),
     test: vi.fn(),
   },
 }));
@@ -142,6 +144,38 @@ describe("profileStore", () => {
 
     it("returns null when the project has no profiles", () => {
       expect(useProfileStore.getState().defaultForProject("empty")).toBeNull();
+    });
+  });
+
+  describe("importFromWindowsTerminal", () => {
+    it("adds imported profiles to the selected project", async () => {
+      profileServiceMock.importWindowsTerminal.mockResolvedValueOnce({
+        imported: [
+          {
+            id: "imported",
+            projectId: "proj-a",
+            name: "PowerShell 7",
+            shellType: "powershell",
+            shellExecutable: "pwsh.exe",
+            environmentType: "none",
+            isDefault: false,
+            showInContextMenu: true,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+          },
+        ],
+        skippedCount: 0,
+        sourceFiles: ["settings.json"],
+      });
+
+      const result = await useProfileStore
+        .getState()
+        .importFromWindowsTerminal("proj-a");
+
+      expect(result.imported).toHaveLength(1);
+      expect(useProfileStore.getState().byProjectId["proj-a"]?.[0].id).toBe(
+        "imported",
+      );
     });
   });
 });

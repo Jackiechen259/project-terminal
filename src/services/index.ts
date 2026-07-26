@@ -37,6 +37,7 @@ const PROFILE_CMD = {
   delete: "delete_terminal_profile",
   duplicate: "duplicate_terminal_profile",
   test: "test_terminal_profile",
+  importWindowsTerminal: "import_windows_terminal_profiles",
   detectShells: "detect_local_shells",
   detectPython: "detect_python_environments",
 } as const;
@@ -90,6 +91,12 @@ export interface ProfileInput {
   remoteShellCommand?: string;
   isDefault: boolean;
   showInContextMenu: boolean;
+}
+
+export interface WindowsTerminalImportResult {
+  imported: TerminalProfile[];
+  skippedCount: number;
+  sourceFiles: string[];
 }
 
 export interface TemplateInput {
@@ -243,6 +250,11 @@ export const profileService = {
   duplicate: (id: string) =>
     invokeOrThrow<TerminalProfile>(PROFILE_CMD.duplicate, { id }),
   test: (id: string) => invokeOrThrow<string>(PROFILE_CMD.test, { id }),
+  importWindowsTerminal: (projectId: string) =>
+    invokeOrThrow<WindowsTerminalImportResult>(
+      PROFILE_CMD.importWindowsTerminal,
+      { projectId },
+    ),
 };
 
 export interface DetectedShell {
