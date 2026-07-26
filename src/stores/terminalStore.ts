@@ -99,273 +99,281 @@ export const TERMINAL_WORKSPACE_STORAGE_KEY =
 export const useTerminalStore = create<TerminalStoreState>()(
   persist(
     (set, get) => ({
-  activeProjectId: null,
-  tabsById: {},
-  tabGroupsByProjectId: {},
-  splitViewsByProjectId: {},
-
-  setActiveProject: (projectId) => set({ activeProjectId: projectId }),
-
-  ensureGroup: (projectId) => {
-    const existing = get().tabGroupsByProjectId[projectId];
-    if (existing) return existing;
-    const fresh: ProjectTabGroup = {
-      projectId,
-      tabIds: [],
-      activeTabId: null,
-    };
-    set({
-      tabGroupsByProjectId: {
-        ...get().tabGroupsByProjectId,
-        [projectId]: fresh,
-      },
-    });
-    return fresh;
-  },
-
-  removeProjectTabs: (projectId) => {
-    const group = get().tabGroupsByProjectId[projectId];
-    if (!group) return;
-    const tabsById = { ...get().tabsById };
-    for (const tabId of group.tabIds) delete tabsById[tabId];
-    const tabGroupsByProjectId = { ...get().tabGroupsByProjectId };
-    delete tabGroupsByProjectId[projectId];
-    const splitViewsByProjectId = { ...(get().splitViewsByProjectId ?? {}) };
-    delete splitViewsByProjectId[projectId];
-    set({
-      tabsById,
-      tabGroupsByProjectId,
-      splitViewsByProjectId,
-      activeProjectId:
-        get().activeProjectId === projectId ? null : get().activeProjectId,
-    });
-  },
-  clearAllTabs: () =>
-    set({
       activeProjectId: null,
       tabsById: {},
       tabGroupsByProjectId: {},
       splitViewsByProjectId: {},
-    }),
 
-  registerTab: (tab) => {
-    const group = get().ensureGroup(tab.projectId);
-    const updatedGroup: ProjectTabGroup = {
-      ...group,
-      tabIds: [...group.tabIds, tab.id],
-      activeTabId: tab.id,
-    };
-    set({
-      tabsById: { ...get().tabsById, [tab.id]: tab },
-      tabGroupsByProjectId: {
-        ...get().tabGroupsByProjectId,
-        [tab.projectId]: updatedGroup,
+      setActiveProject: (projectId) => set({ activeProjectId: projectId }),
+
+      ensureGroup: (projectId) => {
+        const existing = get().tabGroupsByProjectId[projectId];
+        if (existing) return existing;
+        const fresh: ProjectTabGroup = {
+          projectId,
+          tabIds: [],
+          activeTabId: null,
+        };
+        set({
+          tabGroupsByProjectId: {
+            ...get().tabGroupsByProjectId,
+            [projectId]: fresh,
+          },
+        });
+        return fresh;
       },
-      activeProjectId: get().activeProjectId ?? tab.projectId,
-    });
-  },
 
-  removeTab: (tabId) => {
-    const tab = get().tabsById[tabId];
-    if (!tab) return;
-    const group = get().tabGroupsByProjectId[tab.projectId];
-    if (!group) return;
-
-    const remainingIds = group.tabIds.filter((id) => id !== tabId);
-    // §26.3: activate right neighbor, else left, else none.
-    const removedIdx = group.tabIds.indexOf(tabId);
-    const newActiveId =
-      group.activeTabId === tabId
-        ? (remainingIds[removedIdx] ?? remainingIds[removedIdx - 1] ?? null)
-        : group.activeTabId;
-
-    const splitView = get().splitViewsByProjectId?.[tab.projectId];
-    const splitPane = splitView
-      ? paneLeaves(splitView.root).find((pane) => pane.tabId === tabId)
-      : undefined;
-    const nextSplitView =
-      splitView && splitPane ? closePane(splitView, splitPane.paneId) : splitView;
-    const otherSplitTabId = nextSplitView
-      ? focusedPane(nextSplitView)?.tabId
-      : null;
-    const updatedGroup: ProjectTabGroup = {
-      ...group,
-      tabIds: remainingIds,
-      activeTabId:
-        splitPane &&
-        otherSplitTabId &&
-        remainingIds.includes(otherSplitTabId)
-          ? otherSplitTabId
-          : newActiveId,
-    };
-
-    const nextTabsById = { ...get().tabsById };
-    delete nextTabsById[tabId];
-
-    const splitViewsByProjectId = { ...(get().splitViewsByProjectId ?? {}) };
-    if (splitPane) {
-      if (nextSplitView) {
-        splitViewsByProjectId[tab.projectId] = nextSplitView;
-      } else {
-        delete splitViewsByProjectId[tab.projectId];
-      }
-    }
-
-    set({
-      tabsById: nextTabsById,
-      tabGroupsByProjectId: {
-        ...get().tabGroupsByProjectId,
-        [tab.projectId]: updatedGroup,
+      removeProjectTabs: (projectId) => {
+        const group = get().tabGroupsByProjectId[projectId];
+        if (!group) return;
+        const tabsById = { ...get().tabsById };
+        for (const tabId of group.tabIds) delete tabsById[tabId];
+        const tabGroupsByProjectId = { ...get().tabGroupsByProjectId };
+        delete tabGroupsByProjectId[projectId];
+        const splitViewsByProjectId = {
+          ...(get().splitViewsByProjectId ?? {}),
+        };
+        delete splitViewsByProjectId[projectId];
+        set({
+          tabsById,
+          tabGroupsByProjectId,
+          splitViewsByProjectId,
+          activeProjectId:
+            get().activeProjectId === projectId ? null : get().activeProjectId,
+        });
       },
-      splitViewsByProjectId,
-    });
-  },
+      clearAllTabs: () =>
+        set({
+          activeProjectId: null,
+          tabsById: {},
+          tabGroupsByProjectId: {},
+          splitViewsByProjectId: {},
+        }),
 
-  updateTab: (tabId, patch) => {
-    const existing = get().tabsById[tabId];
-    if (!existing) return;
-    set({
-      tabsById: {
-        ...get().tabsById,
-        [tabId]: { ...existing, ...patch },
+      registerTab: (tab) => {
+        const group = get().ensureGroup(tab.projectId);
+        const updatedGroup: ProjectTabGroup = {
+          ...group,
+          tabIds: [...group.tabIds, tab.id],
+          activeTabId: tab.id,
+        };
+        set({
+          tabsById: { ...get().tabsById, [tab.id]: tab },
+          tabGroupsByProjectId: {
+            ...get().tabGroupsByProjectId,
+            [tab.projectId]: updatedGroup,
+          },
+          activeProjectId: get().activeProjectId ?? tab.projectId,
+        });
       },
-    });
-  },
 
-  setActiveTab: (projectId, tabId) => {
-    const group = get().tabGroupsByProjectId[projectId];
-    if (!group) return;
-    if (!group.tabIds.includes(tabId)) return;
-    set({
-      tabGroupsByProjectId: {
-        ...get().tabGroupsByProjectId,
-        [projectId]: { ...group, activeTabId: tabId },
+      removeTab: (tabId) => {
+        const tab = get().tabsById[tabId];
+        if (!tab) return;
+        const group = get().tabGroupsByProjectId[tab.projectId];
+        if (!group) return;
+
+        const remainingIds = group.tabIds.filter((id) => id !== tabId);
+        // §26.3: activate right neighbor, else left, else none.
+        const removedIdx = group.tabIds.indexOf(tabId);
+        const newActiveId =
+          group.activeTabId === tabId
+            ? (remainingIds[removedIdx] ?? remainingIds[removedIdx - 1] ?? null)
+            : group.activeTabId;
+
+        const splitView = get().splitViewsByProjectId?.[tab.projectId];
+        const splitPane = splitView
+          ? paneLeaves(splitView.root).find((pane) => pane.tabId === tabId)
+          : undefined;
+        const nextSplitView =
+          splitView && splitPane
+            ? closePane(splitView, splitPane.paneId)
+            : splitView;
+        const otherSplitTabId = nextSplitView
+          ? focusedPane(nextSplitView)?.tabId
+          : null;
+        const updatedGroup: ProjectTabGroup = {
+          ...group,
+          tabIds: remainingIds,
+          activeTabId:
+            splitPane &&
+            otherSplitTabId &&
+            remainingIds.includes(otherSplitTabId)
+              ? otherSplitTabId
+              : newActiveId,
+        };
+
+        const nextTabsById = { ...get().tabsById };
+        delete nextTabsById[tabId];
+
+        const splitViewsByProjectId = {
+          ...(get().splitViewsByProjectId ?? {}),
+        };
+        if (splitPane) {
+          if (nextSplitView) {
+            splitViewsByProjectId[tab.projectId] = nextSplitView;
+          } else {
+            delete splitViewsByProjectId[tab.projectId];
+          }
+        }
+
+        set({
+          tabsById: nextTabsById,
+          tabGroupsByProjectId: {
+            ...get().tabGroupsByProjectId,
+            [tab.projectId]: updatedGroup,
+          },
+          splitViewsByProjectId,
+        });
       },
-    });
-  },
 
-  reorderTab: (projectId, tabId, targetTabId, position) => {
-    const group = get().tabGroupsByProjectId[projectId];
-    if (
-      !group ||
-      tabId === targetTabId ||
-      !group.tabIds.includes(tabId) ||
-      !group.tabIds.includes(targetTabId)
-    ) {
-      return;
-    }
-    const tabIds = group.tabIds.filter((id) => id !== tabId);
-    const targetIndex = tabIds.indexOf(targetTabId);
-    tabIds.splice(targetIndex + (position === "after" ? 1 : 0), 0, tabId);
-    set({
-      tabGroupsByProjectId: {
-        ...get().tabGroupsByProjectId,
-        [projectId]: { ...group, tabIds },
+      updateTab: (tabId, patch) => {
+        const existing = get().tabsById[tabId];
+        if (!existing) return;
+        set({
+          tabsById: {
+            ...get().tabsById,
+            [tabId]: { ...existing, ...patch },
+          },
+        });
       },
-    });
-  },
 
-  setSplitView: (projectId, tabIds, direction) => {
-    const group = get().tabGroupsByProjectId[projectId];
-    if (
-      !group ||
-      tabIds[0] === tabIds[1] ||
-      !tabIds.every((tabId) => group.tabIds.includes(tabId))
-    ) {
-      return;
-    }
-    set({
-      splitViewsByProjectId: {
-        ...(get().splitViewsByProjectId ?? {}),
-        [projectId]: createSplitView(tabIds[0], tabIds[1], direction),
+      setActiveTab: (projectId, tabId) => {
+        const group = get().tabGroupsByProjectId[projectId];
+        if (!group) return;
+        if (!group.tabIds.includes(tabId)) return;
+        set({
+          tabGroupsByProjectId: {
+            ...get().tabGroupsByProjectId,
+            [projectId]: { ...group, activeTabId: tabId },
+          },
+        });
       },
-    });
-  },
 
-  splitPane: (projectId, targetPaneId, tabId, direction) => {
-    const splitView = get().splitViewsByProjectId?.[projectId];
-    const group = get().tabGroupsByProjectId[projectId];
-    if (!splitView || !group?.tabIds.includes(tabId)) return;
-    set({
-      splitViewsByProjectId: {
-        ...(get().splitViewsByProjectId ?? {}),
-        [projectId]: splitPane(splitView, targetPaneId, tabId, direction),
+      reorderTab: (projectId, tabId, targetTabId, position) => {
+        const group = get().tabGroupsByProjectId[projectId];
+        if (
+          !group ||
+          tabId === targetTabId ||
+          !group.tabIds.includes(tabId) ||
+          !group.tabIds.includes(targetTabId)
+        ) {
+          return;
+        }
+        const tabIds = group.tabIds.filter((id) => id !== tabId);
+        const targetIndex = tabIds.indexOf(targetTabId);
+        tabIds.splice(targetIndex + (position === "after" ? 1 : 0), 0, tabId);
+        set({
+          tabGroupsByProjectId: {
+            ...get().tabGroupsByProjectId,
+            [projectId]: { ...group, tabIds },
+          },
+        });
       },
-    });
-  },
 
-  replaceSplitTab: (projectId, paneId, tabId) => {
-    const splitView = get().splitViewsByProjectId?.[projectId];
-    const group = get().tabGroupsByProjectId[projectId];
-    if (!splitView || !group?.tabIds.includes(tabId)) return;
-    set({
-      splitViewsByProjectId: {
-        ...(get().splitViewsByProjectId ?? {}),
-        [projectId]: replacePaneTab(splitView, paneId, tabId),
+      setSplitView: (projectId, tabIds, direction) => {
+        const group = get().tabGroupsByProjectId[projectId];
+        if (
+          !group ||
+          tabIds[0] === tabIds[1] ||
+          !tabIds.every((tabId) => group.tabIds.includes(tabId))
+        ) {
+          return;
+        }
+        set({
+          splitViewsByProjectId: {
+            ...(get().splitViewsByProjectId ?? {}),
+            [projectId]: createSplitView(tabIds[0], tabIds[1], direction),
+          },
+        });
       },
-    });
-  },
 
-  focusSplitPane: (projectId, paneId) => {
-    const splitView = get().splitViewsByProjectId?.[projectId];
-    if (
-      !splitView ||
-      !paneLeaves(splitView.root).some((pane) => pane.paneId === paneId)
-    ) {
-      return;
-    }
-    set({
-      splitViewsByProjectId: {
-        ...(get().splitViewsByProjectId ?? {}),
-        [projectId]: { ...splitView, focusedPaneId: paneId },
+      splitPane: (projectId, targetPaneId, tabId, direction) => {
+        const splitView = get().splitViewsByProjectId?.[projectId];
+        const group = get().tabGroupsByProjectId[projectId];
+        if (!splitView || !group?.tabIds.includes(tabId)) return;
+        set({
+          splitViewsByProjectId: {
+            ...(get().splitViewsByProjectId ?? {}),
+            [projectId]: splitPane(splitView, targetPaneId, tabId, direction),
+          },
+        });
       },
-    });
-  },
 
-  focusRelativePane: (projectId, delta) => {
-    const splitView = get().splitViewsByProjectId?.[projectId];
-    if (!splitView) return;
-    set({
-      splitViewsByProjectId: {
-        ...(get().splitViewsByProjectId ?? {}),
-        [projectId]: focusRelativePane(splitView, delta),
+      replaceSplitTab: (projectId, paneId, tabId) => {
+        const splitView = get().splitViewsByProjectId?.[projectId];
+        const group = get().tabGroupsByProjectId[projectId];
+        if (!splitView || !group?.tabIds.includes(tabId)) return;
+        set({
+          splitViewsByProjectId: {
+            ...(get().splitViewsByProjectId ?? {}),
+            [projectId]: replacePaneTab(splitView, paneId, tabId),
+          },
+        });
       },
-    });
-  },
 
-  resizeSplit: (projectId, splitId, ratio) => {
-    const splitView = get().splitViewsByProjectId?.[projectId];
-    if (!splitView) return;
-    set({
-      splitViewsByProjectId: {
-        ...(get().splitViewsByProjectId ?? {}),
-        [projectId]: resizePaneSplit(splitView, splitId, ratio),
+      focusSplitPane: (projectId, paneId) => {
+        const splitView = get().splitViewsByProjectId?.[projectId];
+        if (
+          !splitView ||
+          !paneLeaves(splitView.root).some((pane) => pane.paneId === paneId)
+        ) {
+          return;
+        }
+        set({
+          splitViewsByProjectId: {
+            ...(get().splitViewsByProjectId ?? {}),
+            [projectId]: { ...splitView, focusedPaneId: paneId },
+          },
+        });
       },
-    });
-  },
 
-  clearSplitView: (projectId) => {
-    if (!get().splitViewsByProjectId?.[projectId]) return;
-    const splitViewsByProjectId = { ...(get().splitViewsByProjectId ?? {}) };
-    delete splitViewsByProjectId[projectId];
-    set({ splitViewsByProjectId });
-  },
+      focusRelativePane: (projectId, delta) => {
+        const splitView = get().splitViewsByProjectId?.[projectId];
+        if (!splitView) return;
+        set({
+          splitViewsByProjectId: {
+            ...(get().splitViewsByProjectId ?? {}),
+            [projectId]: focusRelativePane(splitView, delta),
+          },
+        });
+      },
 
-  visibleTabs: () => {
-    const { activeProjectId, tabGroupsByProjectId, tabsById } = get();
-    if (!activeProjectId) return [];
-    const group = tabGroupsByProjectId[activeProjectId];
-    if (!group) return [];
-    return group.tabIds.map((id) => tabsById[id]).filter(Boolean);
-  },
+      resizeSplit: (projectId, splitId, ratio) => {
+        const splitView = get().splitViewsByProjectId?.[projectId];
+        if (!splitView) return;
+        set({
+          splitViewsByProjectId: {
+            ...(get().splitViewsByProjectId ?? {}),
+            [projectId]: resizePaneSplit(splitView, splitId, ratio),
+          },
+        });
+      },
 
-  activeTab: () => {
-    const { activeProjectId, tabGroupsByProjectId, tabsById } = get();
-    if (!activeProjectId) return null;
-    const group = tabGroupsByProjectId[activeProjectId];
-    if (!group?.activeTabId) return null;
-    return tabsById[group.activeTabId] ?? null;
-  },
+      clearSplitView: (projectId) => {
+        if (!get().splitViewsByProjectId?.[projectId]) return;
+        const splitViewsByProjectId = {
+          ...(get().splitViewsByProjectId ?? {}),
+        };
+        delete splitViewsByProjectId[projectId];
+        set({ splitViewsByProjectId });
+      },
+
+      visibleTabs: () => {
+        const { activeProjectId, tabGroupsByProjectId, tabsById } = get();
+        if (!activeProjectId) return [];
+        const group = tabGroupsByProjectId[activeProjectId];
+        if (!group) return [];
+        return group.tabIds.map((id) => tabsById[id]).filter(Boolean);
+      },
+
+      activeTab: () => {
+        const { activeProjectId, tabGroupsByProjectId, tabsById } = get();
+        if (!activeProjectId) return null;
+        const group = tabGroupsByProjectId[activeProjectId];
+        if (!group?.activeTabId) return null;
+        return tabsById[group.activeTabId] ?? null;
+      },
     }),
     {
       name: TERMINAL_WORKSPACE_STORAGE_KEY,

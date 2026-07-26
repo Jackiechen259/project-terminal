@@ -25,11 +25,16 @@ export interface SplitBounds {
   height: number;
 }
 
-export function terminalPane(tabId: string, paneId = crypto.randomUUID()): PaneNode {
+export function terminalPane(
+  tabId: string,
+  paneId = crypto.randomUUID(),
+): PaneNode {
   return { type: "terminal", paneId, tabId };
 }
 
-export function paneLeaves(root: PaneNode): Extract<PaneNode, { type: "terminal" }>[] {
+export function paneLeaves(
+  root: PaneNode,
+): Extract<PaneNode, { type: "terminal" }>[] {
   return root.type === "terminal"
     ? [root]
     : [...paneLeaves(root.first), ...paneLeaves(root.second)];
@@ -101,7 +106,8 @@ export function closePane(
   paneId: string,
 ): TerminalSplitView | undefined {
   const remove = (node: PaneNode): PaneNode | undefined => {
-    if (node.type === "terminal") return node.paneId === paneId ? undefined : node;
+    if (node.type === "terminal")
+      return node.paneId === paneId ? undefined : node;
     const first = remove(node.first);
     const second = remove(node.second);
     if (!first) return second;
@@ -191,7 +197,14 @@ export function calculatePaneLayout(root: PaneNode): {
     height: number,
   ) => {
     if (node.type === "terminal") {
-      panes.push({ paneId: node.paneId, tabId: node.tabId, left, top, width, height });
+      panes.push({
+        paneId: node.paneId,
+        tabId: node.tabId,
+        left,
+        top,
+        width,
+        height,
+      });
       return;
     }
     splits.push({

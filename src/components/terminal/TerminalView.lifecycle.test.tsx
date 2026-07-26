@@ -18,8 +18,7 @@ const mocks = vi.hoisted(() => ({
     | { type: "resize"; rows: number; cols: number }
   >,
   customKeyHandler: undefined as
-    | ((event: KeyboardEvent) => boolean)
-    | undefined,
+    ((event: KeyboardEvent) => boolean) | undefined,
 }));
 
 vi.mock("@/services", () => ({
@@ -137,9 +136,8 @@ beforeEach(() => {
   mocks.customKeyHandler = undefined;
   mocks.readClipboardText.mockResolvedValue("");
   vi.stubGlobal("ResizeObserver", ResizeObserverStub);
-  vi.stubGlobal(
-    "requestAnimationFrame",
-    (callback: FrameRequestCallback) => window.setTimeout(callback, 0),
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+    window.setTimeout(callback, 0),
   );
   vi.stubGlobal("cancelAnimationFrame", (handle: number) =>
     window.clearTimeout(handle),
@@ -161,11 +159,7 @@ beforeEach(() => {
 describe("TerminalView session lifecycle", () => {
   it("attaches on mount and detaches without closing on unmount", async () => {
     const view = render(
-      <TerminalView
-        sessionId="session-one"
-        active
-        defaultTitle="PowerShell"
-      />,
+      <TerminalView sessionId="session-one" active defaultTitle="PowerShell" />,
     );
 
     await waitFor(() =>
@@ -189,11 +183,7 @@ describe("TerminalView session lifecycle", () => {
 
   it("always sends the fitted grid when attaching an existing 80x24 PTY", async () => {
     render(
-      <TerminalView
-        sessionId="session-one"
-        active
-        defaultTitle="PowerShell"
-      />,
+      <TerminalView sessionId="session-one" active defaultTitle="PowerShell" />,
     );
 
     await waitFor(() =>
@@ -221,11 +211,7 @@ describe("TerminalView session lifecycle", () => {
     });
 
     render(
-      <TerminalView
-        sessionId="session-one"
-        active
-        defaultTitle="PowerShell"
-      />,
+      <TerminalView sessionId="session-one" active defaultTitle="PowerShell" />,
     );
 
     await waitFor(() =>
@@ -249,11 +235,7 @@ describe("TerminalView session lifecycle", () => {
 
   it("detaches the old session and attaches the replacement on restart", async () => {
     const view = render(
-      <TerminalView
-        sessionId="session-one"
-        active
-        defaultTitle="PowerShell"
-      />,
+      <TerminalView sessionId="session-one" active defaultTitle="PowerShell" />,
     );
     await waitFor(() => expect(mocks.attach).toHaveBeenCalledTimes(1));
 
@@ -270,11 +252,7 @@ describe("TerminalView session lifecycle", () => {
       truncated: false,
     });
     view.rerender(
-      <TerminalView
-        sessionId="session-two"
-        active
-        defaultTitle="PowerShell"
-      />,
+      <TerminalView sessionId="session-two" active defaultTitle="PowerShell" />,
     );
 
     await waitFor(() => {
@@ -315,11 +293,7 @@ describe("TerminalView session lifecycle", () => {
   it("falls back when WebGL initialization fails", async () => {
     mocks.webglShouldThrow = true;
     render(
-      <TerminalView
-        sessionId="session-one"
-        active
-        defaultTitle="PowerShell"
-      />,
+      <TerminalView sessionId="session-one" active defaultTitle="PowerShell" />,
     );
 
     await waitFor(() => expect(mocks.attach).toHaveBeenCalledTimes(1));
@@ -329,11 +303,7 @@ describe("TerminalView session lifecycle", () => {
     mocks.readClipboardText.mockResolvedValue("x".repeat(10_000));
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(
-      <TerminalView
-        sessionId="session-one"
-        active
-        defaultTitle="PowerShell"
-      />,
+      <TerminalView sessionId="session-one" active defaultTitle="PowerShell" />,
     );
     await waitFor(() => expect(mocks.customKeyHandler).toBeTypeOf("function"));
 

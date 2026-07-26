@@ -140,11 +140,7 @@ export const TerminalView = memo(function TerminalView({
   useEffect(() => {
     if (!focused) return;
     const handleSearchShortcut = (event: KeyboardEvent) => {
-      if (
-        event.ctrlKey &&
-        event.shiftKey &&
-        event.key.toLowerCase() === "f"
-      ) {
+      if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "f") {
         event.preventDefault();
         event.stopPropagation();
         setSearchOpen(true);
@@ -378,10 +374,7 @@ export const TerminalView = memo(function TerminalView({
         } else if (attachment.scrollback) {
           const scrollback = attachment.scrollback;
           await new Promise<void>((resolve) => {
-            term.write(
-              terminalService.decodeBase64(scrollback),
-              resolve,
-            );
+            term.write(terminalService.decodeBase64(scrollback), resolve);
           });
         }
         // Restore the grid dictated by the actual container, then deliver the

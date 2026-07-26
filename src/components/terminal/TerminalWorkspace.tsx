@@ -583,9 +583,8 @@ export function TerminalWorkspace() {
     try {
       await Promise.all(
         groupTabs
-          .filter(
-            (tab): tab is TerminalTab & { sessionId: string } =>
-              Boolean(tab.sessionId),
+          .filter((tab): tab is TerminalTab & { sessionId: string } =>
+            Boolean(tab.sessionId),
           )
           .map((tab) => terminalService.close(tab.sessionId)),
       );
@@ -720,8 +719,7 @@ export function TerminalWorkspace() {
       const workspaceBounds = workspaceRef.current.getBoundingClientRect();
       const onMove = (moveEvent: PointerEvent) => {
         const splitLeft =
-          workspaceBounds.left +
-          (workspaceBounds.width * split.left) / 100;
+          workspaceBounds.left + (workspaceBounds.width * split.left) / 100;
         const splitTop =
           workspaceBounds.top + (workspaceBounds.height * split.top) / 100;
         const splitWidth = (workspaceBounds.width * split.width) / 100;
@@ -1116,7 +1114,8 @@ export function TerminalWorkspace() {
               const bounds = paneLayout?.panes.find(
                 (pane) => pane.tabId === tab.id,
               );
-              const isSplitPane = tab.projectId === activeProjectId && Boolean(bounds);
+              const isSplitPane =
+                tab.projectId === activeProjectId && Boolean(bounds);
               const visible = isSplitPane || tab.id === activeTabId;
               return (
                 <TerminalPane

@@ -2,7 +2,13 @@ import { ProjectSidebar } from "@/components/projects/ProjectSidebar";
 import { TerminalWorkspace } from "@/components/terminal/TerminalWorkspace";
 import { WindowTitleBar } from "@/components/layout/WindowTitleBar";
 import { useState } from "react";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/i18n";
 import { useTerminalStore } from "@/stores/terminalStore";

@@ -1,5 +1,8 @@
 export type TerminalOutputWriter = (data: Uint8Array) => void;
-export type TerminalOutputScheduler = (callback: () => void, delay: number) => number;
+export type TerminalOutputScheduler = (
+  callback: () => void,
+  delay: number,
+) => number;
 export type TerminalOutputCanceller = (handle: number) => void;
 
 /**
@@ -52,21 +55,15 @@ export class TerminalOutputQueue {
     }
     // Start the max-wait timer on the first fragment of a new batch.
     if (this.maxWaitHandle === null) {
-      this.maxWaitHandle = this.schedule(
-        () => {
-          this.maxWaitHandle = null;
-          this.flush();
-        },
-        TerminalOutputQueue.MAX_WAIT_MS,
-      );
-    }
-    this.debounceHandle = this.schedule(
-      () => {
-        this.debounceHandle = null;
+      this.maxWaitHandle = this.schedule(() => {
+        this.maxWaitHandle = null;
         this.flush();
-      },
-      TerminalOutputQueue.DEBOUNCE_MS,
-    );
+      }, TerminalOutputQueue.MAX_WAIT_MS);
+    }
+    this.debounceHandle = this.schedule(() => {
+      this.debounceHandle = null;
+      this.flush();
+    }, TerminalOutputQueue.DEBOUNCE_MS);
   }
 
   /** Immediately writes any buffered output, preserving fragment order. */

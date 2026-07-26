@@ -102,9 +102,7 @@ describe("TerminalPane", () => {
       />,
     );
 
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Starting terminal…",
-    );
+    expect(screen.getByRole("status")).toHaveTextContent("Starting terminal…");
     expect(terminalViewRender).not.toHaveBeenCalled();
   });
 

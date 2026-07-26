@@ -118,7 +118,10 @@ describe("TerminalOutputQueue", () => {
     queue.send(Uint8Array.from([4, 5]));
     expect(timers.pendingCount()).toBe(2); // debounce + max-wait
     timers.run(DEBOUNCE);
-    expect(writes).toEqual([[1, 2, 3], [4, 5]]);
+    expect(writes).toEqual([
+      [1, 2, 3],
+      [4, 5],
+    ]);
   });
 
   it("drops buffered output when disposed", () => {

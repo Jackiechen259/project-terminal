@@ -62,8 +62,9 @@ export function useTerminalTabDrag({
 }: TerminalTabDragOptions) {
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
   const [dropZone, setDropZone] = useState<TerminalDropZone | null>(null);
-  const [tabDropTarget, setTabDropTarget] =
-    useState<TabDropTarget | null>(null);
+  const [tabDropTarget, setTabDropTarget] = useState<TabDropTarget | null>(
+    null,
+  );
   const tabListRef = useRef<HTMLDivElement>(null);
   const splitTabGroupRef = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);

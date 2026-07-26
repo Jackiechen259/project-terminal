@@ -49,9 +49,7 @@ describe("settingsStore", () => {
   });
 
   it("clamps terminal scrollback settings", () => {
-    expect(clampTerminalScrollbackLines(1)).toBe(
-      MIN_TERMINAL_SCROLLBACK_LINES,
-    );
+    expect(clampTerminalScrollbackLines(1)).toBe(MIN_TERMINAL_SCROLLBACK_LINES);
     expect(clampTerminalScrollbackLines(1_000_000)).toBe(
       MAX_TERMINAL_SCROLLBACK_LINES,
     );

@@ -394,8 +394,7 @@ const zhCNWorkspace: Record<string, string> = {
   "The gateway binds to loopback by default. Use Tailscale or an HTTPS reverse proxy for other devices.":
     "网关默认仅监听本机。其他设备请使用 Tailscale 或 HTTPS 反向代理。",
   "Mobile terminal gateway": "手机终端网关",
-  "Access details are kept in app memory only.":
-    "访问凭据仅保存在应用内存中。",
+  "Access details are kept in app memory only.": "访问凭据仅保存在应用内存中。",
   "Show access": "显示访问方式",
   "Access token": "访问令牌",
   "This token is not saved to disk. Anyone holding it can view remote sessions.":
