@@ -1,6 +1,4 @@
-let terminalViewModule:
-  | Promise<typeof import("./TerminalView")>
-  | undefined;
+let terminalViewModule: Promise<typeof import("./TerminalView")> | undefined;
 
 export function loadTerminalView() {
   terminalViewModule ??= import("./TerminalView");

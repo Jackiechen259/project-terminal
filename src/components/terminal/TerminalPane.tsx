@@ -1,10 +1,4 @@
-import {
-  lazy,
-  memo,
-  Suspense,
-  useCallback,
-  type CSSProperties,
-} from "react";
+import { lazy, memo, Suspense, useCallback, type CSSProperties } from "react";
 import { LoaderCircle, RotateCcw } from "lucide-react";
 
 import { useTranslation } from "@/i18n";

@@ -1,10 +1,4 @@
-import {
-  lazy,
-  Suspense,
-  useEffect,
-  useLayoutEffect,
-  useState,
-} from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useState } from "react";
 
 import { AppLayout } from "@/components/layout/AppLayout";
 import { usePlatformStore } from "@/stores/platformStore";
