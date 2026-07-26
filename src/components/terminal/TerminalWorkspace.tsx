@@ -1036,6 +1036,12 @@ export function TerminalWorkspace() {
         data-active={id === activeTabId}
         data-dragging={id === draggedTabId}
         onClick={() => handleTabClick(id)}
+        onAuxClick={(event) => {
+          if (event.button !== 1) return;
+          event.preventDefault();
+          event.stopPropagation();
+          void handleCloseTab(id);
+        }}
         onPointerDown={(event) => handleTabPointerDown(event, id)}
         onPointerMove={handleTabPointerMove}
         onPointerUp={handleTabPointerUp}

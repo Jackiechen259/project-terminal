@@ -92,7 +92,7 @@ pub fn run() {
     // commands. A gateway in the separate Session Host process only sees its
     // own empty manager, so authenticated clients incorrectly get no sessions.
     let remote_gateway =
-        daemon::RemoteGateway::new(&remote_dirs, terminal_state.manager.clone_handle());
+        daemon::RemoteGateway::new(&remote_dirs, state.clone(), terminal_state.clone());
 
     // Build the app. The RunEvent handler closes all PTY child processes on
     // ExitRequested so no PowerShell / SSH / etc. children leak.

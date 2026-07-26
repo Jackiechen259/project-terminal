@@ -75,10 +75,27 @@
       }
 
       .shell {
+        width: 100%;
         height: 100%;
+        height: 100dvh;
         min-height: 0;
+        overflow: hidden;
         display: grid;
-        grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+        grid-template-rows: auto auto minmax(0, 1fr) auto;
+      }
+      .topbar,
+      .sessionbar,
+      .terminal-frame,
+      .controlbar {
+        width: 100%;
+        min-width: 0;
+      }
+      body.terminal-focus .shell {
+        grid-template-rows: minmax(0, 1fr) auto;
+      }
+      body.terminal-focus .topbar,
+      body.terminal-focus .sessionbar {
+        display: none;
       }
 
       .topbar {
@@ -210,8 +227,7 @@
 
       .icon-button,
       .action-button,
-      .key-button,
-      .send-button {
+      .key-button {
         border: 1px solid var(--border-strong);
         border-radius: 8px;
         background: var(--surface-raised);
@@ -237,6 +253,9 @@
         place-items: center;
         color: var(--muted-strong);
         font-size: 17px;
+      }
+      .focus-button {
+        font-size: 15px;
       }
       .icon-button:hover,
       .key-button:hover {
@@ -333,14 +352,12 @@
         font-size: 12px;
         font-weight: 670;
       }
-      .action-button.primary,
-      .send-button {
+      .action-button.primary {
         border-color: var(--accent-strong);
         background: var(--accent-strong);
         color: white;
       }
-      .action-button.primary:hover,
-      .send-button:hover {
+      .action-button.primary:hover {
         background: #478ced;
       }
       .action-button.danger {
@@ -397,32 +414,6 @@
         font:
           600 12px/1 ui-monospace,
           monospace;
-      }
-
-      .composer {
-        padding: 0.55rem 0.7rem calc(0.55rem + env(safe-area-inset-bottom));
-        display: flex;
-        gap: 0.5rem;
-        background: var(--surface);
-      }
-      .composer input {
-        min-width: 0;
-        min-height: 42px;
-        flex: 1;
-        padding: 0.55rem 0.75rem;
-        border: 1px solid var(--border);
-        border-radius: 9px;
-        background: #0b111a;
-        color: var(--fg);
-      }
-      .composer input::placeholder {
-        color: #667790;
-      }
-      .send-button {
-        min-width: 68px;
-        min-height: 42px;
-        padding: 0.5rem 0.9rem;
-        font-weight: 680;
       }
 
       .auth-layer {
@@ -502,6 +493,58 @@
         font-size: 12px;
       }
 
+      .create-layer {
+        position: fixed;
+        inset: 0;
+        z-index: 35;
+        display: grid;
+        place-items: center;
+        padding: max(1rem, env(safe-area-inset-top)) 1rem
+          max(1rem, env(safe-area-inset-bottom));
+        background: rgba(5, 8, 13, 0.78);
+        backdrop-filter: blur(10px);
+      }
+      .create-card {
+        width: min(100%, 390px);
+        padding: 1rem;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+      .create-card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 0.9rem;
+      }
+      .create-card h2 {
+        margin: 0;
+        font-size: 17px;
+      }
+      .create-card p {
+        margin: 0.35rem 0 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .create-card select {
+        min-height: 44px;
+      }
+      .create-message {
+        min-height: 18px;
+        margin-top: 0.55rem;
+        color: var(--danger);
+        font-size: 12px;
+      }
+      .create-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.5rem;
+        margin-top: 0.8rem;
+      }
+
       .notice {
         position: fixed;
         left: 50%;
@@ -531,37 +574,119 @@
       }
 
       @media (max-width: 620px) {
+        .topbar {
+          min-height: 44px;
+          padding: calc(0.4rem + env(safe-area-inset-top)) 0.55rem 0.4rem;
+          gap: 0.5rem;
+        }
+        .brand {
+          gap: 0.45rem;
+        }
+        .brand-mark {
+          width: 27px;
+          height: 27px;
+          border-radius: 7px;
+          font-size: 13px;
+        }
+        .brand-title {
+          font-size: 13px;
+        }
         .brand-subtitle {
           display: none;
         }
         .connection-pill {
-          padding: 0 0.55rem;
+          min-height: 26px;
+          padding: 0 0.5rem;
+          font-size: 11px;
         }
         .sessionbar {
-          flex-wrap: wrap;
+          min-height: 44px;
+          padding: 0.3rem 0.45rem;
+          gap: 0.3rem;
+          flex-wrap: nowrap;
         }
         .session-select-wrap {
-          flex-basis: calc(100% - 46px);
+          flex-basis: auto;
+        }
+        select {
+          min-height: 34px;
+          padding-left: 0.6rem;
+          font-size: 12px;
+        }
+        .icon-button {
+          width: 34px;
+          height: 34px;
         }
         .mode-switch {
-          flex: 1;
+          height: 34px;
+          flex: none;
         }
         .mode-switch button {
-          flex: 1;
+          min-width: 48px;
+          padding: 0 0.4rem;
+          font-size: 11px;
+        }
+        .empty-state {
+          padding: 1.25rem;
         }
         #terminal .xterm {
-          padding: 5px 4px 2px;
+          padding: 3px 3px 1px;
         }
         .controlbar {
-          align-items: flex-start;
-          flex-wrap: wrap;
+          min-height: 40px;
+          padding: 0.25rem 0.4rem calc(0.25rem + env(safe-area-inset-bottom));
+          align-items: center;
+          gap: 0.3rem;
+          flex-wrap: nowrap;
         }
         .control-pill {
+          min-height: 30px;
+          flex: 0 1 auto;
+          gap: 0.35rem;
+          font-size: 10px;
+        }
+        .control-pill strong {
+          display: block;
+          max-width: 74px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .action-button {
           min-height: 32px;
+          padding: 0.3rem 0.5rem;
+          font-size: 11px;
         }
         .keystrip {
+          width: auto;
+          min-width: 0;
+          flex: 1;
+          order: initial;
+          gap: 0.25rem;
+        }
+        .key-button {
+          min-width: 32px;
+          height: 30px;
+          padding: 0 0.4rem;
+          font-size: 11px;
+        }
+        .focus-button {
+          width: 32px;
+          height: 32px;
+          font-size: 14px;
+        }
+        .notice {
+          bottom: calc(3.5rem + env(safe-area-inset-bottom));
+        }
+        .create-layer {
+          place-items: end center;
+          padding: 0;
+        }
+        .create-card {
           width: 100%;
-          order: 3;
+          padding: 1rem 1rem calc(1rem + env(safe-area-inset-bottom));
+          border-width: 1px 0 0;
+          border-radius: 16px 16px 0 0;
         }
       }
 
@@ -582,9 +707,6 @@
         .controlbar {
           min-height: 40px;
           padding-block: 0.3rem;
-        }
-        .composer {
-          padding-top: 0.4rem;
         }
       }
     </style>
@@ -620,6 +742,15 @@
         >
           ↻
         </button>
+        <button
+          id="newTerminal"
+          class="icon-button"
+          type="button"
+          aria-label="New terminal"
+          title="New terminal"
+        >
+          +
+        </button>
         <div class="mode-switch" role="group" aria-label="Connection mode">
           <button id="viewMode" type="button">View</button>
           <button id="controlMode" type="button" class="active">Control</button>
@@ -633,8 +764,8 @@
             <div class="empty-icon" aria-hidden="true">&gt;_</div>
             <h2 id="emptyTitle">Connect to a session</h2>
             <p id="emptyMessage">
-              Choose an active terminal session to view its output and request
-              control.
+              Choose an active terminal session to view its output or control it
+              directly.
             </p>
             <button
               id="emptyAction"
@@ -653,20 +784,21 @@
           <strong id="controlText">Waiting for a session</strong>
         </div>
         <button
-          id="takeControl"
-          type="button"
-          class="action-button primary"
-          disabled
-        >
-          Take control
-        </button>
-        <button
           id="interrupt"
           type="button"
           class="action-button danger"
           disabled
         >
           Ctrl+C
+        </button>
+        <button
+          id="focusTerminal"
+          class="icon-button focus-button"
+          type="button"
+          aria-label="Expand terminal"
+          title="Expand terminal"
+        >
+          ↗
         </button>
         <div class="keystrip" aria-label="Special keys">
           <button class="key-button" type="button" data-key="esc">Esc</button>
@@ -705,21 +837,6 @@
           </button>
         </div>
       </section>
-
-      <form id="inputForm" class="composer">
-        <input
-          id="commandInput"
-          autocomplete="off"
-          autocapitalize="none"
-          spellcheck="false"
-          placeholder="Take control to send a command"
-          enterkeyhint="send"
-          disabled
-        />
-        <button id="send" class="send-button" type="submit" disabled>
-          Send
-        </button>
-      </form>
     </main>
 
     <section
@@ -752,6 +869,44 @@
         <div class="auth-hint">
           Tip: scanning the QR code from the desktop app fills the token
           automatically.
+        </div>
+      </form>
+    </section>
+
+    <section
+      id="createLayer"
+      class="create-layer hidden"
+      aria-label="Create terminal"
+    >
+      <form id="createForm" class="create-card">
+        <div class="create-card-header">
+          <div>
+            <h2>New terminal</h2>
+            <p>Start a terminal using the project's default profile.</p>
+          </div>
+          <button
+            id="closeCreate"
+            class="icon-button"
+            type="button"
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+        <label class="field-label" for="projects">Project</label>
+        <select id="projects" aria-label="Project"></select>
+        <div id="createMessage" class="create-message" role="alert"></div>
+        <div class="create-actions">
+          <button id="cancelCreate" class="action-button" type="button">
+            Cancel
+          </button>
+          <button
+            id="createTerminal"
+            class="action-button primary"
+            type="submit"
+          >
+            Create
+          </button>
         </div>
       </form>
     </section>
@@ -818,10 +973,17 @@
         $("connection").className = `connection-pill ${state}`.trim();
       }
 
-      function setEmpty(title, message, actionText = "Retry", visible = true) {
+      function setEmpty(
+        title,
+        message,
+        actionText = "Retry",
+        visible = true,
+        action = "refresh",
+      ) {
         $("emptyTitle").textContent = title;
         $("emptyMessage").textContent = message;
         $("emptyAction").textContent = actionText;
+        $("emptyAction").dataset.action = action;
         $("emptyState").classList.toggle("hidden", !visible);
       }
 
@@ -858,25 +1020,15 @@
           control: "You have control",
           readonly: "Viewing only",
           waiting: connected
-            ? "Ready to request control"
+            ? readOnly
+              ? "Viewing only"
+              : "Waiting for control"
             : "Waiting for a session",
         };
 
         $("controlStatus").dataset.mode = resolvedMode;
         $("controlText").textContent = labels[resolvedMode];
-        $("takeControl").disabled = !connected || readOnly;
-        $("takeControl").textContent = controlled
-          ? "Release control"
-          : "Take control";
-        $("takeControl").classList.toggle("primary", !controlled);
         $("interrupt").disabled = !controlled;
-        $("commandInput").disabled = !controlled;
-        $("send").disabled = !controlled;
-        $("commandInput").placeholder = controlled
-          ? "Type a command…"
-          : readOnly
-            ? "View-only mode"
-            : "Take control to send a command";
         document.querySelectorAll(".key-button").forEach((button) => {
           button.disabled = !controlled;
         });
@@ -1006,6 +1158,85 @@
         });
       }
 
+      async function responseError(response, fallback) {
+        try {
+          const payload = await response.json();
+          return payload.error || fallback;
+        } catch {
+          return fallback;
+        }
+      }
+
+      function closeCreateLayer() {
+        $("createLayer").classList.add("hidden");
+        $("createMessage").textContent = "";
+      }
+
+      async function openCreateLayer() {
+        $("createLayer").classList.remove("hidden");
+        $("createMessage").textContent = "";
+        $("createTerminal").disabled = true;
+        $("projects").replaceChildren();
+        try {
+          const response = await api("/api/projects");
+          if (!response.ok) {
+            throw new Error(
+              await responseError(response, "Could not load projects."),
+            );
+          }
+          const payload = await response.json();
+          const projects = (payload.projects || []).sort((left, right) =>
+            left.name.localeCompare(right.name),
+          );
+          for (const project of projects) {
+            const option = document.createElement("option");
+            option.value = project.id;
+            option.textContent = project.name;
+            $("projects").append(option);
+          }
+          if (!projects.length) {
+            $("createMessage").textContent =
+              "Create a project in the desktop app first.";
+            return;
+          }
+          $("createTerminal").disabled = false;
+          $("projects").focus();
+        } catch (error) {
+          $("createMessage").textContent =
+            error?.message || "Could not load projects.";
+        }
+      }
+
+      async function createProjectTerminal() {
+        const projectId = $("projects").value;
+        if (!projectId) return;
+        const button = $("createTerminal");
+        button.disabled = true;
+        button.textContent = "Creating…";
+        $("createMessage").textContent = "";
+        try {
+          const response = await api("/api/sessions", {
+            method: "POST",
+            body: JSON.stringify({ projectId, clientId }),
+          });
+          if (!response.ok) {
+            throw new Error(
+              await responseError(response, "Could not create terminal."),
+            );
+          }
+          const payload = await response.json();
+          closeCreateLayer();
+          showNotice("Terminal created");
+          await loadSessions({ preferredId: payload.sessionId });
+        } catch (error) {
+          $("createMessage").textContent =
+            error?.message || "Could not create terminal.";
+        } finally {
+          button.disabled = false;
+          button.textContent = "Create";
+        }
+      }
+
       function renderSessions(sessions, preferredId = "") {
         const select = $("sessions");
         select.replaceChildren();
@@ -1027,8 +1258,8 @@
         return select.value;
       }
 
-      async function loadSessions({ reconnect = true } = {}) {
-        const previousId = $("sessions").value;
+      async function loadSessions({ reconnect = true, preferredId = "" } = {}) {
+        const previousId = preferredId || $("sessions").value;
         setConnection("Connecting…", "connecting");
         try {
           const response = await api("/api/sessions");
@@ -1052,8 +1283,10 @@
             setConnection("No sessions", "");
             setEmpty(
               "No active sessions",
-              "Open a terminal in the desktop app, then refresh this page.",
-              "Refresh",
+              "Start a terminal for one of your existing projects.",
+              "New terminal",
+              true,
+              "new",
             );
             updateControls();
             return;
@@ -1112,6 +1345,7 @@
           initTerminal();
           setEmpty("", "", "", false);
           updateControls();
+          if (!isReadOnly()) send({ type: "acquire" });
           setTimeout(() => {
             try {
               fitAddon?.fit();
@@ -1168,12 +1402,36 @@
       }
 
       function setMode(readOnly) {
+        if (readOnly === isReadOnly()) {
+          if (!readOnly && !hasControl()) {
+            updateControls("waiting");
+            send({ type: "acquire" });
+          }
+          terminal?.focus();
+          return;
+        }
         $("viewMode").classList.toggle("active", readOnly);
         $("controlMode").classList.toggle("active", !readOnly);
         if (leaseId) send({ type: "release", lease_id: leaseId });
         clearLease();
         updateControls();
         if (socket || authenticated) connectSocket();
+      }
+
+      function setTerminalFocus(focused) {
+        document.body.classList.toggle("terminal-focus", focused);
+        const button = $("focusTerminal");
+        button.textContent = focused ? "↙" : "↗";
+        button.setAttribute(
+          "aria-label",
+          focused ? "Show session controls" : "Expand terminal",
+        );
+        button.title = focused ? "Show session controls" : "Expand terminal";
+        setTimeout(() => {
+          try {
+            fitAddon?.fit();
+          } catch {}
+        }, 40);
       }
 
       $("authForm").addEventListener("submit", (event) => {
@@ -1187,35 +1445,38 @@
         loadSessions();
       });
       $("refresh").addEventListener("click", () => loadSessions());
-      $("emptyAction").addEventListener("click", () =>
-        authenticated
-          ? loadSessions()
-          : $("authLayer").classList.remove("hidden"),
-      );
+      $("newTerminal").addEventListener("click", openCreateLayer);
+      $("closeCreate").addEventListener("click", closeCreateLayer);
+      $("cancelCreate").addEventListener("click", closeCreateLayer);
+      $("createLayer").addEventListener("click", (event) => {
+        if (event.target === $("createLayer")) closeCreateLayer();
+      });
+      $("createForm").addEventListener("submit", (event) => {
+        event.preventDefault();
+        createProjectTerminal();
+      });
+      $("emptyAction").addEventListener("click", () => {
+        if (!authenticated) {
+          $("authLayer").classList.remove("hidden");
+        } else if ($("emptyAction").dataset.action === "new") {
+          openCreateLayer();
+        } else {
+          loadSessions();
+        }
+      });
       $("sessions").addEventListener("change", connectSocket);
       $("viewMode").addEventListener("click", () => setMode(true));
       $("controlMode").addEventListener("click", () => setMode(false));
-      $("takeControl").addEventListener("click", () => {
-        if (leaseId) {
-          send({ type: "release", lease_id: leaseId });
-          clearLease();
-        } else {
-          updateControls("waiting");
-          send({ type: "acquire" });
-        }
-      });
+      $("focusTerminal").addEventListener("click", () =>
+        setTerminalFocus(!document.body.classList.contains("terminal-focus")),
+      );
       $("interrupt").addEventListener("click", () => {
         if (hasControl() && confirm("Send Ctrl+C to this terminal?")) {
           send({ type: "interrupt", lease_id: leaseId, confirm: true });
         }
       });
-      $("inputForm").addEventListener("submit", (event) => {
-        event.preventDefault();
-        const input = $("commandInput");
-        if (!hasControl() || !input.value) return;
-        send({ type: "input", lease_id: leaseId, data: `${input.value}\r` });
-        input.value = "";
-        terminal?.focus();
+      $("terminal").addEventListener("pointerdown", () => {
+        if (hasControl()) setTimeout(() => terminal?.focus(), 0);
       });
       document.querySelectorAll(".key-button").forEach((button) => {
         button.addEventListener("click", () => {
@@ -1230,6 +1491,14 @@
         try {
           fitAddon?.fit();
         } catch {}
+      });
+      window.addEventListener("keydown", (event) => {
+        if (
+          event.key === "Escape" &&
+          !$("createLayer").classList.contains("hidden")
+        ) {
+          closeCreateLayer();
+        }
       });
       window.addEventListener("beforeunload", () => {
         if (leaseId) send({ type: "release", lease_id: leaseId });

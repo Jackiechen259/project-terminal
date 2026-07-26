@@ -19,8 +19,10 @@ use serde::{Deserialize, Serialize};
 use tauri::async_runtime::JoinHandle;
 use tokio::sync::broadcast;
 
+use crate::commands::terminal::{create_terminal_inner, CreateTerminalRequest, TerminalState};
 use crate::config_dirs::ConfigDirs;
 use crate::error::{AppError, AppResult};
+use crate::state::AppState;
 use crate::terminal::TerminalManager;
 
 const DEFAULT_BIND: &str = "127.0.0.1:4097";
@@ -31,6 +33,8 @@ const WS_MESSAGES_PER_SECOND: usize = 60;
 pub(crate) struct RemoteGateway {
     token: String,
     manager: TerminalManager,
+    app: AppState,
+    terminal: TerminalState,
     bind: Mutex<SocketAddr>,
     url: Mutex<String>,
     transport_security: Mutex<&'static str>,
@@ -42,7 +46,7 @@ pub(crate) struct RemoteGateway {
 }
 
 impl RemoteGateway {
-    pub(crate) fn new(dirs: &ConfigDirs, manager: TerminalManager) -> Self {
+    pub(crate) fn new(dirs: &ConfigDirs, app: AppState, terminal: TerminalState) -> Self {
         let token = format!("{}{}", uuid::Uuid::new_v4(), uuid::Uuid::new_v4()).replace('-', "");
         let config_path = dirs.remote_config_path();
         let config = read_remote_config(&config_path);
@@ -55,7 +59,9 @@ impl RemoteGateway {
         let url = compute_advertise_url(bind);
         Self {
             token,
-            manager,
+            manager: terminal.manager.clone_handle(),
+            app,
+            terminal,
             bind: Mutex::new(bind),
             url: Mutex::new(url),
             transport_security: Mutex::new(transport_security),
@@ -151,6 +157,8 @@ impl RemoteGateway {
         let bind = *self.bind.lock();
         let state = RemoteState {
             manager: self.manager.clone_handle(),
+            app: self.app.clone(),
+            terminal: self.terminal.clone(),
             token: self.token.clone(),
             leases: Arc::new(Mutex::new(HashMap::new())),
             rate_limits: Arc::new(Mutex::new(HashMap::new())),
@@ -184,6 +192,8 @@ impl RemoteGateway {
 
 struct RemoteState {
     manager: TerminalManager,
+    app: AppState,
+    terminal: TerminalState,
     token: String,
     leases: Arc<Mutex<HashMap<String, LeaseRecord>>>,
     rate_limits: Arc<Mutex<HashMap<IpAddr, VecDeque<Instant>>>>,
@@ -195,6 +205,8 @@ impl Clone for RemoteState {
     fn clone(&self) -> Self {
         Self {
             manager: self.manager.clone_handle(),
+            app: self.app.clone(),
+            terminal: self.terminal.clone(),
             token: self.token.clone(),
             leases: self.leases.clone(),
             rate_limits: self.rate_limits.clone(),
@@ -223,6 +235,13 @@ struct LeaseResponse {
 #[serde(rename_all = "camelCase")]
 struct AuthQuery {
     token: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateSessionRequest {
+    project_id: String,
+    client_id: String,
 }
 
 #[derive(Deserialize)]
@@ -306,7 +325,7 @@ fn build_router(state: RemoteState) -> Router {
         .route("/xterm.css", get(xterm_css))
         .route("/xterm-addon-fit.js", get(xterm_addon_fit_js))
         .route("/api/projects", get(list_projects))
-        .route("/api/sessions", get(list_sessions))
+        .route("/api/sessions", get(list_sessions).post(create_session))
         .route("/api/sessions/{id}", get(get_session))
         .route("/api/sessions/{id}/attach", get(attach_session))
         .route("/api/sessions/{id}/lease", post(acquire_lease))
@@ -361,15 +380,10 @@ async fn list_projects(
     if let Err(response) = authorize(&state, peer, &headers, query.token.as_deref(), "projects") {
         return response;
     }
-    let dirs = match ConfigDirs::resolve() {
-        Ok(dirs) => dirs,
-        Err(error) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
-    };
-    let value = std::fs::read(dirs.projects_path())
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-        .unwrap_or_else(|| serde_json::json!({ "projects": [] }));
-    Json(value).into_response()
+    match state.app.projects.list() {
+        Ok(projects) => Json(serde_json::json!({ "projects": projects })).into_response(),
+        Err(error) => api_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
+    }
 }
 
 async fn list_sessions(
@@ -382,6 +396,89 @@ async fn list_sessions(
         return response;
     }
     Json(serde_json::json!({ "sessions": state.manager.list() })).into_response()
+}
+
+async fn create_session(
+    State(state): State<RemoteState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Query(query): Query<AuthQuery>,
+    Json(request): Json<CreateSessionRequest>,
+) -> Response {
+    if let Err(response) = authorize(
+        &state,
+        peer,
+        &headers,
+        query.token.as_deref(),
+        "session.create",
+    ) {
+        return response;
+    }
+    if request.client_id.trim().is_empty() || request.client_id.len() > 128 {
+        return api_error(StatusCode::BAD_REQUEST, "Invalid client id");
+    }
+
+    let project = match state.app.projects.get(&request.project_id) {
+        Ok(project) => project,
+        Err(_) => return api_error(StatusCode::NOT_FOUND, "Project not found"),
+    };
+    let profile = match project
+        .default_profile_id
+        .as_deref()
+        .map(|profile_id| state.app.profiles.get(profile_id))
+        .transpose()
+    {
+        Ok(Some(profile)) if profile.project_id == project.id => profile,
+        Ok(Some(_)) | Ok(None) => match state.app.profiles.list_for_project(&project.id) {
+            Ok(profiles) => match profiles
+                .iter()
+                .find(|profile| profile.is_default)
+                .cloned()
+                .or_else(|| profiles.into_iter().next())
+            {
+                Some(profile) => profile,
+                None => return api_error(StatusCode::BAD_REQUEST, "Project has no profiles"),
+            },
+            Err(error) => return api_error(StatusCode::BAD_REQUEST, &error.to_string()),
+        },
+        Err(error) => return api_error(StatusCode::BAD_REQUEST, &error.to_string()),
+    };
+    let create_request = CreateTerminalRequest {
+        project_id: project.id.clone(),
+        profile_id: profile.id,
+        rows: 24,
+        cols: 80,
+        scrollback_megabytes: Some(4),
+    };
+
+    match create_terminal_inner(&state.app, &state.terminal, create_request).await {
+        Ok(session_id) => {
+            audit(
+                &state,
+                peer,
+                &request.client_id,
+                &session_id,
+                "session.create",
+                true,
+            );
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({ "sessionId": session_id })),
+            )
+                .into_response()
+        }
+        Err(error) => {
+            audit(
+                &state,
+                peer,
+                &request.client_id,
+                &project.id,
+                "session.create",
+                false,
+            );
+            api_error(StatusCode::BAD_REQUEST, &error.to_string())
+        }
+    }
 }
 
 async fn get_session(
@@ -1188,8 +1285,34 @@ const MOBILE_PAGE: &str = include_str!("remote_page.html");
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::profile::{default_local_profile, ProfileRepository, TemplateRepository};
+    use crate::project::{LocalProjectConfig, Project, ProjectRepository, ProjectType};
+    use crate::ssh::SshConnectionRepository;
     use crate::terminal::SessionSpawn;
     use std::net::Ipv4Addr;
+
+    fn test_app_state(dirs: &ConfigDirs) -> AppState {
+        AppState::from_repositories(
+            ProjectRepository::new(dirs.projects_path()),
+            ProfileRepository::new(dirs.profiles_path()),
+            TemplateRepository::new(dirs.templates_path()),
+            SshConnectionRepository::new(dirs.ssh_connections_path()),
+        )
+    }
+
+    fn test_remote_state(dirs: &ConfigDirs) -> RemoteState {
+        let terminal = TerminalState::new();
+        RemoteState {
+            manager: terminal.manager.clone_handle(),
+            app: test_app_state(dirs),
+            terminal,
+            token: "secret".into(),
+            leases: Arc::new(Mutex::new(HashMap::new())),
+            rate_limits: Arc::new(Mutex::new(HashMap::new())),
+            audit_path: dirs.remote_audit_path(),
+            audit_lock: Arc::new(Mutex::new(())),
+        }
+    }
 
     #[test]
     fn token_comparison_and_tailscale_detection_are_strict() {
@@ -1215,14 +1338,7 @@ mod tests {
         let dirs = ConfigDirs::from_root(
             std::env::temp_dir().join(format!("pt-remote-{}", uuid::Uuid::new_v4())),
         );
-        let state = RemoteState {
-            manager: TerminalManager::new(),
-            token: "secret".into(),
-            leases: Arc::new(Mutex::new(HashMap::new())),
-            rate_limits: Arc::new(Mutex::new(HashMap::new())),
-            audit_path: dirs.remote_audit_path(),
-            audit_lock: Arc::new(Mutex::new(())),
-        };
+        let state = test_remote_state(&dirs);
         let first = acquire_control(&state, "session-1", "phone-a").unwrap();
         assert!(acquire_control(&state, "session-1", "phone-b").is_err());
         release_control(&state, "session-1", "phone-a", Some(&first.lease_id));
@@ -1234,14 +1350,7 @@ mod tests {
         let dirs = ConfigDirs::from_root(
             std::env::temp_dir().join(format!("pt-remote-{}", uuid::Uuid::new_v4())),
         );
-        let state = RemoteState {
-            manager: TerminalManager::new(),
-            token: "secret".into(),
-            leases: Arc::new(Mutex::new(HashMap::new())),
-            rate_limits: Arc::new(Mutex::new(HashMap::new())),
-            audit_path: dirs.remote_audit_path(),
-            audit_lock: Arc::new(Mutex::new(())),
-        };
+        let state = test_remote_state(&dirs);
         let first = acquire_control(&state, "session-1", "phone-a").unwrap();
         let renewed =
             validate_lease(&state, "session-1", "phone-a", &first.lease_id, true).unwrap();
@@ -1258,6 +1367,71 @@ mod tests {
         assert!(MOBILE_PAGE.contains("crypto.randomUUID"));
         assert!(MOBILE_PAGE.contains("crypto.getRandomValues"));
         assert!(MOBILE_PAGE.contains(r#"type: "release", lease_id: leaseId"#));
+        assert!(MOBILE_PAGE.contains(r#"if (!isReadOnly()) send({ type: "acquire" });"#));
+        assert!(MOBILE_PAGE.contains(r#"method: "POST""#));
+        assert!(MOBILE_PAGE.contains(r#"id="newTerminal""#));
+        assert!(!MOBILE_PAGE.contains(r#"id="takeControl""#));
+        assert!(!MOBILE_PAGE.contains(r#"id="inputForm""#));
+    }
+
+    #[tokio::test]
+    async fn authenticated_mobile_client_can_create_a_project_terminal() {
+        let root = std::env::temp_dir().join(format!("pt-remote-create-{}", uuid::Uuid::new_v4()));
+        let dirs = ConfigDirs::from_root(root.clone());
+        dirs.ensure_root().unwrap();
+        let app = test_app_state(&dirs);
+        let project_id = "project-mobile".to_string();
+        let profile_id = "profile-mobile".to_string();
+        let now = Utc::now();
+        app.projects
+            .upsert(Project {
+                id: project_id.clone(),
+                name: "Mobile project".into(),
+                project_type: ProjectType::Local,
+                local: Some(LocalProjectConfig {
+                    path: root.to_string_lossy().into_owned(),
+                }),
+                ssh: None,
+                wsl: None,
+                default_profile_id: Some(profile_id.clone()),
+                created_at: now,
+                updated_at: now,
+            })
+            .unwrap();
+        app.profiles
+            .upsert(default_local_profile(profile_id, project_id.clone()))
+            .unwrap();
+        let terminal = TerminalState::new();
+        let state = RemoteState {
+            manager: terminal.manager.clone_handle(),
+            app,
+            terminal: terminal.clone(),
+            token: "secret".into(),
+            leases: Arc::new(Mutex::new(HashMap::new())),
+            rate_limits: Arc::new(Mutex::new(HashMap::new())),
+            audit_path: dirs.remote_audit_path(),
+            audit_lock: Arc::new(Mutex::new(())),
+        };
+
+        let response = create_session(
+            State(state),
+            ConnectInfo("127.0.0.1:4100".parse().unwrap()),
+            HeaderMap::new(),
+            Query(AuthQuery {
+                token: Some("secret".into()),
+            }),
+            Json(CreateSessionRequest {
+                project_id: project_id.clone(),
+                client_id: "phone-test".into(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let sessions = terminal.manager.list();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].project_id, project_id);
+        terminal.manager.close_all();
     }
 
     #[test]
@@ -1265,8 +1439,9 @@ mod tests {
         let dirs = ConfigDirs::from_root(
             std::env::temp_dir().join(format!("pt-remote-{}", uuid::Uuid::new_v4())),
         );
-        let desktop_manager = TerminalManager::new();
-        let gateway = RemoteGateway::new(&dirs, desktop_manager.clone_handle());
+        let terminal = TerminalState::new();
+        let desktop_manager = terminal.manager.clone_handle();
+        let gateway = RemoteGateway::new(&dirs, test_app_state(&dirs), terminal);
         let session_id = format!("remote-visible-{}", uuid::Uuid::new_v4());
         let created = desktop_manager
             .create(SessionSpawn {

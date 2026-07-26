@@ -58,8 +58,18 @@ struct SessionMeta {
 
 pub struct TerminalState {
     pub manager: TerminalManager,
-    meta: parking_lot::Mutex<std::collections::HashMap<String, SessionMeta>>,
+    meta: std::sync::Arc<parking_lot::Mutex<std::collections::HashMap<String, SessionMeta>>>,
     launch_gate: std::sync::Arc<tokio::sync::Semaphore>,
+}
+
+impl Clone for TerminalState {
+    fn clone(&self) -> Self {
+        Self {
+            manager: self.manager.clone_handle(),
+            meta: self.meta.clone(),
+            launch_gate: self.launch_gate.clone(),
+        }
+    }
 }
 
 impl Default for TerminalState {
@@ -77,7 +87,7 @@ impl TerminalState {
         debug_assert!(parallelism > 0);
         Self {
             manager: TerminalManager::new(),
-            meta: parking_lot::Mutex::new(std::collections::HashMap::new()),
+            meta: std::sync::Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
             launch_gate: std::sync::Arc::new(tokio::sync::Semaphore::new(parallelism.max(1))),
         }
     }
