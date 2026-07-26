@@ -23,4 +23,14 @@ describe("startup shell", () => {
       source.indexOf("<style>"),
     );
   });
+
+  it("shows a motion-safe terminal animation while React is loading", () => {
+    const document = new DOMParser().parseFromString(source, "text/html");
+
+    expect(document.querySelector(".startup-loader")).not.toBeNull();
+    expect(document.querySelector(".startup-terminal")).not.toBeNull();
+    expect(document.querySelector(".startup-progress")).not.toBeNull();
+    expect(source).toContain("@keyframes startup-progress");
+    expect(source).toContain("@media (prefers-reduced-motion: reduce)");
+  });
 });
