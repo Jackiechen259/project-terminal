@@ -29,7 +29,6 @@ vi.mock("@tauri-apps/api/window", () => ({
     },
     minimize: () => Promise.resolve(),
     close: () => Promise.resolve(),
-    startDragging: () => Promise.resolve(),
   }),
 }));
 
@@ -43,6 +42,14 @@ afterEach(() => {
 });
 
 describe("WindowTitleBar maximize button", () => {
+  it("exposes a native drag region as soon as the title bar is rendered", () => {
+    render(<WindowTitleBar />);
+
+    const titleBar = screen.getByLabelText("Window controls");
+    expect(titleBar).toHaveAttribute("data-tauri-drag-region");
+    expect(titleBar.querySelector("[data-tauri-drag-region]")).not.toBeNull();
+  });
+
   it("shows the maximize icon and label when the window is not maximized", async () => {
     render(<WindowTitleBar />);
 

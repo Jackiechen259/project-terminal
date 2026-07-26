@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import type { MouseEvent } from "react";
 import {
   Copy,
   Minus,
@@ -44,12 +43,6 @@ export function WindowTitleBar({
     };
   }, []);
 
-  function startDragging(event: MouseEvent<HTMLElement>) {
-    if (event.button === 0) {
-      void nativeWindowService.startDragging();
-    }
-  }
-
   function toggleMaximize() {
     void nativeWindowService.toggleMaximize();
   }
@@ -58,10 +51,13 @@ export function WindowTitleBar({
     <header
       className="window-titlebar flex h-10 shrink-0 select-none items-center border-b border-border bg-surface text-foreground"
       aria-label={t("Window controls")}
-      onMouseDown={startDragging}
+      data-tauri-drag-region
       onDoubleClick={toggleMaximize}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-2 px-3">
+      <div
+        className="flex min-w-0 flex-1 items-center gap-2 px-3"
+        data-tauri-drag-region
+      >
         {onToggleSidebar ? (
           <button
             type="button"
@@ -88,13 +84,13 @@ export function WindowTitleBar({
             )}
           </button>
         ) : null}
-        <span className="flex h-5 w-5 items-center justify-center rounded-[5px] bg-[hsl(210_75%_56%)] text-white shadow-[0_0_12px_hsl(210_75%_56%_/_0.26)]">
+        <span className="pointer-events-none flex h-5 w-5 items-center justify-center rounded-[5px] bg-[hsl(210_75%_56%)] text-white shadow-[0_0_12px_hsl(210_75%_56%_/_0.26)]">
           <Terminal className="h-3.5 w-3.5" strokeWidth={2.4} />
         </span>
-        <span className="truncate text-[13px] font-medium tracking-[0.01em]">
+        <span className="pointer-events-none truncate text-[13px] font-medium tracking-[0.01em]">
           Project Terminal
         </span>
-        <span className="hidden text-[11px] text-muted-foreground sm:inline">
+        <span className="pointer-events-none hidden text-[11px] text-muted-foreground sm:inline">
           {t("Workspace")}
         </span>
       </div>

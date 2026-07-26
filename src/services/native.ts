@@ -20,7 +20,6 @@ export const nativeWindowService = {
   hide: () => getCurrentWindow().hide(),
   minimize: () => getCurrentWindow().minimize(),
   close: () => getCurrentWindow().close(),
-  startDragging: () => getCurrentWindow().startDragging(),
   toggleMaximize: () => getCurrentWindow().toggleMaximize(),
 };
 
