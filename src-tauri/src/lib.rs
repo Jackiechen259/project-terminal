@@ -74,8 +74,8 @@ pub fn run() {
         )
         .init();
 
-    let state = match AppState::init() {
-        Ok(s) => s,
+    let (state, remote_dirs) = match AppState::init() {
+        Ok(initialized) => initialized,
         Err(e) => {
             let message = format!("Failed to initialize application state: {e}");
             tracing::error!("{message}");
@@ -85,15 +85,6 @@ pub fn run() {
     };
 
     let terminal_state = TerminalState::new();
-    let remote_dirs = match config_dirs::ConfigDirs::resolve() {
-        Ok(dirs) => dirs,
-        Err(error) => {
-            let message = format!("Failed to initialize remote access: {error}");
-            tracing::error!("{message}");
-            show_fatal_error(&message);
-            std::process::exit(1);
-        }
-    };
     // Remote and desktop clients share the same manager, making the desktop
     // process the single owner of every live PTY.
     let remote_gateway =

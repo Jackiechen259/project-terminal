@@ -54,4 +54,14 @@ describe("updater service", () => {
     expect(onCheck).toHaveBeenCalledOnce();
     unsubscribe();
   });
+
+  it("preserves a manual request made before the deferred listener loads", () => {
+    requestUpdateCheck();
+    const onCheck = vi.fn();
+
+    const unsubscribe = onUpdateCheckRequested(onCheck);
+
+    expect(onCheck).toHaveBeenCalledOnce();
+    unsubscribe();
+  });
 });

@@ -4,8 +4,9 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { WebglAddon } from "@xterm/addon-webgl";
+import type { WebglAddon } from "@xterm/addon-webgl";
 import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
+import "@xterm/xterm/css/xterm.css";
 
 import { useTranslation } from "@/i18n";
 import { listenForAppCommands } from "@/lib/appCommands";
@@ -196,17 +197,28 @@ export const TerminalView = memo(function TerminalView({
     term.loadAddon(new WebLinksAddon());
     term.open(container);
     let webgl: WebglAddon | null = null;
-    try {
-      webgl = new WebglAddon();
-      webgl.onContextLoss(() => {
-        webgl?.dispose();
-        webgl = null;
+    let disposed = false;
+    // DOM rendering can display the first prompt immediately. Upgrade to the
+    // heavier WebGL renderer asynchronously once its separate chunk arrives.
+    void import("@xterm/addon-webgl")
+      .then(({ WebglAddon }) => {
+        if (disposed) return;
+        try {
+          webgl = new WebglAddon();
+          webgl.onContextLoss(() => {
+            webgl?.dispose();
+            webgl = null;
+          });
+          term.loadAddon(webgl);
+        } catch {
+          webgl?.dispose();
+          webgl = null;
+        }
+      })
+      .catch(() => {
+        // The DOM renderer remains fully functional if the optional chunk
+        // cannot be loaded.
       });
-      term.loadAddon(webgl);
-    } catch {
-      webgl?.dispose();
-      webgl = null;
-    }
     termRef.current = term;
     fitRef.current = fit;
     searchRef.current = search;
@@ -412,6 +424,7 @@ export const TerminalView = memo(function TerminalView({
       });
 
     return () => {
+      disposed = true;
       cancelled = true;
       inputQueue.dispose();
       outputQueue.dispose();

@@ -1,4 +1,10 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useTerminalStore } from "@/stores/terminalStore";
@@ -46,7 +52,7 @@ beforeEach(() => {
 });
 
 describe("TerminalPane", () => {
-  it("isolates unrelated terminal views from tab metadata updates", () => {
+  it("isolates unrelated terminal views from tab metadata updates", async () => {
     const onSelect = vi.fn();
     render(
       <>
@@ -69,20 +75,24 @@ describe("TerminalPane", () => {
       </>,
     );
 
-    expect(terminalViewRender.mock.calls).toEqual([
-      ["session-one"],
-      ["session-two"],
-    ]);
+    await waitFor(() =>
+      expect(terminalViewRender.mock.calls).toEqual([
+        ["session-one"],
+        ["session-two"],
+      ]),
+    );
 
     act(() => {
       useTerminalStore.getState().updateTab("one", { title: "updated" });
     });
 
-    expect(terminalViewRender.mock.calls).toEqual([
-      ["session-one"],
-      ["session-two"],
-      ["session-one"],
-    ]);
+    await waitFor(() =>
+      expect(terminalViewRender.mock.calls).toEqual([
+        ["session-one"],
+        ["session-two"],
+        ["session-one"],
+      ]),
+    );
   });
 
   it("shows immediate progress while the backend session is being created", () => {

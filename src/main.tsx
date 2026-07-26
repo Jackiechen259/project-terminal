@@ -1,7 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import "@xterm/xterm/css/xterm.css";
 import "./index.css";
 
 // Prevent WebView2 from showing its Edge context menu on any surface. Individual

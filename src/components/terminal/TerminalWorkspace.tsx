@@ -73,6 +73,7 @@ import type {
 } from "@/types";
 
 import { TerminalPane } from "./TerminalPane";
+import { preloadTerminalView } from "./terminalViewLoader";
 import { useTerminalTabDrag } from "./useTerminalTabDrag";
 
 /** Detected Conda environment available as a quick-launch target. */
@@ -128,6 +129,7 @@ export function TerminalWorkspace() {
     y: number;
   } | null>(null);
   const [condaEnvs, setCondaEnvs] = useState<CondaEnvOption[]>([]);
+  const condaDetectionProjectRef = useRef<string | null>(null);
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const selectedProfile = profiles.find(
     (profile) => profile.id === selectedProfileId,
@@ -165,6 +167,9 @@ export function TerminalWorkspace() {
   const handleNewTerminal = useCallback(
     async (projectId: string, preferredProfileId?: string) => {
       setError(null);
+      // xterm is intentionally absent from the initial bundle. Start loading
+      // it now so parsing overlaps the slower backend process launch.
+      preloadTerminalView();
       let pendingTabId: string | null = null;
       try {
         // The active project's profiles are already loaded for the selector.
@@ -359,11 +364,17 @@ export function TerminalWorkspace() {
   // runs for local/WSL projects where a Conda install is reachable from the
   // host. SSH remotes are skipped (their Conda lives on the remote host).
   useEffect(() => {
+    if (!plusMenuPosition) return;
     if (!activeProjectId || !activeProject || activeProject.type === "ssh") {
       setCondaEnvs([]);
       return;
     }
+    if (condaDetectionProjectRef.current === activeProjectId) return;
+    setCondaEnvs([]);
+    condaDetectionProjectRef.current = activeProjectId;
+    const detectedProjectId = activeProjectId;
     let cancelled = false;
+    let completed = false;
     void (async () => {
       try {
         const condaPaths = await environmentService.detectConda();
@@ -383,18 +394,29 @@ export function TerminalWorkspace() {
             })),
         );
       } catch {
-        if (!cancelled) setCondaEnvs([]);
+        if (!cancelled) {
+          condaDetectionProjectRef.current = null;
+          setCondaEnvs([]);
+        }
+      } finally {
+        completed = true;
       }
     })();
     return () => {
       cancelled = true;
+      if (
+        !completed &&
+        condaDetectionProjectRef.current === detectedProjectId
+      ) {
+        condaDetectionProjectRef.current = null;
+      }
     };
-  }, [activeProjectId, activeProject]);
+  }, [activeProjectId, activeProject, plusMenuPosition]);
 
   // Load global profile templates for the + quick-launch menu.
   useEffect(() => {
-    if (!templatesLoaded) void loadTemplates();
-  }, [templatesLoaded, loadTemplates]);
+    if (plusMenuPosition && !templatesLoaded) void loadTemplates();
+  }, [plusMenuPosition, templatesLoaded, loadTemplates]);
 
   // Quick-launch a terminal from a preset template. Creates the profile on
   // first use (by name), then reuses the existing one on subsequent launches.

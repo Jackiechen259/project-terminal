@@ -1,11 +1,21 @@
-import { memo, useCallback, type CSSProperties } from "react";
+import {
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  type CSSProperties,
+} from "react";
 import { LoaderCircle, RotateCcw } from "lucide-react";
 
 import { useTranslation } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useTerminalStore } from "@/stores/terminalStore";
 
-import { TerminalView } from "./TerminalView";
+import { loadTerminalView } from "./terminalViewLoader";
+
+const LazyTerminalView = lazy(() =>
+  loadTerminalView().then((module) => ({ default: module.TerminalView })),
+);
 
 interface TerminalPaneProps {
   tabId: string;
@@ -60,15 +70,23 @@ export const TerminalPane = memo(function TerminalPane({
       onMouseDown={select}
     >
       {tab.sessionId ? (
-        <TerminalView
-          sessionId={tab.sessionId}
-          active={visible}
-          focused={focused}
-          defaultTitle={tab.defaultTitle}
-          onFocus={select}
-          onExit={handleExit}
-          onTitleChange={handleTitleChange}
-        />
+        <Suspense
+          fallback={
+            <div className="flex h-full items-center justify-center bg-background">
+              <LoaderCircle className="h-6 w-6 animate-spin text-primary" />
+            </div>
+          }
+        >
+          <LazyTerminalView
+            sessionId={tab.sessionId}
+            active={visible}
+            focused={focused}
+            defaultTitle={tab.defaultTitle}
+            onFocus={select}
+            onExit={handleExit}
+            onTitleChange={handleTitleChange}
+          />
+        </Suspense>
       ) : ["starting", "connecting", "initializing"].includes(tab.status) ? (
         <div
           role="status"

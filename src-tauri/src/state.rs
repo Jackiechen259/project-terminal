@@ -26,15 +26,16 @@ impl AppState {
     /// Resolve config dirs, ensure the directory exists, and wire
     /// repositories against the resolved file paths. Callers MUST surface any
     /// error structurally - never panic.
-    pub fn init() -> AppResult<Self> {
+    pub fn init() -> AppResult<(Self, ConfigDirs)> {
         let dirs = ConfigDirs::resolve()?;
         dirs.ensure_root()?;
-        Ok(Self::from_repositories(
+        let state = Self::from_repositories(
             ProjectRepository::new(dirs.projects_path()),
             ProfileRepository::new(dirs.profiles_path()),
             TemplateRepository::new(dirs.templates_path()),
             SshConnectionRepository::new(dirs.ssh_connections_path()),
-        ))
+        );
+        Ok((state, dirs))
     }
 
     pub(crate) fn from_repositories(

@@ -5,6 +5,8 @@ export type AvailableUpdate = NonNullable<Awaited<ReturnType<typeof check>>>;
 
 const updateCheckEvents = new EventTarget();
 const UPDATE_CHECK_REQUESTED = "check-requested";
+let updateCheckListeners = 0;
+let pendingUpdateCheck = false;
 
 export type UpdateProgress = {
   downloaded: number;
@@ -18,14 +20,30 @@ export function checkForUpdate() {
 
 /** Requests an immediate user-initiated check from the application updater. */
 export function requestUpdateCheck() {
+  if (updateCheckListeners === 0) {
+    // The updater UI is intentionally loaded after first paint. Preserve a
+    // very early manual request until that deferred listener is ready.
+    pendingUpdateCheck = true;
+    return;
+  }
   updateCheckEvents.dispatchEvent(new Event(UPDATE_CHECK_REQUESTED));
 }
 
 /** Subscribes to user-initiated update checks. */
 export function onUpdateCheckRequested(callback: () => void) {
+  updateCheckListeners += 1;
   updateCheckEvents.addEventListener(UPDATE_CHECK_REQUESTED, callback);
-  return () =>
+  if (pendingUpdateCheck) {
+    pendingUpdateCheck = false;
+    callback();
+  }
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    updateCheckListeners -= 1;
     updateCheckEvents.removeEventListener(UPDATE_CHECK_REQUESTED, callback);
+  };
 }
 
 /** Downloads a verified updater bundle, then restarts into the new version. */
