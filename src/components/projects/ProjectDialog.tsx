@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { FolderOpen } from "lucide-react";
+import { flushSync } from "react-dom";
+import { FolderOpen, LoaderCircle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -60,6 +61,7 @@ export function ProjectDialog({
   const [wslWorkingDirectory, setWslWorkingDirectory] = useState("");
   const [distributions, setDistributions] = useState<string[]>([]);
   const [distributionsLoading, setDistributionsLoading] = useState(false);
+  const [pickingFolder, setPickingFolder] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -135,9 +137,21 @@ export function ProjectDialog({
   }
 
   async function pickFolder() {
-    const selected = await nativeDialogService.selectDirectory();
-    if (selected) {
-      setLocalPath(selected);
+    if (pickingFolder) return;
+    setPickingFolder(true);
+    try {
+      const selected = await nativeDialogService.selectDirectory();
+      if (selected) {
+        // Native dialogs resolve outside React's event cycle. Commit the path
+        // synchronously so it is visible on the first frame after the picker
+        // closes instead of waiting for a later batched render.
+        flushSync(() => {
+          setLocalPath(selected);
+          setError(null);
+        });
+      }
+    } finally {
+      setPickingFolder(false);
     }
   }
 
@@ -258,12 +272,18 @@ export function ProjectDialog({
                   onChange={(e) => setLocalPath(e.target.value)}
                 />
                 <Button
+                  type="button"
                   variant="secondary"
                   size="icon"
-                  onClick={pickFolder}
+                  onClick={() => void pickFolder()}
+                  disabled={pickingFolder}
                   aria-label={t("Browse folder")}
                 >
-                  <FolderOpen className="h-4 w-4" />
+                  {pickingFolder ? (
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FolderOpen className="h-4 w-4" />
+                  )}
                 </Button>
               </div>
             </div>

@@ -1,4 +1,5 @@
 import { ProjectSidebar } from "@/components/projects/ProjectSidebar";
+import { ProjectFilePanel } from "@/components/files/ProjectFilePanel";
 import { TerminalWorkspace } from "@/components/terminal/TerminalWorkspace";
 import { WindowTitleBar } from "@/components/layout/WindowTitleBar";
 import { useState } from "react";
@@ -12,11 +13,18 @@ import {
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/i18n";
 import { useTerminalStore } from "@/stores/terminalStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { nativeAppService, nativeWindowService } from "@/services/native";
 
 /** Top-level application shell and close-to-tray workflow. */
 export function AppLayout() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const openFileSidebarByDefault = useSettingsStore(
+    (state) => state.openFileSidebarByDefault,
+  );
+  const [fileSidebarCollapsed, setFileSidebarCollapsed] = useState(
+    () => !openFileSidebarByDefault,
+  );
   const [closePromptOpen, setClosePromptOpen] = useState(false);
   const { t } = useTranslation();
 
@@ -25,11 +33,18 @@ export function AppLayout() {
       <WindowTitleBar
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={() => setSidebarCollapsed((collapsed) => !collapsed)}
+        fileSidebarCollapsed={fileSidebarCollapsed}
+        onToggleFileSidebar={() =>
+          setFileSidebarCollapsed((collapsed) => !collapsed)
+        }
         onCloseRequest={() => setClosePromptOpen(true)}
       />
       <div className="flex min-h-0 flex-1 flex-row">
         {!sidebarCollapsed ? <ProjectSidebar /> : null}
         <TerminalWorkspace />
+        {!fileSidebarCollapsed ? (
+          <ProjectFilePanel onClose={() => setFileSidebarCollapsed(true)} />
+        ) : null}
       </div>
       <Dialog open={closePromptOpen} onOpenChange={setClosePromptOpen}>
         <DialogContent className="max-w-md">

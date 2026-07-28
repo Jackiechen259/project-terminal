@@ -162,6 +162,10 @@ pub fn run() {
                 commands::project::delete_project,
                 commands::project::delete_project_workspace,
                 commands::project::open_project_in_explorer,
+                // Project-scoped local / WSL / SSH file browsing and transfer
+                commands::file_manager::list_project_files,
+                commands::file_manager::upload_project_files,
+                commands::file_manager::download_project_file,
                 // Profile CRUD (plan §12.2)
                 commands::profile::list_terminal_profiles,
                 commands::profile::validate_terminal_profile,

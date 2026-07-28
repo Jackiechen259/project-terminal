@@ -16,6 +16,7 @@ export interface GeneralSettings {
   restoreLastProject: boolean;
   confirmCloseTerminal: boolean;
   showTerminalCount: boolean;
+  openFileSidebarByDefault: boolean;
   terminalFontSize: number;
   terminalScrollbackLines: number;
   terminalScrollbackMegabytes: number;
@@ -29,6 +30,7 @@ export const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   restoreLastProject: true,
   confirmCloseTerminal: true,
   showTerminalCount: true,
+  openFileSidebarByDefault: false,
   terminalFontSize: 14,
   terminalScrollbackLines: 10_000,
   terminalScrollbackMegabytes: 4,
@@ -109,6 +111,7 @@ export const useSettingsStore = create<SettingsStoreState>()(
         restoreLastProject: state.restoreLastProject,
         confirmCloseTerminal: state.confirmCloseTerminal,
         showTerminalCount: state.showTerminalCount,
+        openFileSidebarByDefault: state.openFileSidebarByDefault,
         terminalFontSize: state.terminalFontSize,
         terminalScrollbackLines: state.terminalScrollbackLines,
         terminalScrollbackMegabytes: state.terminalScrollbackMegabytes,

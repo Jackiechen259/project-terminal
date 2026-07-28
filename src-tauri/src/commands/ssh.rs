@@ -152,12 +152,12 @@ fn validate_password_input(input: &SshConnectionInput) -> AppResult<()> {
     Ok(())
 }
 
-fn refresh_password_status(mut connection: SshConnection) -> AppResult<SshConnection> {
+pub(crate) fn refresh_password_status(mut connection: SshConnection) -> AppResult<SshConnection> {
     connection.password_saved = crate::ssh::credential::password_exists(&connection.id)?;
     Ok(connection)
 }
 
-fn apply_saved_password_environment(
+pub(crate) fn apply_saved_password_environment(
     command: &mut Command,
     connection: &SshConnection,
 ) -> AppResult<()> {

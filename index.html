@@ -108,13 +108,13 @@
         flex: 0 0 20px;
         place-items: center;
         border-radius: 5px;
-        background: hsl(210 75% 56%);
+        background: linear-gradient(145deg, #203a73, #291a57);
         box-shadow: 0 0 12px hsl(210 75% 56% / 0.26);
-        color: white;
-        font-family: Consolas, monospace;
-        font-size: 12px;
-        font-weight: 700;
-        line-height: 1;
+      }
+
+      .startup-mark svg {
+        width: 18px;
+        height: 18px;
       }
 
       .startup-name {
@@ -334,7 +334,43 @@
       <div class="startup-shell" aria-hidden="true">
         <div class="startup-titlebar" data-tauri-drag-region>
           <div class="startup-brand">
-            <span class="startup-mark">&gt;_</span>
+            <span class="startup-mark">
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <defs>
+                  <linearGradient
+                    id="startup-brand-gradient"
+                    x1="4"
+                    y1="3"
+                    x2="20"
+                    y2="21"
+                    gradientUnits="userSpaceOnUse"
+                  >
+                    <stop stop-color="#67e8f9"></stop>
+                    <stop offset="0.52" stop-color="#60a5fa"></stop>
+                    <stop offset="1" stop-color="#c4b5fd"></stop>
+                  </linearGradient>
+                </defs>
+                <path
+                  d="M3.25 7.25A2.25 2.25 0 0 1 5.5 5h4.1l1.7 1.75h7.2A2.25 2.25 0 0 1 20.75 9v8.5a2.25 2.25 0 0 1-2.25 2.25h-13a2.25 2.25 0 0 1-2.25-2.25V7.25Z"
+                  fill="#090e22"
+                  stroke="url(#startup-brand-gradient)"
+                  stroke-width="1.5"
+                  stroke-linejoin="round"
+                ></path>
+                <path
+                  d="m7.2 10 2.65 2.15L7.2 14.3M11.85 14.25h4.35"
+                  stroke="url(#startup-brand-gradient)"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                ></path>
+              </svg>
+            </span>
             <span class="startup-name">Project Terminal</span>
             <span class="startup-context">Workspace</span>
           </div>

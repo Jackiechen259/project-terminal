@@ -37,6 +37,9 @@ export function GeneralSettingsPanel() {
   const showTerminalCount = useSettingsStore(
     (state) => state.showTerminalCount,
   );
+  const openFileSidebarByDefault = useSettingsStore(
+    (state) => state.openFileSidebarByDefault,
+  );
   const terminalFontSize = useSettingsStore((state) => state.terminalFontSize);
   const terminalScrollbackLines = useSettingsStore(
     (state) => state.terminalScrollbackLines,
@@ -91,6 +94,8 @@ export function GeneralSettingsPanel() {
     restoreLastProject === DEFAULT_GENERAL_SETTINGS.restoreLastProject &&
     confirmCloseTerminal === DEFAULT_GENERAL_SETTINGS.confirmCloseTerminal &&
     showTerminalCount === DEFAULT_GENERAL_SETTINGS.showTerminalCount &&
+    openFileSidebarByDefault ===
+      DEFAULT_GENERAL_SETTINGS.openFileSidebarByDefault &&
     terminalFontSize === DEFAULT_GENERAL_SETTINGS.terminalFontSize &&
     terminalScrollbackLines ===
       DEFAULT_GENERAL_SETTINGS.terminalScrollbackLines &&
@@ -172,6 +177,20 @@ export function GeneralSettingsPanel() {
             checked={restoreLastProject}
             onCheckedChange={(checked) =>
               update({ restoreLastProject: checked })
+            }
+          />
+        </SettingRow>
+        <SettingRow
+          title={t("Open file sidebar on startup")}
+          description={t(
+            "Automatically show the current project's files when the application starts.",
+          )}
+        >
+          <SettingSwitch
+            label={t("Open file sidebar on startup")}
+            checked={openFileSidebarByDefault}
+            onCheckedChange={(checked) =>
+              update({ openFileSidebarByDefault: checked })
             }
           />
         </SettingRow>

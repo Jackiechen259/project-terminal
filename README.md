@@ -39,6 +39,7 @@ The current release is **v0.5.1**.
 - **Multiple shell types** — PowerShell, CMD, Git Bash, WSL, remote Bash/Zsh/Fish, and custom executables.
 - **Development environment activation** — Conda, Python venv, Poetry, uv, or a custom activation command.
 - **Interactive SSH authentication** — password, keyboard-interactive, and private-key passphrase prompts stay inside the terminal.
+- **Project file sidebar** — browse local, WSL, and SSH project folders, drag local files in to upload, and drag remote items to the download area. SSH transfers prefer `rsync` when it is available locally and remotely, then fall back to `scp`.
 - **Safe local persistence** — project settings are stored as atomic JSON files instead of requiring a database.
 - **Signed update support** — packaged builds can check GitHub Releases for newer versions.
 
@@ -355,7 +356,7 @@ The repository must contain the Actions secret `TAURI_SIGNING_PRIVATE_KEY`. The 
 - Running terminal sessions are not restored after restarting the application.
 - Terminal output history is not persisted to disk.
 - Unknown SSH host keys are never accepted automatically.
-- There is no built-in file manager, editor, SFTP browser, Git GUI, or port-forwarding UI.
+- There is no built-in code editor, Git GUI, or port-forwarding UI. The file sidebar is intentionally project-scoped rather than a full system file manager.
 - There is no cloud synchronization or multi-device profile synchronization.
 - The application currently uses a single main window.
 

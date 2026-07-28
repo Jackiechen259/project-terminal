@@ -62,6 +62,12 @@ const SSH_CMD = {
   fingerprint: "read_ssh_host_fingerprint",
 } as const;
 
+const FILE_CMD = {
+  list: "list_project_files",
+  upload: "upload_project_files",
+  download: "download_project_file",
+} as const;
+
 export interface ProjectInput {
   id?: string;
   name: string;
@@ -180,6 +186,20 @@ export interface SessionAttachment {
 export interface RemoteDirectoryListing {
   path: string;
   directories: Array<{ name: string; path: string }>;
+}
+
+export interface ProjectFileEntry {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+  size?: number;
+}
+
+export interface ProjectFileListing {
+  rootPath: string;
+  path: string;
+  parentPath?: string;
+  entries: ProjectFileEntry[];
 }
 
 interface ListResponse<T> {
@@ -308,6 +328,29 @@ export const sshService = {
   detect: () => invokeOrThrow<string | null>(SSH_CMD.detect),
   fingerprint: (id: string) =>
     invokeOrThrow<string>(SSH_CMD.fingerprint, { id }),
+};
+
+export const fileService = {
+  list: (projectId: string, path?: string) =>
+    invokeOrThrow<ProjectFileListing>(FILE_CMD.list, { projectId, path }),
+  upload: (projectId: string, destinationPath: string, sourcePaths: string[]) =>
+    invokeOrThrow<void>(FILE_CMD.upload, {
+      projectId,
+      destinationPath,
+      sourcePaths,
+    }),
+  download: (
+    projectId: string,
+    sourcePath: string,
+    destinationDirectory: string,
+    isDirectory: boolean,
+  ) =>
+    invokeOrThrow<void>(FILE_CMD.download, {
+      projectId,
+      sourcePath,
+      destinationDirectory,
+      isDirectory,
+    }),
 };
 
 export const terminalService = {

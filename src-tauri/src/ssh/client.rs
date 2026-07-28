@@ -35,6 +35,38 @@ pub fn resolve_ssh_keygen(client: &SshClient) -> Option<PathBuf> {
         .or_else(|| find_on_path(name))
 }
 
+pub fn resolve_scp(client: &SshClient) -> Option<PathBuf> {
+    let name = if cfg!(windows) { "scp.exe" } else { "scp" };
+    client
+        .executable
+        .parent()
+        .map(|directory| directory.join(name))
+        .filter(|path| path.is_file())
+        .or_else(|| find_on_path(name))
+}
+
+/// Find a local rsync executable. OpenSSH does not ship rsync, so this is a
+/// separate capability check and may legitimately return `None`.
+pub fn detect_rsync() -> Option<PathBuf> {
+    let name = if cfg!(windows) { "rsync.exe" } else { "rsync" };
+    find_on_path(name).or_else(|| {
+        if !cfg!(windows) {
+            return None;
+        }
+        [
+            env::var_os("ProgramFiles")
+                .map(PathBuf::from)
+                .map(|root| root.join("Git").join("usr").join("bin").join(name)),
+            env::var_os("ProgramFiles(x86)")
+                .map(PathBuf::from)
+                .map(|root| root.join("Git").join("usr").join("bin").join(name)),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|path| path.is_file())
+    })
+}
+
 fn find_on_path(name: &str) -> Option<PathBuf> {
     env::var_os("PATH").and_then(|paths| {
         env::split_paths(&paths)
@@ -76,6 +108,13 @@ mod tests {
     fn discovery_never_returns_a_non_file() {
         if let Some(client) = detect_ssh_client() {
             assert!(client.executable.is_file());
+        }
+    }
+
+    #[test]
+    fn rsync_discovery_never_returns_a_non_file() {
+        if let Some(path) = detect_rsync() {
+            assert!(path.is_file());
         }
     }
 }

@@ -1,27 +1,49 @@
 <svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="background" x1="64" y1="48" x2="448" y2="472" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#20153D"/>
-      <stop offset="1" stop-color="#0B1021"/>
+    <linearGradient id="background" x1="72" y1="48" x2="446" y2="466" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#203A73"/>
+      <stop offset="0.48" stop-color="#162A5B"/>
+      <stop offset="1" stop-color="#291A57"/>
     </linearGradient>
-    <linearGradient id="terminal" x1="100" y1="104" x2="412" y2="408" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#31245A"/>
-      <stop offset="1" stop-color="#171C36"/>
+    <linearGradient id="edge" x1="118" y1="128" x2="400" y2="392" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#67E8F9"/>
+      <stop offset="0.48" stop-color="#60A5FA"/>
+      <stop offset="1" stop-color="#A78BFA"/>
     </linearGradient>
-    <linearGradient id="prompt" x1="146" y1="192" x2="277" y2="316" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#A78BFA"/>
-      <stop offset="1" stop-color="#22D3EE"/>
+    <linearGradient id="prompt" x1="145" y1="242" x2="346" y2="332" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A5F3FC"/>
+      <stop offset="0.52" stop-color="#7DD3FC"/>
+      <stop offset="1" stop-color="#C4B5FD"/>
     </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(184 118) rotate(51) scale(330 330)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38BDF8" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#8B5CF6" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="75" y="100" width="374" height="340" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="14" flood-color="#070B1D" flood-opacity="0.42"/>
+    </filter>
   </defs>
-  <rect width="512" height="512" rx="112" fill="url(#background)"/>
-  <rect x="82" y="112" width="348" height="288" rx="40" fill="#080B18" opacity="0.45"/>
-  <rect x="92" y="96" width="328" height="288" rx="36" fill="url(#terminal)" stroke="#6656A7" stroke-width="8"/>
-  <path d="M92 172H420" stroke="#6656A7" stroke-width="8"/>
-  <circle cx="132" cy="134" r="12" fill="#FB7185"/>
-  <circle cx="168" cy="134" r="12" fill="#FBBF24"/>
-  <circle cx="204" cy="134" r="12" fill="#5EEAD4"/>
-  <path d="M151 224L223 276L151 328" stroke="url(#prompt)" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M262 326H352" stroke="#E2E8F0" stroke-width="28" stroke-linecap="round"/>
-  <path d="M369 70V108" stroke="#22D3EE" stroke-width="18" stroke-linecap="round"/>
-  <path d="M350 89H388" stroke="#22D3EE" stroke-width="18" stroke-linecap="round"/>
+
+  <!-- A compact project folder containing a terminal prompt. -->
+  <rect x="16" y="16" width="480" height="480" rx="116" fill="url(#background)"/>
+  <rect x="16" y="16" width="480" height="480" rx="116" fill="url(#glow)"/>
+  <rect x="22" y="22" width="468" height="468" rx="110" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="12"/>
+
+  <!-- The offset sheet suggests a stack of project workspaces. -->
+  <path d="M150 126H240L270 157H382C405.196 157 424 175.804 424 199V330"
+        stroke="#8B9CF6" stroke-opacity="0.42" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <g filter="url(#shadow)">
+    <path d="M104 184C104 160.804 122.804 142 146 142H225L260 178H366C389.196 178 408 196.804 408 220V354C408 377.196 389.196 396 366 396H146C122.804 396 104 377.196 104 354V184Z"
+          fill="#090E22"/>
+    <path d="M104 184C104 160.804 122.804 142 146 142H225L260 178H366C389.196 178 408 196.804 408 220V354C408 377.196 389.196 396 366 396H146C122.804 396 104 377.196 104 354V184Z"
+          stroke="url(#edge)" stroke-width="12" stroke-linejoin="round"/>
+  </g>
+
+  <path d="M153 244L211 289L153 334" stroke="url(#prompt)" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M252 332H345" stroke="url(#prompt)" stroke-width="28" stroke-linecap="round"/>
+
+  <!-- Small project-status rails retain detail at large sizes without competing at 16 px. -->
+  <path d="M143 207H178" stroke="#67E8F9" stroke-width="10" stroke-linecap="round"/>
+  <path d="M194 207H229" stroke="#818CF8" stroke-width="10" stroke-linecap="round"/>
 </svg>

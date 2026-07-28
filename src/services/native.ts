@@ -1,5 +1,6 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview, type DragDropEvent } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 
@@ -28,4 +29,14 @@ export const nativeDialogService = {
     const selected = await open({ directory: true, multiple: false });
     return typeof selected === "string" ? selected : null;
   },
+  selectFiles: async (): Promise<string[]> => {
+    const selected = await open({ directory: false, multiple: true });
+    if (typeof selected === "string") return [selected];
+    return Array.isArray(selected) ? selected : [];
+  },
+};
+
+export const nativeDragDropService = {
+  listen: (handler: (event: DragDropEvent) => void) =>
+    getCurrentWebview().onDragDropEvent(({ payload }) => handler(payload)),
 };

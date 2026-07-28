@@ -28,6 +28,7 @@ describe("settingsStore", () => {
       cursorBlink: false,
       terminalFontSize: 18,
       autoCheckForUpdates: false,
+      openFileSidebarByDefault: true,
     });
 
     expect(useSettingsStore.getState().language).toBe("zh-CN");
@@ -35,6 +36,7 @@ describe("settingsStore", () => {
     expect(useSettingsStore.getState().cursorBlink).toBe(false);
     expect(useSettingsStore.getState().terminalFontSize).toBe(18);
     expect(useSettingsStore.getState().autoCheckForUpdates).toBe(false);
+    expect(useSettingsStore.getState().openFileSidebarByDefault).toBe(true);
 
     useSettingsStore.getState().resetGeneralSettings();
     expect(useSettingsStore.getState()).toMatchObject(DEFAULT_GENERAL_SETTINGS);

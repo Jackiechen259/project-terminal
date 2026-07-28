@@ -1,6 +1,7 @@
 //! Tauri command modules.
 
 pub mod clipboard;
+pub mod file_manager;
 pub mod platform;
 pub mod profile;
 pub mod profile_template;

@@ -4,12 +4,14 @@ import {
   Minus,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Square,
-  Terminal,
   X,
 } from "lucide-react";
 import { useTranslation } from "@/i18n";
 import { nativeWindowService } from "@/services/native";
+import { BrandMark } from "./BrandMark";
 
 /**
  * Application-owned title bar for the undecorated desktop window. Keeping the
@@ -19,10 +21,14 @@ import { nativeWindowService } from "@/services/native";
 export function WindowTitleBar({
   sidebarCollapsed = false,
   onToggleSidebar,
+  fileSidebarCollapsed = false,
+  onToggleFileSidebar,
   onCloseRequest,
 }: {
   sidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
+  fileSidebarCollapsed?: boolean;
+  onToggleFileSidebar?: () => void;
   onCloseRequest?: () => void;
 }) {
   const { t } = useTranslation();
@@ -84,8 +90,8 @@ export function WindowTitleBar({
             )}
           </button>
         ) : null}
-        <span className="pointer-events-none flex h-5 w-5 items-center justify-center rounded-[5px] bg-[hsl(210_75%_56%)] text-white shadow-[0_0_12px_hsl(210_75%_56%_/_0.26)]">
-          <Terminal className="h-3.5 w-3.5" strokeWidth={2.4} />
+        <span className="pointer-events-none flex h-5 w-5 items-center justify-center rounded-[5px] bg-[linear-gradient(145deg,#203a73,#291a57)] shadow-[0_0_12px_hsl(210_75%_56%_/_0.26)]">
+          <BrandMark className="h-[18px] w-[18px]" />
         </span>
         <span className="pointer-events-none truncate text-[13px] font-medium tracking-[0.01em]">
           Project Terminal
@@ -93,6 +99,32 @@ export function WindowTitleBar({
         <span className="pointer-events-none hidden text-[11px] text-muted-foreground sm:inline">
           {t("Workspace")}
         </span>
+        {onToggleFileSidebar ? (
+          <button
+            type="button"
+            className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={
+              fileSidebarCollapsed
+                ? t("Show file sidebar")
+                : t("Hide file sidebar")
+            }
+            aria-expanded={!fileSidebarCollapsed}
+            title={
+              fileSidebarCollapsed
+                ? t("Show file sidebar")
+                : t("Hide file sidebar")
+            }
+            onMouseDown={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => event.stopPropagation()}
+            onClick={onToggleFileSidebar}
+          >
+            {fileSidebarCollapsed ? (
+              <PanelRightOpen className="h-4 w-4" />
+            ) : (
+              <PanelRightClose className="h-4 w-4" />
+            )}
+          </button>
+        ) : null}
       </div>
 
       <div
