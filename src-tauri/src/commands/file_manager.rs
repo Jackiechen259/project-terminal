@@ -39,7 +39,9 @@ const LIST_TIMEOUT: Duration = Duration::from_secs(30);
 /// than one operand, so `wc` always ends with a `total` line and the parser can
 /// drop it unconditionally instead of guessing. `|| true` stops an unreadable
 /// entry — a dangling symlink, a root-owned file, a socket — from making `wc`
-/// exit non-zero and failing the whole listing.
+/// exit non-zero and failing the whole listing. The cost of that guard is that
+/// a wholesale `wc` failure (missing binary, argument list too long) is also
+/// silent: the listing succeeds with every size absent.
 const POSIX_LIST_SCRIPT_TEMPLATE: &str = r#"resolve_path() {
   case "$1" in
     "~") printf '%s\n' "$HOME" ;;
