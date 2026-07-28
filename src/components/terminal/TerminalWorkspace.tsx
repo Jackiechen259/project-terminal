@@ -197,9 +197,7 @@ export function TerminalWorkspace() {
   }, [validSplitView]);
   const paneLayout = useMemo(
     () =>
-      validSplitView
-        ? calculatePaneLayout(validSplitView.root)
-        : undefined,
+      validSplitView ? calculatePaneLayout(validSplitView.root) : undefined,
     [validSplitView],
   );
 

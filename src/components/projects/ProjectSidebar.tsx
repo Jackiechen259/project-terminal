@@ -876,7 +876,6 @@ const CollectionGroup = memo(function CollectionGroup({
     dropTarget?.kind === "collection" &&
     dropTarget.collectionId === collection.id;
 
-
   return (
     <div
       data-project-drop-target="collection"
