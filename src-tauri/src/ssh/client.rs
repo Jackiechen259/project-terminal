@@ -6,13 +6,22 @@
 
 use std::env;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SshClient {
     pub executable: PathBuf,
 }
 
+/// Cached for the process lifetime: this runs on every SSH terminal launch,
+/// every remote directory listing and every file transfer, and each call stats
+/// every PATH entry. An SSH client installed mid-session needs a restart.
 pub fn detect_ssh_client() -> Option<SshClient> {
+    static SSH_CLIENT: OnceLock<Option<SshClient>> = OnceLock::new();
+    SSH_CLIENT.get_or_init(detect_ssh_client_uncached).clone()
+}
+
+fn detect_ssh_client_uncached() -> Option<SshClient> {
     let executable_name = if cfg!(windows) { "ssh.exe" } else { "ssh" };
 
     find_on_path(executable_name)
@@ -46,8 +55,14 @@ pub fn resolve_scp(client: &SshClient) -> Option<PathBuf> {
 }
 
 /// Find a local rsync executable. OpenSSH does not ship rsync, so this is a
-/// separate capability check and may legitimately return `None`.
+/// separate capability check and may legitimately return `None`. Cached for
+/// the same reason as [`detect_ssh_client`].
 pub fn detect_rsync() -> Option<PathBuf> {
+    static RSYNC: OnceLock<Option<PathBuf>> = OnceLock::new();
+    RSYNC.get_or_init(detect_rsync_uncached).clone()
+}
+
+fn detect_rsync_uncached() -> Option<PathBuf> {
     let name = if cfg!(windows) { "rsync.exe" } else { "rsync" };
     find_on_path(name).or_else(|| {
         if !cfg!(windows) {

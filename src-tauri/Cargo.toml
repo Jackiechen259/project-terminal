@@ -41,3 +41,13 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Securit
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+# Cross-crate inlining matters here: the PTY hot path spans session, scrollback
+# and the Tauri IPC layer.
+lto = true
+codegen-units = 1
+strip = true
+# `panic = "abort"` would shrink the binary further, but a panic in one PTY
+# reader thread would then take down every terminal instead of just that
+# session, so it is deliberately left off.

@@ -17,12 +17,19 @@ import {
   getTerminalMinimumContrast,
   getTerminalTheme,
 } from "@/lib/terminalThemes";
-import { terminalService, type TerminalOutputChunk } from "@/services";
+import {
+  isTerminalControlFrame,
+  type TerminalSessionFrame,
+} from "@/lib/terminalFrames";
+import { terminalService } from "@/services";
 import {
   clampTerminalFontSize,
   useSettingsStore,
 } from "@/stores/settingsStore";
 import { resolveTerminalTabTitle } from "./terminalTitle";
+
+/** How many times a single session may rebuild itself after dropped output. */
+const MAX_LAGGED_RESYNCS = 3;
 
 /**
  * Single xterm.js view bound to a backend PTY session.
@@ -61,6 +68,9 @@ export const TerminalView = memo(function TerminalView({
   const reportedExitRef = useRef(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  /** Bumped to force a re-attach after the backend reports dropped output. */
+  const [attachEpoch, setAttachEpoch] = useState(0);
+  const resyncAttemptsRef = useRef(0);
   const onTitleChangeRef = useRef(onTitleChange);
   const onExitRef = useRef(onExit);
   const { t } = useTranslation();
@@ -130,6 +140,11 @@ export const TerminalView = memo(function TerminalView({
   useEffect(() => {
     onExitRef.current = onExit;
   }, [onExit]);
+
+  // A new session starts with a clean resync budget.
+  useEffect(() => {
+    resyncAttemptsRef.current = 0;
+  }, [sessionId]);
 
   useEffect(() => {
     return listenForAppCommands((command) => {
@@ -332,24 +347,58 @@ export const TerminalView = memo(function TerminalView({
     const clientId = crypto.randomUUID();
     let cancelled = false;
     let attached = false;
-    const pendingLiveOutput: TerminalOutputChunk[] = [];
-    const handleOutput = (chunk: TerminalOutputChunk) => {
-      if (cancelled) return;
-      if (chunk.status) {
-        outputQueue.flush();
-        if (!reportedExitRef.current) {
-          reportedExitRef.current = true;
-          onExitRef.current?.(chunk.exitCode ?? null, chunk.status);
-        }
-        return;
-      }
-      if (chunk.data) {
-        outputQueue.send(terminalService.decodeBase64(chunk.data));
+    let resyncRequested = false;
+    let dropNoticeShown = false;
+    const pendingLiveOutput: TerminalSessionFrame[] = [];
+    const reportExit = (
+      status: "exited" | "error",
+      exitCode: number | null,
+    ) => {
+      outputQueue.flush();
+      if (!reportedExitRef.current) {
+        reportedExitRef.current = true;
+        onExitRef.current?.(exitCode, status);
       }
     };
-    const handleLiveOutput = (chunk: TerminalOutputChunk) => {
-      if (attached) handleOutput(chunk);
-      else pendingLiveOutput.push(chunk);
+    const handleFrame = (frame: TerminalSessionFrame) => {
+      if (cancelled) return;
+      if (!isTerminalControlFrame(frame)) {
+        outputQueue.send(new Uint8Array(frame));
+        return;
+      }
+      if (frame.type === "status") {
+        reportExit(frame.status, frame.exitCode ?? null);
+        return;
+      }
+      if (frame.type !== "lagged") return;
+      // The backend dropped output because this client fell behind, leaving an
+      // invisible hole in the stream that would corrupt any cursor-addressed
+      // TUI. Re-attaching rebuilds the view from a fresh snapshot. The attempt
+      // cap keeps a persistently slow client from thrashing xterm teardown.
+      //
+      // More lagged frames can arrive before this attachment tears down; they
+      // are the same lag, so they must not each spend a resync or repeat the
+      // notice. Both flags live in the attachment closure, so a successful
+      // re-attach starts clean.
+      if (resyncRequested) return;
+      if (resyncAttemptsRef.current >= MAX_LAGGED_RESYNCS) {
+        if (dropNoticeShown) return;
+        dropNoticeShown = true;
+        outputQueue.send(
+          new TextEncoder().encode(
+            "\r\n\x1b[33m[Some terminal output was dropped]\x1b[0m\r\n",
+          ),
+        );
+        return;
+      }
+      resyncRequested = true;
+      resyncAttemptsRef.current += 1;
+      outputQueue.flush();
+      setAttachEpoch((epoch) => epoch + 1);
+    };
+    const handleLiveFrame = (frame: TerminalSessionFrame) => {
+      if (attached) handleFrame(frame);
+      else pendingLiveOutput.push(frame);
     };
 
     // This view attaches to an already-running PTY, which may still be at its
@@ -361,7 +410,7 @@ export const TerminalView = memo(function TerminalView({
     // Subscribe first on the backend, restore bounded history, then drain
     // events queued while the command response was in flight.
     void terminalService
-      .attach(sessionId, clientId, handleLiveOutput)
+      .attach(sessionId, clientId, handleLiveFrame)
       .then(async (attachment) => {
         if (cancelled) {
           void terminalService.detach(sessionId, clientId);
@@ -373,13 +422,16 @@ export const TerminalView = memo(function TerminalView({
           );
         }
         if (attachment.replay?.length) {
+          // The backend merges consecutive output into one event per grid, so
+          // this loop runs a handful of times rather than once per 16 KiB.
           for (const event of attachment.replay) {
             if (cancelled) return;
             if (event.type === "resize") {
               term.resize(event.cols, event.rows);
             } else if (event.data) {
+              const data = event.data;
               await new Promise<void>((resolve) => {
-                term.write(terminalService.decodeBase64(event.data), resolve);
+                term.write(terminalService.decodeBase64(data), resolve);
               });
             }
           }
@@ -396,16 +448,15 @@ export const TerminalView = memo(function TerminalView({
         if (cancelled) return;
         inputQueue.attach(sessionId);
         attached = true;
-        pendingLiveOutput.splice(0).forEach(handleOutput);
+        pendingLiveOutput.splice(0).forEach(handleFrame);
         if (
           attachment.session.status === "exited" ||
           attachment.session.status === "error"
         ) {
-          handleOutput({
-            sessionId,
-            status: attachment.session.status,
-            exitCode: attachment.session.exitCode,
-          });
+          reportExit(
+            attachment.session.status,
+            attachment.session.exitCode ?? null,
+          );
         }
         requestAnimationFrame(fitAndResize);
       })
@@ -453,7 +504,7 @@ export const TerminalView = memo(function TerminalView({
     };
     // Changing `active` only hides/refits the existing xterm instance.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId]);
+  }, [sessionId, attachEpoch]);
 
   useEffect(() => {
     const term = termRef.current;

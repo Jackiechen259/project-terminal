@@ -9,6 +9,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+import { createThrottledJSONStorage } from "@/lib/throttledStorage";
 import {
   closePane,
   createSplitView,
@@ -95,6 +96,17 @@ export interface TerminalStoreState {
 
 export const TERMINAL_WORKSPACE_STORAGE_KEY =
   "project-terminal.workspace-layout.v1";
+
+type PersistedTerminalState = Pick<
+  TerminalStoreState,
+  | "activeProjectId"
+  | "tabsById"
+  | "tabGroupsByProjectId"
+  | "splitViewsByProjectId"
+>;
+
+export const terminalWorkspaceStorage =
+  createThrottledJSONStorage<PersistedTerminalState>();
 
 export const useTerminalStore = create<TerminalStoreState>()(
   persist(
@@ -230,6 +242,11 @@ export const useTerminalStore = create<TerminalStoreState>()(
       updateTab: (tabId, patch) => {
         const existing = get().tabsById[tabId];
         if (!existing) return;
+        // Title/status writes repeat the current value constantly (OSC 0/2 fires
+        // per shell prompt). Skipping identical patches keeps `tabsById` stable
+        // so the workspace and sidebar do not re-render.
+        const keys = Object.keys(patch) as (keyof TerminalTab)[];
+        if (keys.every((key) => existing[key] === patch[key])) return;
         set({
           tabsById: {
             ...get().tabsById,
@@ -242,6 +259,7 @@ export const useTerminalStore = create<TerminalStoreState>()(
         const group = get().tabGroupsByProjectId[projectId];
         if (!group) return;
         if (!group.tabIds.includes(tabId)) return;
+        if (group.activeTabId === tabId) return;
         set({
           tabGroupsByProjectId: {
             ...get().tabGroupsByProjectId,
@@ -320,6 +338,7 @@ export const useTerminalStore = create<TerminalStoreState>()(
         ) {
           return;
         }
+        if (splitView.focusedPaneId === paneId) return;
         set({
           splitViewsByProjectId: {
             ...(get().splitViewsByProjectId ?? {}),
@@ -342,10 +361,14 @@ export const useTerminalStore = create<TerminalStoreState>()(
       resizeSplit: (projectId, splitId, ratio) => {
         const splitView = get().splitViewsByProjectId?.[projectId];
         if (!splitView) return;
+        // Fires per pointermove during a divider drag; `resizePaneSplit`
+        // returns the same view once the ratio settles at a clamp boundary.
+        const next = resizePaneSplit(splitView, splitId, ratio);
+        if (next === splitView) return;
         set({
           splitViewsByProjectId: {
             ...(get().splitViewsByProjectId ?? {}),
-            [projectId]: resizePaneSplit(splitView, splitId, ratio),
+            [projectId]: next,
           },
         });
       },
@@ -378,7 +401,8 @@ export const useTerminalStore = create<TerminalStoreState>()(
     {
       name: TERMINAL_WORKSPACE_STORAGE_KEY,
       version: 1,
-      partialize: (state) => ({
+      storage: terminalWorkspaceStorage,
+      partialize: (state): PersistedTerminalState => ({
         activeProjectId: state.activeProjectId,
         tabsById: state.tabsById,
         tabGroupsByProjectId: state.tabGroupsByProjectId,

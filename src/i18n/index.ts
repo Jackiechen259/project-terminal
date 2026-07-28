@@ -4,6 +4,12 @@ import { type AppLanguage, useSettingsStore } from "@/stores/settingsStore";
 
 type TranslationParams = Record<string, string | number>;
 
+/** The `t` function returned by `useTranslation`, for passing between components. */
+export type TranslateFn = (
+  source: string,
+  params?: TranslationParams,
+) => string;
+
 const zhCN: Record<string, string> = {
   Language: "语言",
   "Choose the language used throughout the application.":

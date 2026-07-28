@@ -163,24 +163,34 @@ export function focusRelativePane(
   return { ...view, focusedPaneId: leaves[next].paneId };
 }
 
+/**
+ * Returns the same view instance when the clamped ratio is unchanged, so a
+ * pointermove drag that stays at a clamp boundary does not churn the store.
+ */
 export function resizePaneSplit(
   view: TerminalSplitView,
   splitId: string,
   ratio: number,
 ): TerminalSplitView {
-  const resize = (node: PaneNode): PaneNode =>
-    node.type === "terminal"
-      ? node
-      : {
-          ...node,
-          ratio:
-            node.paneId === splitId
-              ? Math.min(0.8, Math.max(0.2, ratio))
-              : node.ratio,
-          first: resize(node.first),
-          second: resize(node.second),
-        };
-  return { ...view, root: resize(view.root) };
+  const resize = (node: PaneNode): PaneNode => {
+    if (node.type === "terminal") return node;
+    const first = resize(node.first);
+    const second = resize(node.second);
+    const nextRatio =
+      node.paneId === splitId
+        ? Math.min(0.8, Math.max(0.2, ratio))
+        : node.ratio;
+    if (
+      nextRatio === node.ratio &&
+      first === node.first &&
+      second === node.second
+    ) {
+      return node;
+    }
+    return { ...node, ratio: nextRatio, first, second };
+  };
+  const root = resize(view.root);
+  return root === view.root ? view : { ...view, root };
 }
 
 export function calculatePaneLayout(root: PaneNode): {

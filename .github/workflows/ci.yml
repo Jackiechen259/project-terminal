@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      # Node 24+ ships a native localStorage global that shadows jsdom's, which
+      # breaks every test touching persisted state. Stay on the version the
+      # release workflow builds with.
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check formatting
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      # `pnpm build` runs `tsc -b` first, so this covers type checking too.
+      - name: Type-check and build
+        run: pnpm build
+
+      - name: Test
+        run: pnpm test
+
+  rust:
+    # Windows only: the PTY tests spawn cmd.exe and PowerShell, and the app
+    # itself targets Windows. A Linux runner would fail on those.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # src-tauri/build.rs vendors xterm assets out of node_modules for the
+      # mobile remote page, so the Rust build needs the frontend deps present.
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build outputs
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Test
+        run: cargo test --manifest-path src-tauri/Cargo.toml

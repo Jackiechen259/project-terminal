@@ -6,6 +6,7 @@
 
 import { Channel, invoke as tauriInvoke } from "@tauri-apps/api/core";
 
+import type { TerminalSessionFrame } from "@/lib/terminalFrames";
 import type {
   PlatformInfo,
   ProfileTemplate,
@@ -153,14 +154,10 @@ export interface CreateTerminalRequest {
   scrollbackMegabytes?: number;
 }
 
-export interface TerminalOutputChunk {
-  sessionId: string;
-  /** base64-encoded bytes from the PTY. */
-  data?: string;
-  /** Present when the backend process exits or its wait operation fails. */
-  status?: "exited" | "error";
-  exitCode?: number;
-}
+export type {
+  TerminalControlFrame,
+  TerminalSessionFrame,
+} from "@/lib/terminalFrames";
 
 export interface SessionInfo {
   sessionId: string;
@@ -224,7 +221,14 @@ async function invokeOrThrow<T>(
   }
 }
 
-/** Decode a base64 string into bytes the frontend can hand to xterm.write. */
+/**
+ * Decode a base64 string into bytes the frontend can hand to xterm.write.
+ *
+ * Only attach replay still travels as base64; live output crosses the IPC
+ * boundary as raw bytes. WebView2 has no `Uint8Array.fromBase64` yet, so the
+ * per-byte fallback is the live path today and the native branch takes over
+ * for free once it ships.
+ */
 function decodeBase64(b64: string): Uint8Array {
   const nativeDecoder = (
     Uint8Array as typeof Uint8Array & {
@@ -360,10 +364,10 @@ export const terminalService = {
   attach: async (
     sessionId: string,
     clientId: string,
-    onOutput: (chunk: TerminalOutputChunk) => void,
+    onFrame: (frame: TerminalSessionFrame) => void,
   ): Promise<SessionAttachment> => {
-    const channel = new Channel<TerminalOutputChunk>();
-    channel.onmessage = onOutput;
+    const channel = new Channel<TerminalSessionFrame>();
+    channel.onmessage = onFrame;
     return invokeOrThrow<SessionAttachment>("session_attach", {
       onOutput: channel,
       sessionId,

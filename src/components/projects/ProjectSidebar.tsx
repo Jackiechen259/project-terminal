@@ -7,7 +7,9 @@ import {
   useRef,
   useState,
 } from "react";
+import { memo } from "react";
 import { flushSync } from "react-dom";
+import { useShallow } from "zustand/react/shallow";
 import {
   ChevronDown,
   ChevronRight,
@@ -39,6 +41,21 @@ import type { SettingsSection } from "@/components/settings/SettingsDialog";
 
 import { ProjectContextMenu } from "./ProjectContextMenu";
 import { useRemoveProject } from "./useRemoveProject";
+
+/** Tab states that count towards a project's "running terminals" badge. */
+const RUNNING_TAB_STATUSES = new Set([
+  "starting",
+  "connecting",
+  "initializing",
+  "running",
+]);
+
+/** Read back the `running:hasError` pair packed by the sidebar's selector. */
+function readTabStats(encoded: string | undefined) {
+  if (!encoded) return { running: 0, hasError: false };
+  const [running, hasError] = encoded.split(":");
+  return { running: Number(running), hasError: hasError === "1" };
+}
 
 const loadProjectDialog = () => import("./ProjectDialog");
 const loadProjectEditDialog = () => import("./ProjectEditDialog");
@@ -139,8 +156,26 @@ export function ProjectSidebar() {
   const loading = useProjectStore((s) => s.loading);
   const error = useProjectStore((s) => s.error);
   const activeProjectId = useTerminalStore((s) => s.activeProjectId);
-  const tabGroups = useTerminalStore((s) => s.tabGroupsByProjectId);
-  const tabsById = useTerminalStore((s) => s.tabsById);
+  // Rows only need per-project counts, so derive them behind a shallow compare
+  // instead of subscribing to the whole tab map. A tab title change then does
+  // not re-render the sidebar at all.
+  const projectTabStats = useTerminalStore(
+    useShallow((s) => {
+      const stats: Record<string, string> = {};
+      for (const group of Object.values(s.tabGroupsByProjectId)) {
+        let running = 0;
+        let hasError = false;
+        for (const id of group.tabIds) {
+          const tab = s.tabsById[id];
+          if (!tab) continue;
+          if (RUNNING_TAB_STATUSES.has(tab.status)) running += 1;
+          if (tab.status === "error") hasError = true;
+        }
+        stats[group.projectId] = `${running}:${hasError ? 1 : 0}`;
+      }
+      return stats;
+    }),
+  );
   const loadProjects = useProjectStore((s) => s.loadProjects);
   const setActiveProject = useTerminalStore((s) => s.setActiveProject);
   const restoreLastProject = useSettingsStore((s) => s.restoreLastProject);
@@ -436,13 +471,6 @@ export function ProjectSidebar() {
     ? projectsById[draggedProjectId]
     : undefined;
 
-  function tabsFor(projectId: string) {
-    return (
-      tabGroups[projectId]?.tabIds.map((id) => tabsById[id]).filter(Boolean) ??
-      []
-    );
-  }
-
   async function testSsh(project: Project) {
     if (project.type !== "ssh" || !project.ssh?.connectionId) return;
     setNotice(t("Testing SSH connection…"));
@@ -593,8 +621,7 @@ export function ProjectSidebar() {
                 collapsed={Boolean(collapsed[collection.id])}
                 draggedProjectId={draggedProjectId}
                 dropTarget={dropTarget}
-                tabsById={tabsById}
-                tabGroups={tabGroups}
+                projectTabStats={projectTabStats}
                 showTerminalCount={showTerminalCount}
                 onToggleCollapsed={() => toggleCollapsed(collection.id)}
                 onDeleteCollection={() => {
@@ -665,9 +692,7 @@ export function ProjectSidebar() {
                   key={project.id}
                   project={project}
                   active={project.id === activeProjectId}
-                  tabs={tabsFor(project.id).map((t) => ({
-                    status: t.status,
-                  }))}
+                  tabStats={projectTabStats[project.id]}
                   showTerminalCount={showTerminalCount}
                   draggable={false}
                   isDragging={draggedProjectId === project.id}
@@ -802,15 +827,14 @@ export function ProjectSidebar() {
   );
 }
 
-function CollectionGroup({
+const CollectionGroup = memo(function CollectionGroup({
   collection,
   projects,
   activeProjectId,
   collapsed,
   draggedProjectId,
   dropTarget,
-  tabGroups,
-  tabsById,
+  projectTabStats,
   showTerminalCount,
   onToggleCollapsed,
   onDeleteCollection,
@@ -829,10 +853,8 @@ function CollectionGroup({
   collapsed: boolean;
   draggedProjectId: string | null;
   dropTarget: DropTarget | null;
-  tabGroups: ReturnType<
-    typeof useTerminalStore.getState
-  >["tabGroupsByProjectId"];
-  tabsById: ReturnType<typeof useTerminalStore.getState>["tabsById"];
+  /** Per-project `running:hasError` pairs, keyed by project id. */
+  projectTabStats: Record<string, string>;
   showTerminalCount: boolean;
   onToggleCollapsed: () => void;
   onDeleteCollection: () => void;
@@ -853,13 +875,6 @@ function CollectionGroup({
   const isDropTarget =
     dropTarget?.kind === "collection" &&
     dropTarget.collectionId === collection.id;
-
-  function tabsFor(projectId: string) {
-    return (
-      tabGroups[projectId]?.tabIds.map((id) => tabsById[id]).filter(Boolean) ??
-      []
-    );
-  }
 
   return (
     <div
@@ -961,7 +976,7 @@ function CollectionGroup({
                 key={project.id}
                 project={project}
                 active={project.id === activeProjectId}
-                tabs={tabsFor(project.id).map((t) => ({ status: t.status }))}
+                tabStats={projectTabStats[project.id]}
                 showTerminalCount={showTerminalCount}
                 indent={1}
                 draggable={false}
@@ -1045,7 +1060,7 @@ function CollectionGroup({
       ) : null}
     </div>
   );
-}
+});
 
 function UngroupedHeader({
   active,
@@ -1083,15 +1098,8 @@ function UngroupedHeader({
 interface ProjectRowProps {
   project: Project;
   active: boolean;
-  tabs: Array<{
-    status:
-      | "starting"
-      | "connecting"
-      | "initializing"
-      | "running"
-      | "exited"
-      | "error";
-  }>;
+  /** Packed `running:hasError` pair from the sidebar's selector. */
+  tabStats: string | undefined;
   onTestSsh: () => void;
   onSelect: () => void;
   showTerminalCount: boolean;
@@ -1109,10 +1117,10 @@ interface ProjectRowProps {
   onPointerMove?: (position: DropPosition) => void;
 }
 
-function ProjectRow({
+const ProjectRow = memo(function ProjectRow({
   project,
   active,
-  tabs,
+  tabStats,
   onTestSsh,
   onSelect,
   showTerminalCount,
@@ -1136,10 +1144,7 @@ function ProjectRow({
       : project.type === "wsl"
         ? Terminal
         : Server;
-  const running = tabs.filter((tab) =>
-    ["starting", "connecting", "initializing", "running"].includes(tab.status),
-  ).length;
-  const hasError = tabs.some((tab) => tab.status === "error");
+  const { running, hasError } = readTabStats(tabStats);
   const removeProjectWorkspace = useRemoveProject();
   const [menuPosition, setMenuPosition] = useState<{
     x: number;
@@ -1268,4 +1273,4 @@ function ProjectRow({
       ) : null}
     </>
   );
-}
+});

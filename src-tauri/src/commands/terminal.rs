@@ -11,13 +11,13 @@
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use tauri::ipc::Channel;
+use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::State;
 
 use crate::error::{AppError, AppResult};
 use crate::state::{new_id, AppState};
 use crate::terminal::{
-    resolve_local_shell, SessionInfo, SessionSpawn, TerminalManager, TerminalOutput,
+    resolve_local_shell, SessionInfo, SessionSpawn, TerminalEventPayload, TerminalManager,
 };
 
 use super::ListResponse;
@@ -707,6 +707,77 @@ pub enum SessionReplayEvent {
     Resize { rows: u16, cols: u16 },
 }
 
+/// Merge each run of consecutive output chunks into one replay event.
+///
+/// A 4 MiB scrollback is retained as ~256 chunks of 16 KiB. Sending them
+/// individually costs the frontend one sequential `term.write` round-trip
+/// each. Resize boundaries must survive, so runs are only merged between
+/// them, which preserves replay ordering exactly.
+fn coalesce_replay(
+    events: Vec<crate::terminal::scrollback::ScrollbackReplayEvent>,
+) -> Vec<SessionReplayEvent> {
+    use base64::Engine;
+    use crate::terminal::scrollback::ScrollbackReplayEvent;
+
+    let mut out: Vec<SessionReplayEvent> = Vec::new();
+    let mut run: Vec<bytes::Bytes> = Vec::new();
+
+    fn flush(run: &mut Vec<bytes::Bytes>, out: &mut Vec<SessionReplayEvent>) {
+        if run.is_empty() {
+            return;
+        }
+        let total = run.iter().map(|chunk| chunk.len()).sum();
+        let mut merged = Vec::with_capacity(total);
+        for chunk in run.drain(..) {
+            merged.extend_from_slice(&chunk);
+        }
+        out.push(SessionReplayEvent::Output {
+            data: base64::engine::general_purpose::STANDARD.encode(merged),
+        });
+    }
+
+    for event in events {
+        match event {
+            ScrollbackReplayEvent::Output(bytes) => run.push(bytes),
+            ScrollbackReplayEvent::Resize { rows, cols } => {
+                flush(&mut run, &mut out);
+                out.push(SessionReplayEvent::Resize { rows, cols });
+            }
+        }
+    }
+    flush(&mut run, &mut out);
+    out
+}
+
+/// Control frames on the desktop session channel.
+///
+/// Output travels as `InvokeResponseBody::Raw` on the same channel; the JS
+/// `Channel` reorders by index, so raw and JSON frames stay in sequence.
+/// The session id is omitted because a channel is per-attachment.
+// `rename_all` on an enum renames variants, not their fields, so
+// `rename_all_fields` is what actually gets `exitCode` to the frontend.
+#[derive(Debug, Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum DesktopSessionFrame {
+    Status {
+        status: crate::terminal::session::SessionStatus,
+        exit_code: Option<i32>,
+    },
+    /// The client fell too far behind and output was dropped; it must
+    /// re-attach to resynchronize from a fresh snapshot.
+    Lagged,
+}
+
+impl DesktopSessionFrame {
+    fn into_body(self) -> Option<InvokeResponseBody> {
+        serde_json::to_string(&self).ok().map(InvokeResponseBody::Json)
+    }
+}
+
 /// Attach one frontend client to an existing PTY without changing its
 /// lifecycle. Scrollback is returned in the command response and later output
 /// is delivered through the bounded broadcast receiver.
@@ -715,7 +786,7 @@ pub fn session_attach(
     terminal: State<'_, TerminalState>,
     session_id: String,
     client_id: String,
-    on_output: Channel<TerminalOutput>,
+    on_output: Channel<InvokeResponseBody>,
 ) -> AppResult<SessionAttachment> {
     use base64::Engine;
     use tokio::sync::broadcast::error::RecvError;
@@ -730,19 +801,7 @@ pub fn session_attach(
         replay,
         truncated,
     } = subscription.snapshot;
-    let replay = replay
-        .into_iter()
-        .map(|event| match event {
-            crate::terminal::scrollback::ScrollbackReplayEvent::Output(bytes) => {
-                SessionReplayEvent::Output {
-                    data: base64::engine::general_purpose::STANDARD.encode(bytes),
-                }
-            }
-            crate::terminal::scrollback::ScrollbackReplayEvent::Resize { rows, cols } => {
-                SessionReplayEvent::Resize { rows, cols }
-            }
-        })
-        .collect::<Vec<_>>();
+    let replay = coalesce_replay(replay);
     // Avoid sending the same potentially multi-megabyte history twice. The
     // flat field remains only as a compatibility fallback for snapshots that
     // predate resize-aware replay events.
@@ -770,19 +829,30 @@ pub fn session_attach(
                     }
                 }
                 event = receiver.recv() => {
-                    match event {
-                        Ok(event) => {
-                            if on_output.send(event).is_err() {
-                                break;
+                    let body = match event {
+                        Ok(event) => match event.payload {
+                            // Raw bytes: no base64, no JSON escape scan. The
+                            // copy is unavoidable because `Raw` owns its Vec
+                            // and the scrollback still holds the `Bytes`.
+                            TerminalEventPayload::Output(bytes) => {
+                                Some(InvokeResponseBody::Raw(bytes.to_vec()))
                             }
-                        }
+                            TerminalEventPayload::Status { status, exit_code } => {
+                                DesktopSessionFrame::Status { status, exit_code }.into_body()
+                            }
+                        },
                         Err(RecvError::Lagged(_)) => {
                             // The PTY reader and other clients must keep
-                            // flowing. This client can detach/attach again to
-                            // obtain the latest bounded scrollback snapshot.
-                            continue;
+                            // flowing. Tell this client so it can re-attach
+                            // and pull the latest bounded snapshot.
+                            DesktopSessionFrame::Lagged.into_body()
                         }
                         Err(RecvError::Closed) => break,
+                    };
+                    if let Some(body) = body {
+                        if on_output.send(body).is_err() {
+                            break;
+                        }
                     }
                 }
             }
@@ -852,6 +922,86 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+
+    fn replay_data(event: &SessionReplayEvent) -> &str {
+        match event {
+            SessionReplayEvent::Output { data } => data,
+            SessionReplayEvent::Resize { .. } => panic!("expected an output event"),
+        }
+    }
+
+    #[test]
+    fn desktop_control_frames_use_the_camel_case_keys_the_frontend_reads() {
+        let status = serde_json::to_string(&DesktopSessionFrame::Status {
+            status: crate::terminal::session::SessionStatus::Exited,
+            exit_code: Some(7),
+        })
+        .unwrap();
+        assert_eq!(
+            status,
+            r#"{"type":"status","status":"exited","exitCode":7}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&DesktopSessionFrame::Lagged).unwrap(),
+            r#"{"type":"lagged"}"#
+        );
+    }
+
+    #[test]
+    fn coalesce_replay_merges_output_runs_between_resizes() {
+        use crate::terminal::scrollback::ScrollbackReplayEvent as Event;
+        use base64::Engine;
+
+        let merged = coalesce_replay(vec![
+            Event::Resize { rows: 24, cols: 80 },
+            Event::Output(bytes::Bytes::from_static(b"one")),
+            Event::Output(bytes::Bytes::from_static(b"two")),
+            Event::Resize {
+                rows: 40,
+                cols: 120,
+            },
+            Event::Output(bytes::Bytes::from_static(b"three")),
+        ]);
+
+        assert_eq!(merged.len(), 4);
+        assert!(matches!(
+            merged[0],
+            SessionReplayEvent::Resize { rows: 24, cols: 80 }
+        ));
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(replay_data(&merged[1]))
+                .unwrap(),
+            b"onetwo"
+        );
+        assert!(matches!(
+            merged[2],
+            SessionReplayEvent::Resize {
+                rows: 40,
+                cols: 120
+            }
+        ));
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(replay_data(&merged[3]))
+                .unwrap(),
+            b"three"
+        );
+    }
+
+    #[test]
+    fn coalesce_replay_collapses_a_resize_free_history_into_one_event() {
+        use crate::terminal::scrollback::ScrollbackReplayEvent as Event;
+
+        let merged = coalesce_replay(
+            (0..8)
+                .map(|_| Event::Output(bytes::Bytes::from_static(b"chunk")))
+                .collect(),
+        );
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(coalesce_replay(Vec::new()).len(), 0);
+    }
 
     #[test]
     fn terminal_launch_parallelism_tracks_cpu_with_safe_bounds() {
@@ -1291,13 +1441,11 @@ mod tests {
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
         let mut out = Vec::new();
-        use base64::Engine;
         while std::time::Instant::now() < deadline {
-            if let Ok(chunk) = rx.try_recv() {
-                let bytes = base64::engine::general_purpose::STANDARD
-                    .decode(chunk.data)
-                    .unwrap();
-                out.extend_from_slice(&bytes);
+            if let Ok(event) = rx.try_recv() {
+                if let crate::terminal::TerminalEventPayload::Output(bytes) = event.payload {
+                    out.extend_from_slice(&bytes);
+                }
                 if out
                     .windows(27)
                     .any(|w| w == b"Environment activation failed")
@@ -1366,13 +1514,11 @@ mod tests {
         // Read until we see our marker or time out.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
         let mut out = Vec::new();
-        use base64::Engine;
         while std::time::Instant::now() < deadline {
-            if let Ok(chunk) = rx.try_recv() {
-                let bytes = base64::engine::general_purpose::STANDARD
-                    .decode(chunk.data)
-                    .unwrap();
-                out.extend_from_slice(&bytes);
+            if let Ok(event) = rx.try_recv() {
+                if let crate::terminal::TerminalEventPayload::Output(bytes) = event.payload {
+                    out.extend_from_slice(&bytes);
+                }
                 if out.windows(14).any(|w| w == b"PT_STARTUP_OK\r") {
                     break;
                 }

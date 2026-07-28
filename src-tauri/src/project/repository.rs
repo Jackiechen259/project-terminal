@@ -12,7 +12,7 @@ use super::model::Project;
 #[cfg(test)]
 use super::model::ProjectType;
 
-#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ProjectCollection {
     #[serde(default)]
     pub projects: Vec<Project>,
@@ -20,20 +20,22 @@ pub struct ProjectCollection {
 
 /// File-backed store for projects.
 pub struct ProjectRepository {
-    path: PathBuf,
+    store: storage::CachedJsonFile<ProjectCollection>,
 }
 
 impl ProjectRepository {
     pub fn new(path: PathBuf) -> Self {
-        Self { path }
+        Self {
+            store: storage::CachedJsonFile::new(path),
+        }
     }
 
     pub fn load(&self) -> AppResult<ProjectCollection> {
-        storage::read_or_default(&self.path, ProjectCollection::default())
+        self.store.load(ProjectCollection::default)
     }
 
     pub fn save(&self, collection: &ProjectCollection) -> AppResult<()> {
-        storage::write_json(&self.path, collection)
+        self.store.save(collection)
     }
 
     pub fn list(&self) -> AppResult<Vec<Project>> {

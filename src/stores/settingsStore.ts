@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+import { createThrottledJSONStorage } from "@/lib/throttledStorage";
+
 export const MIN_TERMINAL_FONT_SIZE = 10;
 export const MAX_TERMINAL_FONT_SIZE = 24;
 export const MIN_TERMINAL_SCROLLBACK_LINES = 1_000;
@@ -73,6 +75,11 @@ export function clampTerminalScrollbackMegabytes(value: number): number {
   );
 }
 
+type PersistedSettings = GeneralSettings & { lastProjectId: string | null };
+
+export const generalSettingsStorage =
+  createThrottledJSONStorage<PersistedSettings>();
+
 export const useSettingsStore = create<SettingsStoreState>()(
   persist(
     (set) => ({
@@ -105,7 +112,8 @@ export const useSettingsStore = create<SettingsStoreState>()(
     {
       name: "project-terminal.general-settings",
       version: 1,
-      partialize: (state) => ({
+      storage: generalSettingsStorage,
+      partialize: (state): PersistedSettings => ({
         language: state.language,
         theme: state.theme,
         restoreLastProject: state.restoreLastProject,
