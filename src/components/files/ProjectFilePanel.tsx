@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -18,7 +25,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useTranslation } from "@/i18n";
+import { useTranslation, type TranslateFn } from "@/i18n";
 import {
   fileService,
   type FrontendError,
@@ -31,6 +38,41 @@ import { useTerminalStore } from "@/stores/terminalStore";
 import { cn } from "@/lib/utils";
 
 const PROJECT_FILE_DRAG_TYPE = "application/x-project-terminal-file";
+
+// Module scope so a listing of thousands of rows does not rebuild these on
+// every render.
+const CODE_EXTENSIONS = new Set([
+  "ts",
+  "tsx",
+  "js",
+  "jsx",
+  "rs",
+  "py",
+  "go",
+  "java",
+  "c",
+  "cpp",
+  "sh",
+]);
+const TEXT_EXTENSIONS = new Set([
+  "md",
+  "txt",
+  "json",
+  "yaml",
+  "yml",
+  "toml",
+  "xml",
+  "csv",
+]);
+const ARCHIVE_EXTENSIONS = new Set([
+  "zip",
+  "gz",
+  "tar",
+  "7z",
+  "rar",
+  "bz2",
+  "xz",
+]);
 
 export function ProjectFilePanel({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
@@ -161,6 +203,19 @@ export function ProjectFilePanel({ onClose }: { onClose: () => void }) {
       entry.name.toLocaleLowerCase().includes(needle),
     );
   }, [listing, query]);
+
+  // Mirrored into refs so every row shares one callback identity and `memo`
+  // can bail out. A listing can hold thousands of rows.
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  const downloadEntryRef = useRef(downloadEntry);
+  downloadEntryRef.current = downloadEntry;
+  const openEntry = useCallback((entry: ProjectFileEntry) => {
+    if (entry.isDirectory) void loadRef.current(entry.path);
+  }, []);
+  const startDownload = useCallback((entry: ProjectFileEntry) => {
+    void downloadEntryRef.current(entry);
+  }, []);
 
   const remoteTransfer =
     activeProject?.type === "ssh" || activeProject?.type === "wsl";
@@ -296,10 +351,9 @@ export function ProjectFilePanel({ onClose }: { onClose: () => void }) {
                   entry={entry}
                   draggable={remoteTransfer}
                   transferDisabled={transferring}
-                  onOpen={() => {
-                    if (entry.isDirectory) void load(entry.path);
-                  }}
-                  onDownload={() => void downloadEntry(entry)}
+                  t={t}
+                  onOpen={openEntry}
+                  onDownload={startDownload}
                 />
               ))
             )}
@@ -379,20 +433,22 @@ export function ProjectFilePanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function FileRow({
+const FileRow = memo(function FileRow({
   entry,
   draggable,
   transferDisabled,
+  t,
   onOpen,
   onDownload,
 }: {
   entry: ProjectFileEntry;
   draggable: boolean;
   transferDisabled: boolean;
-  onOpen: () => void;
-  onDownload: () => void;
+  /** Passed down rather than pulled from the store per row. */
+  t: TranslateFn;
+  onOpen: (entry: ProjectFileEntry) => void;
+  onDownload: (entry: ProjectFileEntry) => void;
 }) {
-  const { t } = useTranslation();
   return (
     <div
       className="group flex h-8 select-none items-center gap-2 rounded px-2 text-xs hover:bg-accent"
@@ -405,14 +461,14 @@ function FileRow({
         );
         event.dataTransfer.setData("text/plain", entry.path);
       }}
-      onDoubleClick={onOpen}
+      onDoubleClick={() => onOpen(entry)}
       title={entry.path}
     >
       <FileKindIcon entry={entry} />
       <button
         type="button"
         className="min-w-0 flex-1 truncate text-left"
-        onClick={entry.isDirectory ? onOpen : undefined}
+        onClick={entry.isDirectory ? () => onOpen(entry) : undefined}
       >
         {entry.name}
       </button>
@@ -428,51 +484,30 @@ function FileRow({
           title={t("Download")}
           aria-label={t("Download {name}", { name: entry.name })}
           disabled={transferDisabled}
-          onClick={onDownload}
+          onClick={() => onDownload(entry)}
         >
           <ArrowDownToLine className="h-3.5 w-3.5" />
         </button>
       ) : null}
     </div>
   );
-}
+});
 
 function FileKindIcon({ entry }: { entry: ProjectFileEntry }) {
   if (entry.isDirectory) {
     return <Folder className="h-4 w-4 shrink-0 fill-primary/20 text-primary" />;
   }
   const extension = entry.name.split(".").pop()?.toLocaleLowerCase();
-  if (
-    extension &&
-    [
-      "ts",
-      "tsx",
-      "js",
-      "jsx",
-      "rs",
-      "py",
-      "go",
-      "java",
-      "c",
-      "cpp",
-      "sh",
-    ].includes(extension)
-  ) {
-    return <FileCode2 className="h-4 w-4 shrink-0 text-sky-400" />;
-  }
-  if (
-    extension &&
-    ["md", "txt", "json", "yaml", "yml", "toml", "xml", "csv"].includes(
-      extension,
-    )
-  ) {
-    return <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />;
-  }
-  if (
-    extension &&
-    ["zip", "gz", "tar", "7z", "rar", "bz2", "xz"].includes(extension)
-  ) {
-    return <FileArchive className="h-4 w-4 shrink-0 text-amber-400" />;
+  if (extension) {
+    if (CODE_EXTENSIONS.has(extension)) {
+      return <FileCode2 className="h-4 w-4 shrink-0 text-sky-400" />;
+    }
+    if (TEXT_EXTENSIONS.has(extension)) {
+      return <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />;
+    }
+    if (ARCHIVE_EXTENSIONS.has(extension)) {
+      return <FileArchive className="h-4 w-4 shrink-0 text-amber-400" />;
+    }
   }
   return <File className="h-4 w-4 shrink-0 text-muted-foreground" />;
 }

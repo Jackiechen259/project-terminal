@@ -86,27 +86,29 @@ impl ProfileTemplate {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TemplateCollection {
     #[serde(default)]
     pub templates: Vec<ProfileTemplate>,
 }
 
 pub struct TemplateRepository {
-    path: PathBuf,
+    store: storage::CachedJsonFile<TemplateCollection>,
 }
 
 impl TemplateRepository {
     pub fn new(path: PathBuf) -> Self {
-        Self { path }
+        Self {
+            store: storage::CachedJsonFile::new(path),
+        }
     }
 
     pub fn load(&self) -> AppResult<TemplateCollection> {
-        storage::read_or_default(&self.path, TemplateCollection::default())
+        self.store.load(TemplateCollection::default)
     }
 
     pub fn save(&self, collection: &TemplateCollection) -> AppResult<()> {
-        storage::write_json(&self.path, collection)
+        self.store.save(collection)
     }
 
     pub fn list(&self) -> AppResult<Vec<ProfileTemplate>> {

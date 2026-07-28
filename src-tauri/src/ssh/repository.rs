@@ -10,27 +10,29 @@ use crate::storage;
 
 use super::model::SshConnection;
 
-#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct SshConnectionCollection {
     #[serde(default)]
     pub connections: Vec<SshConnection>,
 }
 
 pub struct SshConnectionRepository {
-    path: PathBuf,
+    store: storage::CachedJsonFile<SshConnectionCollection>,
 }
 
 impl SshConnectionRepository {
     pub fn new(path: PathBuf) -> Self {
-        Self { path }
+        Self {
+            store: storage::CachedJsonFile::new(path),
+        }
     }
 
     pub fn load(&self) -> AppResult<SshConnectionCollection> {
-        storage::read_or_default(&self.path, SshConnectionCollection::default())
+        self.store.load(SshConnectionCollection::default)
     }
 
     pub fn save(&self, collection: &SshConnectionCollection) -> AppResult<()> {
-        storage::write_json(&self.path, collection)
+        self.store.save(collection)
     }
 
     pub fn list(&self) -> AppResult<Vec<SshConnection>> {

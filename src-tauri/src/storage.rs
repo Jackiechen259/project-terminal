@@ -13,8 +13,10 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use chrono::Utc;
+use parking_lot::RwLock;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tempfile::NamedTempFile;
@@ -81,6 +83,63 @@ pub fn write_json<T: Serialize>(path: &Path, value: &T) -> AppResult<()> {
     Ok(())
 }
 
+/// A JSON collection file kept in memory between reads.
+///
+/// Every repository operation used to re-read and re-parse its whole file, so
+/// launching one terminal cost two or three full parses on the UI thread. The
+/// cache is validated against the file's mtime, which keeps hand-edited config
+/// working: a changed timestamp simply falls back to reading from disk.
+pub struct CachedJsonFile<T> {
+    path: PathBuf,
+    cached: RwLock<Option<CacheEntry<T>>>,
+}
+
+struct CacheEntry<T> {
+    value: T,
+    modified: Option<SystemTime>,
+}
+
+impl<T: Clone + DeserializeOwned + Serialize> CachedJsonFile<T> {
+    pub fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            cached: RwLock::new(None),
+        }
+    }
+
+    /// Return the parsed contents, reading from disk only when the file has
+    /// changed since it was last cached.
+    pub fn load(&self, default: impl FnOnce() -> T) -> AppResult<T> {
+        let modified = file_modified(&self.path);
+        if let Some(entry) = self.cached.read().as_ref() {
+            if entry.modified == modified {
+                return Ok(entry.value.clone());
+            }
+        }
+
+        let value = read_or_default(&self.path, default())?;
+        *self.cached.write() = Some(CacheEntry {
+            value: value.clone(),
+            modified,
+        });
+        Ok(value)
+    }
+
+    /// Write the value and refresh the cache so the next load skips the disk.
+    pub fn save(&self, value: &T) -> AppResult<()> {
+        write_json(&self.path, value)?;
+        *self.cached.write() = Some(CacheEntry {
+            value: value.clone(),
+            modified: file_modified(&self.path),
+        });
+        Ok(())
+    }
+}
+
+fn file_modified(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).and_then(|meta| meta.modified()).ok()
+}
+
 fn backup_path(path: &Path) -> PathBuf {
     let ts = Utc::now().format("%Y%m%d-%H%M%S");
     let mut buf = path.to_path_buf();
@@ -102,13 +161,13 @@ mod tests {
     use serde::Deserialize;
     use std::fs;
 
-    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
     struct Item {
         id: String,
         name: String,
     }
 
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Default)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
     struct Items {
         items: Vec<Item>,
     }
@@ -182,6 +241,53 @@ mod tests {
             })
             .collect();
         assert_eq!(backups.len(), 1);
+    }
+
+    #[test]
+    fn cached_file_serves_repeated_loads_and_reflects_its_own_writes() {
+        let path = tempdir().join("cached.json");
+        let store = CachedJsonFile::<Items>::new(path.clone());
+
+        assert!(store.load(Items::default).unwrap().items.is_empty());
+
+        let data = Items {
+            items: vec![Item {
+                id: "1".into(),
+                name: "alpha".into(),
+            }],
+        };
+        store.save(&data).unwrap();
+
+        assert_eq!(store.load(Items::default).unwrap(), data);
+        assert_eq!(store.load(Items::default).unwrap(), data);
+    }
+
+    #[test]
+    fn cached_file_picks_up_an_external_edit() {
+        let path = tempdir().join("external.json");
+        let store = CachedJsonFile::<Items>::new(path.clone());
+        store
+            .save(&Items {
+                items: vec![Item {
+                    id: "1".into(),
+                    name: "cached".into(),
+                }],
+            })
+            .unwrap();
+        assert_eq!(store.load(Items::default).unwrap().items[0].name, "cached");
+
+        // Filesystem mtime resolution is coarse enough that an immediate
+        // rewrite can carry the same timestamp; wait past it.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let edited = Items {
+            items: vec![Item {
+                id: "1".into(),
+                name: "edited by hand".into(),
+            }],
+        };
+        fs::write(&path, serde_json::to_vec(&edited).unwrap()).unwrap();
+
+        assert_eq!(store.load(Items::default).unwrap(), edited);
     }
 
     #[test]

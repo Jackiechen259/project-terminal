@@ -5,10 +5,13 @@
 //! through the distribution's UNC share, and SSH transfers use the system
 //! OpenSSH `ssh`/`scp` clients with the saved connection settings.
 
+use parking_lot::Mutex;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use crate::commands::ssh::{apply_saved_password_environment, refresh_password_status};
@@ -20,7 +23,18 @@ use crate::state::AppState;
 const FILE_ENTRY_LIMIT: usize = 2_000;
 const LIST_TIMEOUT: Duration = Duration::from_secs(30);
 
-const POSIX_LIST_SCRIPT: &str = r#"resolve_path() {
+/// Remote/WSL directory listing.
+///
+/// Two things keep this cheap on large directories: the loop stops at
+/// `__ENTRY_LIMIT__` so the remote host neither enumerates nor transmits more
+/// than the client will show, and sizes come from a single batched `wc -c`
+/// instead of one fork per file. Sizes are separated from the entry list by a
+/// lone `/`, which a glob can never produce as a filename.
+///
+/// `stat` is deliberately avoided: it is not POSIX and its flags differ
+/// between GNU (`-c %s`) and BSD (`-f %z`), while this must run under `sh` on
+/// arbitrary SSH hosts and WSL distributions.
+const POSIX_LIST_SCRIPT_TEMPLATE: &str = r#"resolve_path() {
   case "$1" in
     "~") printf '%s\n' "$HOME" ;;
     "~/"*) printf '%s/%s\n' "$HOME" "${1#~/}" ;;
@@ -40,18 +54,37 @@ if [ "$root" != "/" ]; then
   esac
 fi
 printf '%s\0%s\0' "$root" "$current"
+count=0
+set --
 for file in .[!.]* ..?* *; do
   [ -e "$file" ] || [ -L "$file" ] || continue
   if [ -d "$file" ]; then
     kind=d
-    size=0
   else
     kind=f
-    size=$(wc -c < "$file" 2>/dev/null) || size=0
+    set -- "$@" "$file"
   fi
-  printf '%s\0%s\0%s\0' "$file" "$kind" "$size"
+  printf '%s\0%s\0' "$file" "$kind"
+  count=$((count + 1))
+  if [ "$count" -ge __ENTRY_LIMIT__ ]; then
+    break
+  fi
 done
+printf '/\0'
+if [ "$#" -gt 0 ]; then
+  wc -c -- "$@" 2>/dev/null
+fi
 "#;
+
+/// Marks the boundary between the entry list and the batched size output.
+const POSIX_SIZE_SENTINEL: &[u8] = b"/";
+
+fn posix_list_script() -> &'static str {
+    static SCRIPT: OnceLock<String> = OnceLock::new();
+    SCRIPT.get_or_init(|| {
+        POSIX_LIST_SCRIPT_TEMPLATE.replace("__ENTRY_LIMIT__", &FILE_ENTRY_LIMIT.to_string())
+    })
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -235,7 +268,7 @@ fn list_wsl_files(
         "--",
         "sh",
         "-c",
-        POSIX_LIST_SCRIPT,
+        posix_list_script(),
         "sh",
         root,
         target,
@@ -259,7 +292,7 @@ fn list_ssh_files(
         .unwrap_or(&ssh.remote_path);
     let remote_command = format!(
         "sh -c {} sh {} {}",
-        shell_quote(POSIX_LIST_SCRIPT),
+        shell_quote(posix_list_script()),
         shell_quote(&ssh.remote_path),
         shell_quote(target)
     );
@@ -271,6 +304,34 @@ fn list_ssh_files(
     parse_posix_listing_output(output, "SSH")
 }
 
+/// Parse the batched `wc -c` block into sizes keyed by filename.
+///
+/// Each line is `<padding><size> <name>`, and the name may contain spaces, so
+/// it is everything after the first space. `wc` appends a `total` line only
+/// when it was given more than one file; `expected` identifies that line by
+/// count rather than by its name, so a file actually named `total` still
+/// resolves correctly. A name containing a newline gets no size, which is no
+/// worse than the previous per-file probe reporting zero.
+fn parse_wc_sizes(block: &[u8], expected: usize) -> HashMap<String, u64> {
+    let text = String::from_utf8_lossy(block);
+    let mut lines: Vec<&str> = text.lines().filter(|line| !line.trim().is_empty()).collect();
+    if lines.len() == expected + 1 {
+        lines.pop();
+    }
+
+    let mut sizes = HashMap::with_capacity(lines.len());
+    for line in lines {
+        let trimmed = line.trim_start();
+        let Some((size, name)) = trimmed.split_once(' ') else {
+            continue;
+        };
+        if let Ok(size) = size.parse::<u64>() {
+            sizes.insert(name.to_string(), size);
+        }
+    }
+    sizes
+}
+
 fn parse_posix_listing_output(output: Output, transport: &str) -> AppResult<ProjectFileListing> {
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -280,31 +341,41 @@ fn parse_posix_listing_output(output: Output, transport: &str) -> AppResult<Proj
             detail
         }));
     }
-    let mut fields: Vec<&[u8]> = output.stdout.split(|byte| *byte == 0).collect();
-    if fields.last().is_some_and(|field| field.is_empty()) {
-        fields.pop();
-    }
-    if fields.len() < 2 || (fields.len() - 2) % 3 != 0 {
+    let fields: Vec<&[u8]> = output.stdout.split(|byte| *byte == 0).collect();
+    // Layout: root, current, (name, kind)*, "/", <batched `wc -c` output>.
+    let sentinel = fields
+        .iter()
+        .skip(2)
+        .position(|field| *field == POSIX_SIZE_SENTINEL)
+        .map(|index| index + 2);
+    let Some(sentinel) = sentinel.filter(|index| (index - 2) % 2 == 0) else {
         return Err(AppError::Configuration(format!(
             "{transport} returned an invalid file listing"
         )));
-    }
+    };
+
     let root = String::from_utf8_lossy(fields[0]).into_owned();
     let current = String::from_utf8_lossy(fields[1]).into_owned();
     let mut entries = Vec::new();
-    for chunk in fields[2..].chunks_exact(3).take(FILE_ENTRY_LIMIT) {
+    for chunk in fields[2..sentinel].chunks_exact(2) {
         let name = String::from_utf8_lossy(chunk[0]).into_owned();
-        let is_directory = chunk[1] == b"d";
-        let size = (!is_directory)
-            .then(|| String::from_utf8_lossy(chunk[2]).trim().parse().ok())
-            .flatten();
         entries.push(ProjectFileEntry {
             path: join_posix_path(&current, &name),
             name,
-            is_directory,
-            size,
+            is_directory: chunk[1] == b"d",
+            size: None,
         });
     }
+
+    let regular_files = entries.iter().filter(|entry| !entry.is_directory).count();
+    let sizes = parse_wc_sizes(
+        fields.get(sentinel + 1).copied().unwrap_or_default(),
+        regular_files,
+    );
+    for entry in entries.iter_mut().filter(|entry| !entry.is_directory) {
+        entry.size = sizes.get(entry.name.as_str()).copied();
+    }
+
     sort_entries(&mut entries);
     let parent_path = (current != root).then(|| posix_parent(&current));
     Ok(ProjectFileListing {
@@ -455,7 +526,24 @@ fn usable_rsync(connection: &SshConnection) -> Option<PathBuf> {
     remote_has_rsync(connection).then_some(rsync)
 }
 
+/// Probe whether the remote host has rsync, caching the answer per target.
+///
+/// Without the cache every upload and download opens an extra SSH connection
+/// just to run `command -v rsync`. Transport failures are not cached so a
+/// transient network blip does not disable rsync for the session; a cached
+/// `false` only costs speed, since scp is always a correct fallback.
 fn remote_has_rsync(connection: &SshConnection) -> bool {
+    static PROBED: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
+    let cache = PROBED.get_or_init(|| Mutex::new(HashMap::new()));
+    // Editing a connection's target invalidates the entry naturally.
+    let key = format!(
+        "{}|{}|{}|{}",
+        connection.id, connection.host, connection.port, connection.username
+    );
+    if let Some(known) = cache.lock().get(&key) {
+        return *known;
+    }
+
     let Some(client) = crate::ssh::detect_ssh_client() else {
         return false;
     };
@@ -466,9 +554,14 @@ fn remote_has_rsync(connection: &SshConnection) -> bool {
     if apply_saved_password_environment(&mut command, connection).is_err() {
         return false;
     }
-    run_bounded(command, Duration::from_secs(10))
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+    match run_bounded(command, Duration::from_secs(10)) {
+        Ok(output) => {
+            let available = output.status.success();
+            cache.lock().insert(key, available);
+            available
+        }
+        Err(_) => false,
+    }
 }
 
 fn run_rsync(connection: &SshConnection, executable: &Path, args: Vec<String>) -> AppResult<()> {
@@ -850,16 +943,26 @@ mod tests {
     use crate::ssh::SshConnectionRepository;
     use chrono::Utc;
 
-    #[test]
-    fn parses_and_sorts_posix_listing() {
+    /// Build the script's stdout: NUL-terminated fields, then the `wc` block.
+    fn posix_listing_stdout(fields: &[&str], sizes: &str) -> Vec<u8> {
         let mut stdout = Vec::new();
-        for field in ["/srv", "/srv/app", "z.txt", "f", "3", "src", "d", "0"] {
+        for field in fields {
             stdout.extend_from_slice(field.as_bytes());
             stdout.push(0);
         }
+        stdout.extend_from_slice(b"/\0");
+        stdout.extend_from_slice(sizes.as_bytes());
+        stdout
+    }
+
+    #[test]
+    fn parses_and_sorts_posix_listing() {
         let output = Output {
             status: success_status(),
-            stdout,
+            stdout: posix_listing_stdout(
+                &["/srv", "/srv/app", "z.txt", "f", "src", "d"],
+                "      3 z.txt\n",
+            ),
             stderr: Vec::new(),
         };
         let listing = parse_posix_listing_output(output, "test").unwrap();
@@ -868,6 +971,87 @@ mod tests {
         assert!(listing.entries[0].is_directory);
         assert_eq!(listing.entries[0].path, "/srv/app/src");
         assert_eq!(listing.entries[1].size, Some(3));
+        assert_eq!(listing.entries[0].size, None);
+    }
+
+    #[test]
+    fn posix_listing_matches_sizes_with_spaces_and_drops_the_total_line() {
+        let output = Output {
+            status: success_status(),
+            stdout: posix_listing_stdout(
+                &[
+                    "/srv",
+                    "/srv",
+                    "name with spaces.txt",
+                    "f",
+                    "plain.txt",
+                    "f",
+                    "sub",
+                    "d",
+                ],
+                "     11 name with spaces.txt\n      3 plain.txt\n     14 total\n",
+            ),
+            stderr: Vec::new(),
+        };
+        let listing = parse_posix_listing_output(output, "test").unwrap();
+        let by_name = |name: &str| {
+            listing
+                .entries
+                .iter()
+                .find(|entry| entry.name == name)
+                .unwrap()
+                .size
+        };
+        assert_eq!(by_name("name with spaces.txt"), Some(11));
+        assert_eq!(by_name("plain.txt"), Some(3));
+        assert_eq!(by_name("sub"), None);
+    }
+
+    #[test]
+    fn posix_listing_keeps_a_single_files_size_when_wc_prints_no_total() {
+        let output = Output {
+            status: success_status(),
+            stdout: posix_listing_stdout(&["/srv", "/srv", "only.txt", "f"], "2 only.txt\n"),
+            stderr: Vec::new(),
+        };
+        let listing = parse_posix_listing_output(output, "test").unwrap();
+        assert_eq!(listing.entries[0].size, Some(2));
+    }
+
+    #[test]
+    fn posix_listing_handles_a_directory_with_no_regular_files() {
+        let output = Output {
+            status: success_status(),
+            stdout: posix_listing_stdout(&["/srv", "/srv", "a", "d", "b", "d"], ""),
+            stderr: Vec::new(),
+        };
+        let listing = parse_posix_listing_output(output, "test").unwrap();
+        assert_eq!(listing.entries.len(), 2);
+        assert!(listing.entries.iter().all(|entry| entry.is_directory));
+    }
+
+    #[test]
+    fn posix_listing_rejects_output_without_a_size_sentinel() {
+        let mut stdout = Vec::new();
+        for field in ["/srv", "/srv", "a", "f"] {
+            stdout.extend_from_slice(field.as_bytes());
+            stdout.push(0);
+        }
+        let output = Output {
+            status: success_status(),
+            stdout,
+            stderr: Vec::new(),
+        };
+        assert!(parse_posix_listing_output(output, "test").is_err());
+    }
+
+    #[test]
+    fn posix_list_script_bakes_in_the_entry_limit() {
+        let script = posix_list_script();
+        assert!(!script.contains("__ENTRY_LIMIT__"));
+        assert!(script.contains(&format!("\"$count\" -ge {FILE_ENTRY_LIMIT}")));
+        // Sizes must come from one batched call, not a fork per file.
+        assert!(script.contains("wc -c -- \"$@\""));
     }
 
     #[test]

@@ -130,9 +130,13 @@ export function TerminalWorkspace() {
   } | null>(null);
   const [condaEnvs, setCondaEnvs] = useState<CondaEnvOption[]>([]);
   const condaDetectionProjectRef = useRef<string | null>(null);
-  const activeProject = projects.find((p) => p.id === activeProjectId);
-  const selectedProfile = profiles.find(
-    (profile) => profile.id === selectedProfileId,
+  const activeProject = useMemo(
+    () => projects.find((p) => p.id === activeProjectId),
+    [projects, activeProjectId],
+  );
+  const selectedProfile = useMemo(
+    () => profiles.find((profile) => profile.id === selectedProfileId),
+    [profiles, selectedProfileId],
   );
   const contextMenuProfiles = useMemo(
     () => uniqueProfilesByName(profiles.filter(isProfileShownInContextMenu)),
@@ -152,17 +156,52 @@ export function TerminalWorkspace() {
   const tabIds = useMemo(() => group?.tabIds ?? [], [group]);
   const activeTabId = group?.activeTabId ?? null;
   const splitView = activeProjectId ? splitViews[activeProjectId] : undefined;
-  const splitTabIds = paneTabIds(splitView);
-  const validSplitView =
-    splitView &&
-    splitTabIds.length >= 2 &&
-    splitTabIds.every((id) => tabIds.includes(id))
-      ? splitView
-      : undefined;
-  const focusedSplitPane = focusedPane(validSplitView);
-  const paneLayout = validSplitView
-    ? calculatePaneLayout(validSplitView.root)
-    : undefined;
+  const splitTabIds = useMemo(() => paneTabIds(splitView), [splitView]);
+  const validSplitView = useMemo(
+    () =>
+      splitView &&
+      splitTabIds.length >= 2 &&
+      splitTabIds.every((id) => tabIds.includes(id))
+        ? splitView
+        : undefined,
+    [splitView, splitTabIds, tabIds],
+  );
+  const splitTabIdSet = useMemo(
+    () => new Set(validSplitView ? splitTabIds : []),
+    [validSplitView, splitTabIds],
+  );
+  const focusedSplitPane = useMemo(
+    () => focusedPane(validSplitView),
+    [validSplitView],
+  );
+  // Pane geometry keyed by tab so the render loop neither re-walks the tree per
+  // tab nor hands `TerminalPane` a fresh style object on every render.
+  const paneRenderByTabId = useMemo(() => {
+    const map = new Map<
+      string,
+      { paneId: string; style: React.CSSProperties }
+    >();
+    if (!validSplitView) return map;
+    for (const pane of calculatePaneLayout(validSplitView.root).panes) {
+      map.set(pane.tabId, {
+        paneId: pane.paneId,
+        style: {
+          left: `${pane.left}%`,
+          top: `${pane.top}%`,
+          width: `${pane.width}%`,
+          height: `${pane.height}%`,
+        },
+      });
+    }
+    return map;
+  }, [validSplitView]);
+  const paneLayout = useMemo(
+    () =>
+      validSplitView
+        ? calculatePaneLayout(validSplitView.root)
+        : undefined,
+    [validSplitView],
+  );
 
   const handleNewTerminal = useCallback(
     async (projectId: string, preferredProfileId?: string) => {
@@ -649,6 +688,36 @@ export function TerminalWorkspace() {
     });
   }, [activeProjectId, applyProfiles, handleNewTerminal, t]);
 
+  // Mirrored into a ref so the window listener below can subscribe once.
+  // Otherwise every tab title change and every split-drag pointermove would
+  // tear the capture-phase listener down and re-add it.
+  const shortcutContextRef = useRef({
+    activeProjectId,
+    activeTabId,
+    tabIds,
+    validSplitView,
+    handleCloseTab,
+    handleNewTerminal,
+    handleSelectTab,
+    handleSplitTerminal,
+    focusRelativePane,
+    setActiveTab,
+    selectRelativeTab,
+  });
+  shortcutContextRef.current = {
+    activeProjectId,
+    activeTabId,
+    tabIds,
+    validSplitView,
+    handleCloseTab,
+    handleNewTerminal,
+    handleSelectTab,
+    handleSplitTerminal,
+    focusRelativePane,
+    setActiveTab,
+    selectRelativeTab,
+  };
+
   useEffect(() => {
     const isEditableControl = (target: EventTarget | null) => {
       if (!(target instanceof Element)) return false;
@@ -670,6 +739,20 @@ export function TerminalWorkspace() {
 
       const shortcut = getAppShortcut(event);
       if (!shortcut) return;
+
+      const {
+        activeProjectId,
+        activeTabId,
+        tabIds,
+        validSplitView,
+        handleCloseTab,
+        handleNewTerminal,
+        handleSelectTab,
+        handleSplitTerminal,
+        focusRelativePane,
+        setActiveTab,
+        selectRelativeTab,
+      } = shortcutContextRef.current;
 
       event.preventDefault();
       event.stopPropagation();
@@ -716,19 +799,7 @@ export function TerminalWorkspace() {
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     return () =>
       window.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, [
-    activeProjectId,
-    activeTabId,
-    tabIds,
-    handleCloseTab,
-    handleNewTerminal,
-    handleSelectTab,
-    handleSplitTerminal,
-    focusRelativePane,
-    setActiveTab,
-    selectRelativeTab,
-    validSplitView,
-  ]);
+  }, []);
 
   const handleSplitResizeStart = useCallback(
     (
@@ -769,6 +840,13 @@ export function TerminalWorkspace() {
     (tabId: string) => selectTerminalPaneRef.current(tabId),
     [],
   );
+  // An inline closure here would give every `TerminalPane` a new prop on every
+  // workspace render, defeating their `memo`.
+  const restartTerminalPaneRef = useRef(handleRestart);
+  restartTerminalPaneRef.current = handleRestart;
+  const restartTerminalPane = useCallback((tabId: string) => {
+    void restartTerminalPaneRef.current(tabId);
+  }, []);
 
   const renderTerminalTab = (id: string) => {
     const tab = tabsById[id];
@@ -870,77 +948,80 @@ export function TerminalWorkspace() {
     );
   };
 
-  const profileMenuItems: ContextMenuItem[] = contextMenuProfiles.map(
-    (profile) => {
-      const sourceTemplate = findProfileByName(templateList, profile.name);
-      return {
-        label: profile.name,
-        icon: sourceTemplate
-          ? getProfileTemplateIcon(sourceTemplate.icon)
-          : profile.isDefault
-            ? Star
-            : TerminalIcon,
-        onSelect: () => {
-          if (activeProjectId)
-            void handleNewTerminal(activeProjectId, profile.id);
-        },
-      };
-    },
-  );
+  // Built only while the menu is open: this walks every profile, template,
+  // built-in preset and Conda env, and the result is discarded otherwise.
+  const plusMenuItems = useMemo<ContextMenuItem[]>(() => {
+    if (!plusMenuPosition) return [];
 
-  // Quick-launch sources are ordered by priority and claimed by normalized
-  // name. A materialized profile wins over templates, built-ins and Conda;
-  // saved templates then win over same-name built-ins so customizations apply.
-  const claimedQuickLaunchNames = new Set(
-    profiles.map((profile) => normalizedProfileName(profile.name)),
-  );
-  const quickLaunchItems: ContextMenuItem[] = [];
-  const addQuickLaunchItem = (name: string, item: ContextMenuItem) => {
-    const key = normalizedProfileName(name);
-    if (claimedQuickLaunchNames.has(key)) return;
-    claimedQuickLaunchNames.add(key);
-    quickLaunchItems.push(item);
-  };
+    const profileMenuItems: ContextMenuItem[] = contextMenuProfiles.map(
+      (profile) => {
+        const sourceTemplate = findProfileByName(templateList, profile.name);
+        return {
+          label: profile.name,
+          icon: sourceTemplate
+            ? getProfileTemplateIcon(sourceTemplate.icon)
+            : profile.isDefault
+              ? Star
+              : TerminalIcon,
+          onSelect: () => {
+            if (activeProjectId)
+              void handleNewTerminal(activeProjectId, profile.id);
+          },
+        };
+      },
+    );
 
-  for (const template of templateList) {
-    addQuickLaunchItem(template.name, {
-      label: template.name,
-      icon: getProfileTemplateIcon(template.icon),
-      onSelect: () => void handleLaunchFromTemplate(template),
-    });
-  }
-  for (const preset of BUILT_IN_PROFILE_PRESETS) {
-    addQuickLaunchItem(preset.name, {
-      label: preset.name,
-      icon: Sparkles,
-      onSelect: () =>
-        void handleQuickLaunch(preset.name, (base) => {
-          base.startupCommands = [...preset.startupCommands];
-        }),
-    });
-  }
-  for (const env of condaEnvs) {
-    const name = `Conda: ${env.name}`;
-    addQuickLaunchItem(name, {
-      label: name,
-      icon: Boxes,
-      onSelect: () =>
-        void handleQuickLaunch(name, (base) => {
-          base.environmentType = "conda";
-          base.conda = {
-            condaExecutable: env.condaExecutable,
-            environmentName: env.name,
-            activationMode: "shell-hook",
-            autoActivate: true,
-          };
-        }),
-    });
-  }
+    // Quick-launch sources are ordered by priority and claimed by normalized
+    // name. A materialized profile wins over templates, built-ins and Conda;
+    // saved templates then win over same-name built-ins so customizations
+    // apply.
+    const claimedQuickLaunchNames = new Set(
+      profiles.map((profile) => normalizedProfileName(profile.name)),
+    );
+    const quickLaunchItems: ContextMenuItem[] = [];
+    const addQuickLaunchItem = (name: string, item: ContextMenuItem) => {
+      const key = normalizedProfileName(name);
+      if (claimedQuickLaunchNames.has(key)) return;
+      claimedQuickLaunchNames.add(key);
+      quickLaunchItems.push(item);
+    };
 
-  const plusMenuItems = joinContextMenuSections(
-    profileMenuItems,
-    quickLaunchItems,
-    [
+    for (const template of templateList) {
+      addQuickLaunchItem(template.name, {
+        label: template.name,
+        icon: getProfileTemplateIcon(template.icon),
+        onSelect: () => void handleLaunchFromTemplate(template),
+      });
+    }
+    for (const preset of BUILT_IN_PROFILE_PRESETS) {
+      addQuickLaunchItem(preset.name, {
+        label: preset.name,
+        icon: Sparkles,
+        onSelect: () =>
+          void handleQuickLaunch(preset.name, (base) => {
+            base.startupCommands = [...preset.startupCommands];
+          }),
+      });
+    }
+    for (const env of condaEnvs) {
+      const name = `Conda: ${env.name}`;
+      addQuickLaunchItem(name, {
+        label: name,
+        icon: Boxes,
+        onSelect: () =>
+          void handleQuickLaunch(name, (base) => {
+            base.environmentType = "conda";
+            base.conda = {
+              condaExecutable: env.condaExecutable,
+              environmentName: env.name,
+              activationMode: "shell-hook",
+              autoActivate: true,
+            };
+          }),
+      });
+    }
+
+    return joinContextMenuSections(profileMenuItems, quickLaunchItems, [
       {
         label: t("Manage profiles…"),
         icon: Settings2,
@@ -950,8 +1031,19 @@ export function TerminalWorkspace() {
             section: "profiles",
           }),
       },
-    ],
-  );
+    ]);
+  }, [
+    plusMenuPosition,
+    activeProjectId,
+    condaEnvs,
+    contextMenuProfiles,
+    handleLaunchFromTemplate,
+    handleNewTerminal,
+    handleQuickLaunch,
+    profiles,
+    t,
+    templateList,
+  ]);
 
   return (
     <section
@@ -1004,7 +1096,7 @@ export function TerminalWorkspace() {
                   <span className="px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                     {t("Split")}
                   </span>
-                  {paneTabIds(validSplitView).map(renderTerminalTab)}
+                  {splitTabIds.map(renderTerminalTab)}
                   <button
                     type="button"
                     className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-destructive/15 hover:text-destructive"
@@ -1021,7 +1113,7 @@ export function TerminalWorkspace() {
                 </div>
               ) : null}
               {tabIds
-                .filter((id) => !paneTabIds(validSplitView).includes(id))
+                .filter((id) => !splitTabIdSet.has(id))
                 .map(renderTerminalTab)}
             </>
           )}
@@ -1133,11 +1225,9 @@ export function TerminalWorkspace() {
               change never disposes/recreates an xterm instance or its PTY.
             */}
             {Object.values(tabsById).map((tab) => {
-              const bounds = paneLayout?.panes.find(
-                (pane) => pane.tabId === tab.id,
-              );
+              const pane = paneRenderByTabId.get(tab.id);
               const isSplitPane =
-                tab.projectId === activeProjectId && Boolean(bounds);
+                tab.projectId === activeProjectId && Boolean(pane);
               const visible = isSplitPane || tab.id === activeTabId;
               return (
                 <TerminalPane
@@ -1146,22 +1236,13 @@ export function TerminalWorkspace() {
                   visible={visible}
                   focused={
                     isSplitPane
-                      ? focusedSplitPane?.paneId === bounds?.paneId
+                      ? focusedSplitPane?.paneId === pane?.paneId
                       : tab.id === activeTabId
                   }
-                  panePosition={bounds ? "" : "inset-0"}
-                  style={
-                    bounds
-                      ? {
-                          left: `${bounds.left}%`,
-                          top: `${bounds.top}%`,
-                          width: `${bounds.width}%`,
-                          height: `${bounds.height}%`,
-                        }
-                      : undefined
-                  }
+                  panePosition={pane ? "" : "inset-0"}
+                  style={pane?.style}
                   onSelect={selectTerminalPane}
-                  onRestart={(tabId) => void handleRestart(tabId)}
+                  onRestart={restartTerminalPane}
                 />
               );
             })}

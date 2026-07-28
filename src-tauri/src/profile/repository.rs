@@ -9,27 +9,29 @@ use crate::storage;
 
 use super::model::{EnvironmentType, ShellType, TerminalProfile};
 
-#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ProfileCollection {
     #[serde(default)]
     pub profiles: Vec<TerminalProfile>,
 }
 
 pub struct ProfileRepository {
-    path: PathBuf,
+    store: storage::CachedJsonFile<ProfileCollection>,
 }
 
 impl ProfileRepository {
     pub fn new(path: PathBuf) -> Self {
-        Self { path }
+        Self {
+            store: storage::CachedJsonFile::new(path),
+        }
     }
 
     pub fn load(&self) -> AppResult<ProfileCollection> {
-        storage::read_or_default(&self.path, ProfileCollection::default())
+        self.store.load(ProfileCollection::default)
     }
 
     pub fn save(&self, collection: &ProfileCollection) -> AppResult<()> {
-        storage::write_json(&self.path, collection)
+        self.store.save(collection)
     }
 
     pub fn list_for_project(&self, project_id: &str) -> AppResult<Vec<TerminalProfile>> {

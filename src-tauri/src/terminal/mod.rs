@@ -12,6 +12,8 @@ pub mod scrollback;
 pub mod session;
 pub mod wsl;
 
+use std::sync::OnceLock;
+
 use crate::error::{AppError, AppResult};
 #[cfg(test)]
 use crate::profile::EnvironmentType;
@@ -185,7 +187,23 @@ pub fn profile_needs_environment(profile: &TerminalProfile) -> bool {
     profile.environment_type != EnvironmentType::None
 }
 
+/// Resolved once per process: `which` walks every PATH directory against every
+/// PATHEXT entry, which is hundreds of filesystem probes, and this runs on
+/// every terminal launch that does not pin a shell executable. A PowerShell
+/// installed mid-session is picked up after a restart.
 fn find_powershell() -> AppResult<(String, bool)> {
+    static POWERSHELL: OnceLock<Option<(String, bool)>> = OnceLock::new();
+    POWERSHELL
+        .get_or_init(|| find_powershell_uncached().ok())
+        .clone()
+        .ok_or_else(|| {
+            AppError::ShellNotFound(
+                "PowerShell was not found on PATH or in the standard install locations".into(),
+            )
+        })
+}
+
+fn find_powershell_uncached() -> AppResult<(String, bool)> {
     // 1. pwsh.exe on PATH (PowerShell 7+)
     if let Some(p) = which("pwsh.exe") {
         return Ok((p, true));
