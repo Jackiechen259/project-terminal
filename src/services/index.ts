@@ -225,9 +225,9 @@ async function invokeOrThrow<T>(
  * Decode a base64 string into bytes the frontend can hand to xterm.write.
  *
  * Only attach replay still travels as base64; live output crosses the IPC
- * boundary as raw bytes. WebView2 has no `Uint8Array.fromBase64`, so the
- * fallback is a per-byte loop — fine for small inputs, but replay chunks can
- * be megabytes, which is what `decodeBase64Async` is for.
+ * boundary as raw bytes. WebView2 has no `Uint8Array.fromBase64` yet, so the
+ * per-byte fallback is the live path today and the native branch takes over
+ * for free once it ships.
  */
 function decodeBase64(b64: string): Uint8Array {
   const nativeDecoder = (
@@ -243,26 +243,6 @@ function decodeBase64(b64: string): Uint8Array {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
-}
-
-/** Threshold past which the native data-URL decoder beats the byte loop. */
-const ASYNC_BASE64_THRESHOLD = 64 * 1024;
-
-/**
- * Decode base64 that may be large, using the browser's native decoder via a
- * data URL. Falls back to the synchronous path on small inputs and on any
- * failure.
- */
-async function decodeBase64Async(b64: string): Promise<Uint8Array> {
-  if (b64.length < ASYNC_BASE64_THRESHOLD) return decodeBase64(b64);
-  try {
-    const response = await fetch(
-      `data:application/octet-stream;base64,${b64}`,
-    );
-    return new Uint8Array(await response.arrayBuffer());
-  } catch {
-    return decodeBase64(b64);
-  }
 }
 
 export const projectService = {
@@ -411,7 +391,6 @@ export const terminalService = {
   restart: (sessionId: string): Promise<string> =>
     invokeOrThrow<string>("restart_terminal", { sessionId }),
   decodeBase64,
-  decodeBase64Async,
 };
 
 export interface DetectedCondaEnvironment {

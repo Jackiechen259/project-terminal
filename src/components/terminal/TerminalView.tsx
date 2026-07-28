@@ -347,6 +347,8 @@ export const TerminalView = memo(function TerminalView({
     const clientId = crypto.randomUUID();
     let cancelled = false;
     let attached = false;
+    let resyncRequested = false;
+    let dropNoticeShown = false;
     const pendingLiveOutput: TerminalSessionFrame[] = [];
     const reportExit = (
       status: "exited" | "error",
@@ -373,7 +375,15 @@ export const TerminalView = memo(function TerminalView({
       // invisible hole in the stream that would corrupt any cursor-addressed
       // TUI. Re-attaching rebuilds the view from a fresh snapshot. The attempt
       // cap keeps a persistently slow client from thrashing xterm teardown.
+      //
+      // More lagged frames can arrive before this attachment tears down; they
+      // are the same lag, so they must not each spend a resync or repeat the
+      // notice. Both flags live in the attachment closure, so a successful
+      // re-attach starts clean.
+      if (resyncRequested) return;
       if (resyncAttemptsRef.current >= MAX_LAGGED_RESYNCS) {
+        if (dropNoticeShown) return;
+        dropNoticeShown = true;
         outputQueue.send(
           new TextEncoder().encode(
             "\r\n\x1b[33m[Some terminal output was dropped]\x1b[0m\r\n",
@@ -381,6 +391,7 @@ export const TerminalView = memo(function TerminalView({
         );
         return;
       }
+      resyncRequested = true;
       resyncAttemptsRef.current += 1;
       outputQueue.flush();
       setAttachEpoch((epoch) => epoch + 1);
@@ -418,20 +429,16 @@ export const TerminalView = memo(function TerminalView({
             if (event.type === "resize") {
               term.resize(event.cols, event.rows);
             } else if (event.data) {
-              const bytes = await terminalService.decodeBase64Async(event.data);
-              if (cancelled) return;
+              const data = event.data;
               await new Promise<void>((resolve) => {
-                term.write(bytes, resolve);
+                term.write(terminalService.decodeBase64(data), resolve);
               });
             }
           }
         } else if (attachment.scrollback) {
-          const bytes = await terminalService.decodeBase64Async(
-            attachment.scrollback,
-          );
-          if (cancelled) return;
+          const scrollback = attachment.scrollback;
           await new Promise<void>((resolve) => {
-            term.write(bytes, resolve);
+            term.write(terminalService.decodeBase64(scrollback), resolve);
           });
         }
         // Restore the grid dictated by the actual container, then deliver the

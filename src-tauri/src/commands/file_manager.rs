@@ -34,6 +34,12 @@ const LIST_TIMEOUT: Duration = Duration::from_secs(30);
 /// `stat` is deliberately avoided: it is not POSIX and its flags differ
 /// between GNU (`-c %s`) and BSD (`-f %z`), while this must run under `sh` on
 /// arbitrary SSH hosts and WSL distributions.
+///
+/// Two details in the `wc` call are load-bearing. `/dev/null` guarantees more
+/// than one operand, so `wc` always ends with a `total` line and the parser can
+/// drop it unconditionally instead of guessing. `|| true` stops an unreadable
+/// entry — a dangling symlink, a root-owned file, a socket — from making `wc`
+/// exit non-zero and failing the whole listing.
 const POSIX_LIST_SCRIPT_TEMPLATE: &str = r#"resolve_path() {
   case "$1" in
     "~") printf '%s\n' "$HOME" ;;
@@ -72,7 +78,7 @@ for file in .[!.]* ..?* *; do
 done
 printf '/\0'
 if [ "$#" -gt 0 ]; then
-  wc -c -- "$@" 2>/dev/null
+  wc -c -- "$@" /dev/null 2>/dev/null || true
 fi
 "#;
 
@@ -307,17 +313,16 @@ fn list_ssh_files(
 /// Parse the batched `wc -c` block into sizes keyed by filename.
 ///
 /// Each line is `<padding><size> <name>`, and the name may contain spaces, so
-/// it is everything after the first space. `wc` appends a `total` line only
-/// when it was given more than one file; `expected` identifies that line by
-/// count rather than by its name, so a file actually named `total` still
-/// resolves correctly. A name containing a newline gets no size, which is no
-/// worse than the previous per-file probe reporting zero.
-fn parse_wc_sizes(block: &[u8], expected: usize) -> HashMap<String, u64> {
+/// the name is everything after the first space. The script always passes
+/// `/dev/null` as an extra operand, so the final line is always `wc`'s grand
+/// total and is dropped unconditionally — a file actually named `total`
+/// therefore keeps its own size. `/dev/null`'s own line is harmless because no
+/// directory entry name can contain a slash. A name containing a newline gets
+/// no size, which is no worse than the previous per-file probe reporting zero.
+fn parse_wc_sizes(block: &[u8]) -> HashMap<String, u64> {
     let text = String::from_utf8_lossy(block);
     let mut lines: Vec<&str> = text.lines().filter(|line| !line.trim().is_empty()).collect();
-    if lines.len() == expected + 1 {
-        lines.pop();
-    }
+    lines.pop();
 
     let mut sizes = HashMap::with_capacity(lines.len());
     for line in lines {
@@ -367,11 +372,7 @@ fn parse_posix_listing_output(output: Output, transport: &str) -> AppResult<Proj
         });
     }
 
-    let regular_files = entries.iter().filter(|entry| !entry.is_directory).count();
-    let sizes = parse_wc_sizes(
-        fields.get(sentinel + 1).copied().unwrap_or_default(),
-        regular_files,
-    );
+    let sizes = parse_wc_sizes(fields.get(sentinel + 1).copied().unwrap_or_default());
     for entry in entries.iter_mut().filter(|entry| !entry.is_directory) {
         entry.size = sizes.get(entry.name.as_str()).copied();
     }
@@ -944,6 +945,10 @@ mod tests {
     use chrono::Utc;
 
     /// Build the script's stdout: NUL-terminated fields, then the `wc` block.
+    ///
+    /// `sizes` is written exactly as `wc -c -- "$@" /dev/null` prints it, so
+    /// these fixtures stay faithful to the real wire format — including the
+    /// `/dev/null` line and the trailing grand total.
     fn posix_listing_stdout(fields: &[&str], sizes: &str) -> Vec<u8> {
         let mut stdout = Vec::new();
         for field in fields {
@@ -961,7 +966,7 @@ mod tests {
             status: success_status(),
             stdout: posix_listing_stdout(
                 &["/srv", "/srv/app", "z.txt", "f", "src", "d"],
-                "      3 z.txt\n",
+                "      3 z.txt\n      0 /dev/null\n      3 total\n",
             ),
             stderr: Vec::new(),
         };
@@ -975,7 +980,7 @@ mod tests {
     }
 
     #[test]
-    fn posix_listing_matches_sizes_with_spaces_and_drops_the_total_line() {
+    fn posix_listing_matches_sizes_containing_spaces() {
         let output = Output {
             status: success_status(),
             stdout: posix_listing_stdout(
@@ -989,7 +994,7 @@ mod tests {
                     "sub",
                     "d",
                 ],
-                "     11 name with spaces.txt\n      3 plain.txt\n     14 total\n",
+                "     11 name with spaces.txt\n      3 plain.txt\n      0 /dev/null\n     14 total\n",
             ),
             stderr: Vec::new(),
         };
@@ -1008,18 +1013,56 @@ mod tests {
     }
 
     #[test]
-    fn posix_listing_keeps_a_single_files_size_when_wc_prints_no_total() {
+    fn posix_listing_keeps_the_size_of_a_file_named_total() {
+        // `wc` prints its own grand total last, so only that line is dropped.
         let output = Output {
             status: success_status(),
-            stdout: posix_listing_stdout(&["/srv", "/srv", "only.txt", "f"], "2 only.txt\n"),
+            stdout: posix_listing_stdout(
+                &["/srv", "/srv", "a.txt", "f", "total", "f"],
+                "      3 a.txt\n      7 total\n      0 /dev/null\n     10 total\n",
+            ),
             stderr: Vec::new(),
         };
         let listing = parse_posix_listing_output(output, "test").unwrap();
-        assert_eq!(listing.entries[0].size, Some(2));
+        let by_name = |name: &str| {
+            listing
+                .entries
+                .iter()
+                .find(|entry| entry.name == name)
+                .unwrap()
+                .size
+        };
+        assert_eq!(by_name("total"), Some(7));
+        assert_eq!(by_name("a.txt"), Some(3));
+    }
+
+    #[test]
+    fn posix_listing_keeps_sizes_when_wc_skipped_an_unreadable_entry() {
+        // A dangling symlink makes `wc` omit its line; the rest must survive.
+        let output = Output {
+            status: success_status(),
+            stdout: posix_listing_stdout(
+                &["/srv", "/srv", "ok.txt", "f", "broken.lnk", "f"],
+                "      3 ok.txt\n      0 /dev/null\n      3 total\n",
+            ),
+            stderr: Vec::new(),
+        };
+        let listing = parse_posix_listing_output(output, "test").unwrap();
+        let by_name = |name: &str| {
+            listing
+                .entries
+                .iter()
+                .find(|entry| entry.name == name)
+                .unwrap()
+                .size
+        };
+        assert_eq!(by_name("ok.txt"), Some(3));
+        assert_eq!(by_name("broken.lnk"), None);
     }
 
     #[test]
     fn posix_listing_handles_a_directory_with_no_regular_files() {
+        // With no regular files the script skips `wc` entirely.
         let output = Output {
             status: success_status(),
             stdout: posix_listing_stdout(&["/srv", "/srv", "a", "d", "b", "d"], ""),
@@ -1050,8 +1093,10 @@ mod tests {
         let script = posix_list_script();
         assert!(!script.contains("__ENTRY_LIMIT__"));
         assert!(script.contains(&format!("\"$count\" -ge {FILE_ENTRY_LIMIT}")));
-        // Sizes must come from one batched call, not a fork per file.
-        assert!(script.contains("wc -c -- \"$@\""));
+        // Sizes come from one batched call, not a fork per file. `/dev/null`
+        // forces a trailing total line and `|| true` keeps an unreadable entry
+        // from failing the whole listing.
+        assert!(script.contains("wc -c -- \"$@\" /dev/null 2>/dev/null || true"));
     }
 
     #[test]

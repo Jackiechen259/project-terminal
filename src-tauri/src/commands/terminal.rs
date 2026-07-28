@@ -754,8 +754,14 @@ fn coalesce_replay(
 /// Output travels as `InvokeResponseBody::Raw` on the same channel; the JS
 /// `Channel` reorders by index, so raw and JSON frames stay in sequence.
 /// The session id is omitted because a channel is per-attachment.
+// `rename_all` on an enum renames variants, not their fields, so
+// `rename_all_fields` is what actually gets `exitCode` to the frontend.
 #[derive(Debug, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 enum DesktopSessionFrame {
     Status {
         status: crate::terminal::session::SessionStatus,
@@ -922,6 +928,23 @@ mod tests {
             SessionReplayEvent::Output { data } => data,
             SessionReplayEvent::Resize { .. } => panic!("expected an output event"),
         }
+    }
+
+    #[test]
+    fn desktop_control_frames_use_the_camel_case_keys_the_frontend_reads() {
+        let status = serde_json::to_string(&DesktopSessionFrame::Status {
+            status: crate::terminal::session::SessionStatus::Exited,
+            exit_code: Some(7),
+        })
+        .unwrap();
+        assert_eq!(
+            status,
+            r#"{"type":"status","status":"exited","exitCode":7}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&DesktopSessionFrame::Lagged).unwrap(),
+            r#"{"type":"lagged"}"#
+        );
     }
 
     #[test]
