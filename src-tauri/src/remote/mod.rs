@@ -864,6 +864,9 @@ async fn websocket_loop(
             remote_output = output.recv() => {
                 match remote_output {
                     Ok(event) => {
+                        // Base64 happens here rather than on the broadcast bus,
+                        // so a desktop-only session never pays for it.
+                        let event = crate::terminal::TerminalOutput::from_event(&event);
                         if send_ws_json(&mut sender, &serde_json::json!({
                             "type": "output",
                             "event": event,

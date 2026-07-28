@@ -24,10 +24,46 @@ use super::scrollback::{
 const PTY_READ_BUFFER_BYTES: usize = 16 * 1024;
 const LIVE_OUTPUT_BUFFER_EVENTS: usize = DEFAULT_SCROLLBACK_BYTES / PTY_READ_BUFFER_BYTES;
 
-/// A terminal lifecycle event sent to the frontend.
+/// A terminal lifecycle event as it travels on the broadcast bus.
+///
+/// Output stays as raw `Bytes` so fan-out to subscribers is a refcount bump
+/// rather than a copy of an encoded string. Consumers that need a text wire
+/// format (the remote WebSocket gateway) encode at their own end.
+#[derive(Debug, Clone)]
+pub struct TerminalEvent {
+    pub session_id: Arc<str>,
+    pub payload: TerminalEventPayload,
+}
+
+#[derive(Debug, Clone)]
+pub enum TerminalEventPayload {
+    Output(Bytes),
+    Status {
+        status: SessionStatus,
+        exit_code: Option<i32>,
+    },
+}
+
+impl TerminalEvent {
+    fn output(session_id: Arc<str>, data: Bytes) -> Self {
+        Self {
+            session_id,
+            payload: TerminalEventPayload::Output(data),
+        }
+    }
+
+    fn status(session_id: Arc<str>, status: SessionStatus, exit_code: Option<i32>) -> Self {
+        Self {
+            session_id,
+            payload: TerminalEventPayload::Status { status, exit_code },
+        }
+    }
+}
+
+/// JSON wire shape for the remote WebSocket gateway.
 ///
 /// Output bytes are base64 encoded because terminal output is not guaranteed
-/// to be valid UTF-8. Exit state travels over the same channel so the frontend
+/// to be valid UTF-8. Exit state travels over the same channel so the client
 /// does not need to poll every live session.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,21 +78,22 @@ pub struct TerminalOutput {
 }
 
 impl TerminalOutput {
-    fn output(session_id: String, data: String) -> Self {
-        Self {
-            session_id,
-            data,
-            status: None,
-            exit_code: None,
-        }
-    }
-
-    fn status(session_id: String, status: SessionStatus, exit_code: Option<i32>) -> Self {
-        Self {
-            session_id,
-            data: String::new(),
-            status: Some(status),
-            exit_code,
+    /// Encode a broadcast event for a client that speaks the JSON protocol.
+    pub fn from_event(event: &TerminalEvent) -> Self {
+        let session_id = event.session_id.to_string();
+        match &event.payload {
+            TerminalEventPayload::Output(bytes) => Self {
+                session_id,
+                data: encode_bytes(bytes),
+                status: None,
+                exit_code: None,
+            },
+            TerminalEventPayload::Status { status, exit_code } => Self {
+                session_id,
+                data: String::new(),
+                status: Some(*status),
+                exit_code: *exit_code,
+            },
         }
     }
 }
@@ -79,12 +116,12 @@ pub struct SessionSpawn {
 }
 
 struct EventHub {
-    sender: broadcast::Sender<TerminalOutput>,
+    sender: broadcast::Sender<TerminalEvent>,
     scrollback: OutputRingBuffer,
 }
 
 pub struct SessionSubscription {
-    pub receiver: broadcast::Receiver<TerminalOutput>,
+    pub receiver: broadcast::Receiver<TerminalEvent>,
     pub snapshot: ScrollbackSnapshot,
     pub cancellation: watch::Receiver<bool>,
 }
@@ -136,10 +173,22 @@ struct ReadyWatcher {
     exit_error: Option<String>,
 }
 
+/// Outcome of feeding a PTY read through the readiness handshake filter.
+///
+/// The handshake is over within the first few reads of a session's life, so
+/// the steady state must not copy the buffer just to hand it back.
+#[derive(Debug, PartialEq, Eq)]
+enum Processed {
+    /// No handshake in flight: forward the read buffer untouched.
+    PassThrough,
+    /// Handshake bytes were removed; forward only what remains.
+    Filtered(Vec<u8>),
+}
+
 impl ReadyWatcher {
-    fn process(&mut self, bytes: &[u8]) -> Vec<u8> {
+    fn process(&mut self, bytes: &[u8]) -> Processed {
         let Some(marker) = self.marker.as_deref() else {
-            return bytes.to_vec();
+            return Processed::PassThrough;
         };
 
         self.pending.extend_from_slice(bytes);
@@ -161,13 +210,13 @@ impl ReadyWatcher {
             }
             self.marker = None;
             self.pending.clear();
-            return output;
+            return Processed::Filtered(output);
         }
 
         // Keep every byte until the handshake completes. Shells echo the
         // injected command, and forwarding partial output would expose that
         // protocol text above the actual terminal prompt.
-        Vec::new()
+        Processed::Filtered(Vec::new())
     }
 
     fn process_exited(&mut self, exit_code: Option<i32>) {
@@ -285,6 +334,8 @@ impl TerminalSession {
             exit_error: None,
         }));
         let session_id = spawn.session_id.clone();
+        // Shared so tagging an event costs a refcount bump, not a String clone.
+        let shared_id: Arc<str> = Arc::from(session_id.as_str());
         // Larger reads reduce syscall, Base64 and IPC overhead during output
         // bursts. Scale the event count down proportionally so a stalled
         // subscriber still retains roughly the same 4 MiB raw-data ceiling.
@@ -301,7 +352,7 @@ impl TerminalSession {
         // protocol line, retains every other byte sequence, and broadcasts it.
         // A missing or slow subscriber never blocks this loop.
         let hub_for_reader = Arc::clone(&event_hub);
-        let sid_for_reader = session_id.clone();
+        let sid_for_reader = Arc::clone(&shared_id);
         let watcher_for_reader = ready_watcher.clone();
         thread::spawn(move || {
             let mut reader = reader;
@@ -310,13 +361,18 @@ impl TerminalSession {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let output = watcher_for_reader.lock().process(&buf[..n]);
+                        // Exactly one copy out of the reusable read buffer.
+                        // Scrollback and every subscriber then share it.
+                        let output = match watcher_for_reader.lock().process(&buf[..n]) {
+                            Processed::PassThrough => Bytes::copy_from_slice(&buf[..n]),
+                            Processed::Filtered(filtered) => Bytes::from(filtered),
+                        };
                         if !output.is_empty() {
                             let mut hub = hub_for_reader.lock();
-                            hub.scrollback.push(Bytes::copy_from_slice(&output));
-                            let _ = hub.sender.send(TerminalOutput::output(
-                                sid_for_reader.clone(),
-                                encode_bytes(&output),
+                            hub.scrollback.push(output.clone());
+                            let _ = hub.sender.send(TerminalEvent::output(
+                                Arc::clone(&sid_for_reader),
+                                output,
                             ));
                         }
                     }
@@ -342,7 +398,7 @@ impl TerminalSession {
         let inner_for_wait = inner.clone();
         let watcher_for_wait = ready_watcher.clone();
         let hub_for_wait = Arc::clone(&event_hub);
-        let sid_for_wait = session_id.clone();
+        let sid_for_wait = Arc::clone(&shared_id);
         let mut child_for_wait = child;
         thread::spawn(move || match child_for_wait.wait() {
             Ok(status) => {
@@ -354,7 +410,7 @@ impl TerminalSession {
                 drop(guard);
                 if !closing {
                     watcher_for_wait.lock().process_exited(Some(code));
-                    let _ = hub_for_wait.lock().sender.send(TerminalOutput::status(
+                    let _ = hub_for_wait.lock().sender.send(TerminalEvent::status(
                         sid_for_wait,
                         SessionStatus::Exited,
                         Some(code),
@@ -368,7 +424,7 @@ impl TerminalSession {
                 drop(guard);
                 if !closing {
                     watcher_for_wait.lock().process_exited(None);
-                    let _ = hub_for_wait.lock().sender.send(TerminalOutput::status(
+                    let _ = hub_for_wait.lock().sender.send(TerminalEvent::status(
                         sid_for_wait,
                         SessionStatus::Error,
                         None,
@@ -548,20 +604,16 @@ mod tests {
         );
     }
 
-    /// Decode base64 back to bytes for assertions.
-    fn decode(b64: &str) -> Vec<u8> {
-        use base64::Engine;
-        base64::engine::general_purpose::STANDARD
-            .decode(b64)
-            .unwrap_or_default()
-    }
-
     /// Collect all output chunks delivered before the deadline, concatenated.
-    fn drain_output(rx: &mut broadcast::Receiver<TerminalOutput>, deadline: Instant) -> Vec<u8> {
+    fn drain_output(rx: &mut broadcast::Receiver<TerminalEvent>, deadline: Instant) -> Vec<u8> {
         let mut out = Vec::new();
         while Instant::now() < deadline {
             match rx.try_recv() {
-                Ok(chunk) => out.extend_from_slice(&decode(&chunk.data)),
+                Ok(event) => {
+                    if let TerminalEventPayload::Output(bytes) = event.payload {
+                        out.extend_from_slice(&bytes);
+                    }
+                }
                 Err(broadcast::error::TryRecvError::Empty) => {
                     std::thread::sleep(Duration::from_millis(10));
                 }
@@ -575,7 +627,7 @@ mod tests {
     fn make_session(
         program: &str,
         args: &[&str],
-    ) -> (TerminalSession, broadcast::Receiver<TerminalOutput>) {
+    ) -> (TerminalSession, broadcast::Receiver<TerminalEvent>) {
         let session = TerminalSession::spawn(SessionSpawn {
             session_id: "test-session".to_string(),
             project_id: "test-project".to_string(),
@@ -622,11 +674,13 @@ mod tests {
     fn process_exit_is_pushed_through_the_output_channel() {
         let (_session, mut rx) = make_session("cmd.exe", &["/C", "exit", "7"]);
         let deadline = Instant::now() + Duration::from_secs(3);
-        let status = loop {
+        let payload = loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             assert!(!remaining.is_zero(), "timed out waiting for exit status");
             match rx.try_recv() {
-                Ok(event) if event.status.is_some() => break event,
+                Ok(event) if matches!(event.payload, TerminalEventPayload::Status { .. }) => {
+                    break event.payload
+                }
                 Ok(_) | Err(broadcast::error::TryRecvError::Empty) => {
                     std::thread::sleep(Duration::from_millis(10));
                 }
@@ -634,9 +688,11 @@ mod tests {
             }
         };
 
-        assert_eq!(status.status, Some(SessionStatus::Exited));
-        assert_eq!(status.exit_code, Some(7));
-        assert!(status.data.is_empty());
+        let TerminalEventPayload::Status { status, exit_code } = payload else {
+            unreachable!("loop only breaks on a status payload");
+        };
+        assert_eq!(status, SessionStatus::Exited);
+        assert_eq!(exit_code, Some(7));
     }
 
     #[test]
@@ -739,13 +795,29 @@ mod tests {
             exit_error: None,
         };
 
-        assert!(watcher
-            .process(b"echo [$env:PROJECT_TERMINAL_READY]\r\n\r\n[abcde")
-            .is_empty());
-        assert_eq!(watcher.process(b"f]\r\nPS C:\\> "), b"PS C:\\> ");
+        assert_eq!(
+            watcher.process(b"echo [$env:PROJECT_TERMINAL_READY]\r\n\r\n[abcde"),
+            Processed::Filtered(Vec::new())
+        );
+        assert_eq!(
+            watcher.process(b"f]\r\nPS C:\\> "),
+            Processed::Filtered(b"PS C:\\> ".to_vec())
+        );
         let _ = receiver
             .recv_timeout(Duration::from_millis(10))
             .expect("split marker not detected");
+    }
+
+    #[test]
+    fn ready_watcher_passes_output_through_once_the_handshake_is_done() {
+        let mut watcher = ReadyWatcher {
+            marker: None,
+            sender: None,
+            pending: Vec::new(),
+            exit_error: None,
+        };
+
+        assert_eq!(watcher.process(b"regular output"), Processed::PassThrough);
     }
 
     #[test]

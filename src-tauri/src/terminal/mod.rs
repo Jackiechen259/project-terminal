@@ -19,7 +19,7 @@ use crate::profile::{ShellType, TerminalProfile};
 pub use initializer::{build_activation_script, build_remote_initialization_commands};
 pub use manager::{SessionInfo, TerminalManager};
 use serde::Serialize;
-pub use session::{SessionSpawn, TerminalOutput};
+pub use session::{SessionSpawn, TerminalEvent, TerminalEventPayload, TerminalOutput};
 pub use wsl::{detect_wsl_distributions, DetectedWslDistribution};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

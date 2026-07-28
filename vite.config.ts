@@ -39,7 +39,6 @@ export default defineConfig(async () => ({
             "@xterm/xterm",
             "@xterm/addon-fit",
             "@xterm/addon-search",
-            "@xterm/addon-serialize",
             "@xterm/addon-unicode-graphemes",
             "@xterm/addon-web-links",
           ],

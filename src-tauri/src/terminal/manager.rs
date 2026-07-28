@@ -187,21 +187,19 @@ mod tests {
     }
 
     fn wait_for_text(
-        receiver: &mut tokio::sync::broadcast::Receiver<super::super::session::TerminalOutput>,
+        receiver: &mut tokio::sync::broadcast::Receiver<super::super::session::TerminalEvent>,
         expected: &[u8],
     ) {
-        use base64::Engine;
+        use super::super::session::TerminalEventPayload;
 
         let deadline = Instant::now() + Duration::from_secs(3);
         let mut output = Vec::new();
         while Instant::now() < deadline {
             match receiver.try_recv() {
                 Ok(event) => {
-                    output.extend(
-                        base64::engine::general_purpose::STANDARD
-                            .decode(event.data)
-                            .unwrap_or_default(),
-                    );
+                    if let TerminalEventPayload::Output(bytes) = event.payload {
+                        output.extend_from_slice(&bytes);
+                    }
                     if output.windows(expected.len()).any(|part| part == expected) {
                         return;
                     }

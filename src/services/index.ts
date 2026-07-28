@@ -6,6 +6,7 @@
 
 import { Channel, invoke as tauriInvoke } from "@tauri-apps/api/core";
 
+import type { TerminalSessionFrame } from "@/lib/terminalFrames";
 import type {
   PlatformInfo,
   ProfileTemplate,
@@ -153,14 +154,10 @@ export interface CreateTerminalRequest {
   scrollbackMegabytes?: number;
 }
 
-export interface TerminalOutputChunk {
-  sessionId: string;
-  /** base64-encoded bytes from the PTY. */
-  data?: string;
-  /** Present when the backend process exits or its wait operation fails. */
-  status?: "exited" | "error";
-  exitCode?: number;
-}
+export type {
+  TerminalControlFrame,
+  TerminalSessionFrame,
+} from "@/lib/terminalFrames";
 
 export interface SessionInfo {
   sessionId: string;
@@ -224,7 +221,14 @@ async function invokeOrThrow<T>(
   }
 }
 
-/** Decode a base64 string into bytes the frontend can hand to xterm.write. */
+/**
+ * Decode a base64 string into bytes the frontend can hand to xterm.write.
+ *
+ * Only attach replay still travels as base64; live output crosses the IPC
+ * boundary as raw bytes. WebView2 has no `Uint8Array.fromBase64`, so the
+ * fallback is a per-byte loop — fine for small inputs, but replay chunks can
+ * be megabytes, which is what `decodeBase64Async` is for.
+ */
 function decodeBase64(b64: string): Uint8Array {
   const nativeDecoder = (
     Uint8Array as typeof Uint8Array & {
@@ -239,6 +243,26 @@ function decodeBase64(b64: string): Uint8Array {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
+}
+
+/** Threshold past which the native data-URL decoder beats the byte loop. */
+const ASYNC_BASE64_THRESHOLD = 64 * 1024;
+
+/**
+ * Decode base64 that may be large, using the browser's native decoder via a
+ * data URL. Falls back to the synchronous path on small inputs and on any
+ * failure.
+ */
+async function decodeBase64Async(b64: string): Promise<Uint8Array> {
+  if (b64.length < ASYNC_BASE64_THRESHOLD) return decodeBase64(b64);
+  try {
+    const response = await fetch(
+      `data:application/octet-stream;base64,${b64}`,
+    );
+    return new Uint8Array(await response.arrayBuffer());
+  } catch {
+    return decodeBase64(b64);
+  }
 }
 
 export const projectService = {
@@ -360,10 +384,10 @@ export const terminalService = {
   attach: async (
     sessionId: string,
     clientId: string,
-    onOutput: (chunk: TerminalOutputChunk) => void,
+    onFrame: (frame: TerminalSessionFrame) => void,
   ): Promise<SessionAttachment> => {
-    const channel = new Channel<TerminalOutputChunk>();
-    channel.onmessage = onOutput;
+    const channel = new Channel<TerminalSessionFrame>();
+    channel.onmessage = onFrame;
     return invokeOrThrow<SessionAttachment>("session_attach", {
       onOutput: channel,
       sessionId,
@@ -387,6 +411,7 @@ export const terminalService = {
   restart: (sessionId: string): Promise<string> =>
     invokeOrThrow<string>("restart_terminal", { sessionId }),
   decodeBase64,
+  decodeBase64Async,
 };
 
 export interface DetectedCondaEnvironment {
