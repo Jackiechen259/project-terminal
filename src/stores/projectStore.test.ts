@@ -20,6 +20,7 @@ beforeEach(() => {
   useProjectStore.setState({
     projects: [],
     loading: false,
+    loaded: false,
     error: null,
   });
 });
@@ -40,6 +41,7 @@ describe("projectStore", () => {
       await useProjectStore.getState().loadProjects();
       expect(useProjectStore.getState().projects).toHaveLength(1);
       expect(useProjectStore.getState().loading).toBe(false);
+      expect(useProjectStore.getState().loaded).toBe(true);
     });
 
     it("captures errors and clears loading", async () => {
@@ -50,6 +52,17 @@ describe("projectStore", () => {
       await useProjectStore.getState().loadProjects();
       expect(useProjectStore.getState().loading).toBe(false);
       expect(useProjectStore.getState().error?.message).toBe("disk gone");
+    });
+
+    it("stays unloaded when the backend list fails", async () => {
+      // `loaded` gates consumers that prune persisted state against the project
+      // list, so a failed read must not look like "there are no projects".
+      projectServiceMock.list.mockRejectedValueOnce({
+        code: "io",
+        message: "disk gone",
+      });
+      await useProjectStore.getState().loadProjects();
+      expect(useProjectStore.getState().loaded).toBe(false);
     });
   });
 

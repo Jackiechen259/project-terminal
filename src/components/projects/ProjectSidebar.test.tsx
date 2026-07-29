@@ -128,6 +128,7 @@ beforeEach(() => {
   useProjectStore.setState({
     projects: sampleProjects,
     loading: false,
+    loaded: true,
     error: null,
     loadProjects: vi.fn(),
     createProject: vi.fn(),
@@ -181,6 +182,71 @@ describe("ProjectSidebar collections", () => {
 
     await waitFor(() => expect(deleteProject).toHaveBeenCalledWith("p1"));
     expect(terminalState.removeProjectTabs).toHaveBeenCalledWith("p1");
+  });
+
+  it("keeps collection membership while the project list is still loading", async () => {
+    // App startup: collections rehydrate from localStorage synchronously, but
+    // the backend project list only arrives a tick later. Pruning against the
+    // still-empty list would wipe every collection on every launch.
+    useCollectionStore.setState({
+      collections: [
+        {
+          id: "col-1",
+          name: "Work",
+          projectIds: ["p1"],
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      collapsed: {},
+      ungroupedProjectIds: ["p2"],
+    });
+    const loadProjects = vi.fn(async () => {
+      useProjectStore.setState({
+        projects: sampleProjects,
+        loading: false,
+        loaded: true,
+      });
+    });
+    useProjectStore.setState({
+      projects: [],
+      loading: true,
+      loaded: false,
+      loadProjects,
+    });
+
+    render(<ProjectSidebar />);
+
+    await waitFor(() => expect(screen.getByText("Alpha")).toBeTruthy());
+    expect(useCollectionStore.getState().collections[0].projectIds).toEqual([
+      "p1",
+    ]);
+    expect(useCollectionStore.getState().ungroupedProjectIds).toEqual(["p2"]);
+  });
+
+  it("prunes collection membership for projects the backend no longer has", async () => {
+    useCollectionStore.setState({
+      collections: [
+        {
+          id: "col-1",
+          name: "Work",
+          projectIds: ["p1", "gone"],
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+        },
+      ],
+      collapsed: {},
+      ungroupedProjectIds: ["p2", "gone-too"],
+    });
+
+    render(<ProjectSidebar />);
+
+    await waitFor(() => {
+      expect(useCollectionStore.getState().collections[0].projectIds).toEqual([
+        "p1",
+      ]);
+    });
+    expect(useCollectionStore.getState().ungroupedProjectIds).toEqual(["p2"]);
   });
 
   it("shows a collection group and groups its projects", async () => {

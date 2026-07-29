@@ -154,6 +154,7 @@ export function ProjectSidebar() {
   const { t } = useTranslation();
   const projects = useProjectStore((s) => s.projects);
   const loading = useProjectStore((s) => s.loading);
+  const projectsLoaded = useProjectStore((s) => s.loaded);
   const error = useProjectStore((s) => s.error);
   const activeProjectId = useTerminalStore((s) => s.activeProjectId);
   // Rows only need per-project counts, so derive them behind a shallow compare
@@ -253,14 +254,17 @@ export function ProjectSidebar() {
     setActiveProject,
   ]);
 
-  // Drop project ids that no longer exist from all collections.
+  // Drop project ids that no longer exist from all collections. This must not
+  // run before the first load resolves: `projects` is empty on mount, so
+  // pruning against it would clear every collection on every launch.
   const existingProjectIds = useMemo(
     () => new Set(projects.map((p) => p.id)),
     [projects],
   );
   useEffect(() => {
+    if (!projectsLoaded) return;
     pruneDeletedProjects(existingProjectIds);
-  }, [existingProjectIds, pruneDeletedProjects]);
+  }, [existingProjectIds, projectsLoaded, pruneDeletedProjects]);
 
   const projectsById = useMemo(() => {
     const map: Record<string, Project> = {};

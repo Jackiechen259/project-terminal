@@ -17,6 +17,13 @@ import type { Project } from "@/types";
 export interface ProjectStoreState {
   projects: Project[];
   loading: boolean;
+  /**
+   * True once the backend list has been read at least once. Consumers that
+   * reconcile persisted state against the project list (sidebar collections)
+   * must wait for this - an empty `projects` before the first load says
+   * "not loaded yet", not "no projects exist".
+   */
+  loaded: boolean;
   error: FrontendError | null;
 
   loadProjects: () => Promise<void>;
@@ -29,13 +36,14 @@ export interface ProjectStoreState {
 export const useProjectStore = create<ProjectStoreState>((set, get) => ({
   projects: [],
   loading: false,
+  loaded: false,
   error: null,
 
   loadProjects: async () => {
     set({ loading: true, error: null });
     try {
       const projects = await projectService.list();
-      set({ projects, loading: false });
+      set({ projects, loading: false, loaded: true });
     } catch (e) {
       set({ loading: false, error: e as FrontendError });
     }
