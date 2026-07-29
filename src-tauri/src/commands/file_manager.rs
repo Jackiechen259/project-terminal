@@ -306,6 +306,7 @@ fn list_ssh_files(
     );
     let ssh_command = crate::ssh::build_ssh_browse_argv(&connection, remote_command);
     let mut command = Command::new(client.executable);
+    crate::platform::hide_background_process_window(&mut command);
     command.args(ssh_command.args);
     apply_saved_password_environment(&mut command, &connection)?;
     let output = run_bounded(command, LIST_TIMEOUT)?;
@@ -553,6 +554,7 @@ fn remote_has_rsync(connection: &SshConnection) -> bool {
     let probe =
         crate::ssh::build_ssh_browse_argv(connection, "command -v rsync >/dev/null 2>&1".into());
     let mut command = Command::new(client.executable);
+    crate::platform::hide_background_process_window(&mut command);
     command.args(probe.args);
     if apply_saved_password_environment(&mut command, connection).is_err() {
         return false;
@@ -569,6 +571,7 @@ fn remote_has_rsync(connection: &SshConnection) -> bool {
 
 fn run_rsync(connection: &SshConnection, executable: &Path, args: Vec<String>) -> AppResult<()> {
     let mut command = Command::new(executable);
+    crate::platform::hide_background_process_window(&mut command);
     command.args(args);
     apply_saved_password_environment(&mut command, connection)?;
     let output = command
@@ -735,6 +738,7 @@ fn run_scp(connection: &SshConnection, args: Vec<String>) -> AppResult<()> {
     let scp = crate::ssh::resolve_scp(&client)
         .ok_or_else(|| AppError::Configuration("The OpenSSH scp client was not found".into()))?;
     let mut command = Command::new(scp);
+    crate::platform::hide_background_process_window(&mut command);
     command.args(args);
     apply_saved_password_environment(&mut command, connection)?;
     let output = command

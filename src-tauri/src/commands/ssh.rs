@@ -274,6 +274,7 @@ pub fn test_ssh_connection_inner(state: &AppState, id: &str) -> AppResult<String
     let client = crate::ssh::detect_ssh_client().ok_or(AppError::SshClientNotFound)?;
     let command = crate::ssh::build_ssh_test_argv(&connection);
     let mut process = Command::new(&client.executable);
+    crate::platform::hide_background_process_window(&mut process);
     process.args(&command.args);
     apply_saved_password_environment(&mut process, &connection)?;
     let mut child = process
@@ -419,6 +420,7 @@ pub fn list_remote_directories_inner(
     let command = remote_directory_command(path)?;
     let ssh_command = crate::ssh::build_ssh_browse_argv(&connection, command);
     let mut process = Command::new(&client.executable);
+    crate::platform::hide_background_process_window(&mut process);
     process.args(&ssh_command.args);
     apply_saved_password_environment(&mut process, &connection)?;
     let mut child = process
@@ -477,6 +479,7 @@ pub fn read_ssh_host_fingerprint_inner(state: &AppState, id: &str) -> AppResult<
         format!("[{}]:{}", connection.host, connection.port)
     };
     let mut command = Command::new(keygen);
+    crate::platform::hide_background_process_window(&mut command);
     command.args(["-F", &host]);
     if let Some(known_hosts) = connection.known_hosts_file.as_deref() {
         command.args(["-f", known_hosts]);

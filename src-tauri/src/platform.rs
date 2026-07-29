@@ -11,9 +11,29 @@
 //! only controls what the UI offers and what the default profile picks.
 
 use serde::Serialize;
+use std::process::Command;
 
 use crate::profile::ShellType;
 use crate::project::ProjectType;
+
+/// Prevent a non-interactive child process from briefly opening a console
+/// window when the GUI application launches it on Windows.
+///
+/// These commands communicate through redirected stdio, so a console window
+/// is never useful. On other platforms no extra process configuration is
+/// required.
+pub(crate) fn hide_background_process_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    #[cfg(not(windows))]
+    let _ = command;
+}
 
 /// Host operating system category. The frontend stores this opaquely; only
 /// the boolean capability fields drive behavior.
