@@ -34,6 +34,9 @@ export function GeneralSettingsPanel() {
   const confirmCloseTerminal = useSettingsStore(
     (state) => state.confirmCloseTerminal,
   );
+  const confirmDeleteProject = useSettingsStore(
+    (state) => state.confirmDeleteProject,
+  );
   const showTerminalCount = useSettingsStore(
     (state) => state.showTerminalCount,
   );
@@ -93,6 +96,7 @@ export function GeneralSettingsPanel() {
     theme === DEFAULT_GENERAL_SETTINGS.theme &&
     restoreLastProject === DEFAULT_GENERAL_SETTINGS.restoreLastProject &&
     confirmCloseTerminal === DEFAULT_GENERAL_SETTINGS.confirmCloseTerminal &&
+    confirmDeleteProject === DEFAULT_GENERAL_SETTINGS.confirmDeleteProject &&
     showTerminalCount === DEFAULT_GENERAL_SETTINGS.showTerminalCount &&
     openFileSidebarByDefault ===
       DEFAULT_GENERAL_SETTINGS.openFileSidebarByDefault &&
@@ -293,6 +297,20 @@ export function GeneralSettingsPanel() {
         title={t("Projects sidebar")}
         description={t("Control the information shown beside each project.")}
       >
+        <SettingRow
+          title={t("Confirm before deleting projects")}
+          description={t(
+            "Show a warning before removing a project and its terminal sessions.",
+          )}
+        >
+          <SettingSwitch
+            label={t("Confirm before deleting projects")}
+            checked={confirmDeleteProject}
+            onCheckedChange={(checked) =>
+              update({ confirmDeleteProject: checked })
+            }
+          />
+        </SettingRow>
         <SettingRow
           title={t("Running terminal count")}
           description={t(

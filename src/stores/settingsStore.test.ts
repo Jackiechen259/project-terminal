@@ -29,6 +29,7 @@ describe("settingsStore", () => {
       terminalFontSize: 18,
       autoCheckForUpdates: false,
       openFileSidebarByDefault: true,
+      confirmDeleteProject: false,
     });
 
     expect(useSettingsStore.getState().language).toBe("zh-CN");
@@ -37,9 +38,11 @@ describe("settingsStore", () => {
     expect(useSettingsStore.getState().terminalFontSize).toBe(18);
     expect(useSettingsStore.getState().autoCheckForUpdates).toBe(false);
     expect(useSettingsStore.getState().openFileSidebarByDefault).toBe(true);
+    expect(useSettingsStore.getState().confirmDeleteProject).toBe(false);
 
     useSettingsStore.getState().resetGeneralSettings();
     expect(useSettingsStore.getState()).toMatchObject(DEFAULT_GENERAL_SETTINGS);
+    expect(useSettingsStore.getState().confirmDeleteProject).toBe(true);
   });
 
   it("clamps invalid terminal font sizes", () => {

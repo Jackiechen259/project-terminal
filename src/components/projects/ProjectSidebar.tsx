@@ -1142,6 +1142,9 @@ const ProjectRow = memo(function ProjectRow({
   onPointerMove,
 }: ProjectRowProps) {
   const { t } = useTranslation();
+  const confirmDeleteProject = useSettingsStore(
+    (state) => state.confirmDeleteProject,
+  );
   const Icon =
     project.type === "local"
       ? Folder
@@ -1157,7 +1160,10 @@ const ProjectRow = memo(function ProjectRow({
   const [editing, setEditing] = useState(false);
 
   async function removeProject() {
-    if (window.confirm(t('Remove project "{name}"?', { name: project.name }))) {
+    if (
+      !confirmDeleteProject ||
+      window.confirm(t('Remove project "{name}"?', { name: project.name }))
+    ) {
       try {
         await removeProjectWorkspace(project.id);
       } catch {

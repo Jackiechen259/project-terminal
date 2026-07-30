@@ -65,6 +65,9 @@ const zhCN: Record<string, string> = {
   "Projects sidebar": "项目侧边栏",
   "Control the information shown beside each project.":
     "控制每个项目旁显示的信息。",
+  "Confirm before deleting projects": "删除项目前确认",
+  "Show a warning before removing a project and its terminal sessions.":
+    "移除项目及其终端会话前显示警告。",
   "Running terminal count": "运行中终端数量",
   "Show the number of active terminals next to each project.":
     "在每个项目旁显示活动终端数量。",

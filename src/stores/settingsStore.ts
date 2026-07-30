@@ -17,6 +17,7 @@ export interface GeneralSettings {
   theme: AppTheme;
   restoreLastProject: boolean;
   confirmCloseTerminal: boolean;
+  confirmDeleteProject: boolean;
   showTerminalCount: boolean;
   openFileSidebarByDefault: boolean;
   terminalFontSize: number;
@@ -31,6 +32,7 @@ export const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   theme: "dark",
   restoreLastProject: true,
   confirmCloseTerminal: true,
+  confirmDeleteProject: true,
   showTerminalCount: true,
   openFileSidebarByDefault: false,
   terminalFontSize: 14,
@@ -118,6 +120,7 @@ export const useSettingsStore = create<SettingsStoreState>()(
         theme: state.theme,
         restoreLastProject: state.restoreLastProject,
         confirmCloseTerminal: state.confirmCloseTerminal,
+        confirmDeleteProject: state.confirmDeleteProject,
         showTerminalCount: state.showTerminalCount,
         openFileSidebarByDefault: state.openFileSidebarByDefault,
         terminalFontSize: state.terminalFontSize,

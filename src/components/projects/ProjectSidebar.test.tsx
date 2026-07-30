@@ -13,6 +13,13 @@ import { dispatchAppCommand } from "@/lib/appCommands";
 import { ProjectSidebar } from "./ProjectSidebar";
 
 const settingsDialogRender = vi.hoisted(() => vi.fn());
+const settingsState = vi.hoisted(() => ({
+  restoreLastProject: false,
+  lastProjectId: null as string | null,
+  rememberProject: vi.fn(),
+  showTerminalCount: true,
+  confirmDeleteProject: true,
+}));
 const terminalState = vi.hoisted(() => {
   const state = {
     activeProjectId: null as string | null,
@@ -38,12 +45,7 @@ vi.mock("@/services", () => ({
 
 vi.mock("@/stores/settingsStore", () => ({
   useSettingsStore: vi.fn((selector: (s: unknown) => unknown) =>
-    selector({
-      restoreLastProject: false,
-      lastProjectId: null,
-      rememberProject: vi.fn(),
-      showTerminalCount: true,
-    }),
+    selector(settingsState),
   ),
 }));
 vi.mock("@/stores/terminalStore", () => ({
@@ -114,6 +116,7 @@ function startPointerDrag(element: Element, pointerId = 1) {
 
 beforeEach(() => {
   localStorage.clear();
+  settingsState.confirmDeleteProject = true;
   terminalState.activeProjectId = null;
   terminalState.tabGroupsByProjectId = {};
   terminalState.tabsById = {};
@@ -182,6 +185,31 @@ describe("ProjectSidebar collections", () => {
 
     await waitFor(() => expect(deleteProject).toHaveBeenCalledWith("p1"));
     expect(terminalState.removeProjectTabs).toHaveBeenCalledWith("p1");
+  });
+
+  it("does not delete a project when its warning is cancelled", () => {
+    const deleteProject = vi.fn();
+    useProjectStore.setState({ deleteProject });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    render(<ProjectSidebar />);
+    fireEvent.click(screen.getAllByLabelText("Remove project")[0]);
+
+    expect(confirm).toHaveBeenCalledWith('Remove project "Alpha"?');
+    expect(deleteProject).not.toHaveBeenCalled();
+  });
+
+  it("deletes without a warning when project confirmation is disabled", async () => {
+    settingsState.confirmDeleteProject = false;
+    const deleteProject = vi.fn().mockResolvedValue(undefined);
+    useProjectStore.setState({ deleteProject });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    render(<ProjectSidebar />);
+    fireEvent.click(screen.getAllByLabelText("Remove project")[0]);
+
+    await waitFor(() => expect(deleteProject).toHaveBeenCalledWith("p1"));
+    expect(confirm).not.toHaveBeenCalled();
   });
 
   it("keeps collection membership while the project list is still loading", async () => {
