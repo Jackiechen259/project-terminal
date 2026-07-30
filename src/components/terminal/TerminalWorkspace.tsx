@@ -870,8 +870,9 @@ export function TerminalWorkspace() {
         onPointerUp={handleTabPointerUp}
         onPointerCancel={handleTabPointerCancel}
         className={cn(
-          "group relative flex shrink-0 cursor-default items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground data-[dragging=true]:opacity-50",
-          id === activeTabId && "bg-accent text-accent-foreground",
+          "group relative flex shrink-0 cursor-default items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground data-[dragging=true]:opacity-50",
+          id === activeTabId &&
+            "bg-accent text-accent-foreground after:pointer-events-none after:absolute after:inset-x-1.5 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary",
         )}
         onContextMenu={(event) => {
           event.preventDefault();
@@ -883,7 +884,7 @@ export function TerminalWorkspace() {
         {tabDropTarget?.tabId === id ? (
           <span
             className={cn(
-              "pointer-events-none absolute bottom-1 top-1 z-10 w-0.5 rounded-full bg-primary shadow-[0_0_8px_hsl(var(--primary))]",
+              "pointer-events-none absolute bottom-1 top-1 z-10 w-0.5 rounded-full bg-primary",
               tabDropTarget.position === "before" ? "-left-1" : "-right-1",
             )}
           />
@@ -912,7 +913,7 @@ export function TerminalWorkspace() {
               event.stopPropagation();
               void handleRestart(id);
             }}
-            className="opacity-50 hover:opacity-100"
+            className="rounded p-0.5 opacity-60 transition-colors hover:bg-foreground/10 hover:opacity-100"
             aria-label={
               projects.find((project) => project.id === tab.projectId)?.type ===
               "ssh"
@@ -937,7 +938,7 @@ export function TerminalWorkspace() {
               void handleCloseTab(id);
             }
           }}
-          className="opacity-50 hover:opacity-100"
+          className="rounded p-0.5 opacity-60 transition-colors hover:bg-foreground/10 hover:opacity-100"
           aria-label={t("Close tab")}
         >
           <X className="h-3.5 w-3.5" />
@@ -1055,7 +1056,7 @@ export function TerminalWorkspace() {
         <div
           ref={previewRef}
           aria-hidden="true"
-          className="pointer-events-none fixed left-0 top-0 z-[60] flex max-w-56 will-change-transform items-center gap-2 rounded-md border border-primary/70 bg-surface/80 px-3 py-2 text-xs text-foreground opacity-80 shadow-xl shadow-black/40 backdrop-blur-sm"
+          className="pointer-events-none fixed left-0 top-0 z-[60] flex max-w-56 will-change-transform items-center gap-2 rounded-md border border-primary/60 bg-popover px-3 py-2 text-xs text-foreground opacity-90 shadow-md"
         >
           <TerminalIcon className="h-3.5 w-3.5 shrink-0 text-primary" />
           <span className="truncate">{tabsById[draggedTabId].title}</span>
@@ -1089,7 +1090,7 @@ export function TerminalWorkspace() {
                   ref={splitTabGroupRef}
                   role="group"
                   aria-label={t("Split terminal group")}
-                  className="flex shrink-0 items-center gap-1 rounded-lg border border-primary/60 bg-accent/40 p-1 shadow-sm"
+                  className="flex shrink-0 items-center gap-1 rounded-lg border border-primary/40 bg-primary/5 p-1"
                 >
                   <span className="px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                     {t("Split")}
@@ -1124,7 +1125,7 @@ export function TerminalWorkspace() {
             <SelectTrigger
               aria-label={t("Terminal profile")}
               title={t("Profile used by the + button")}
-              className="group h-7 w-36 shrink-0 gap-1.5 rounded-md border-border/70 bg-background/70 px-2 text-xs font-medium shadow-sm transition-all hover:border-primary/40 hover:bg-accent/50 focus:ring-1 focus:ring-primary/50 focus:ring-offset-0 [&>svg:last-child]:h-3.5 [&>svg:last-child]:w-3.5 [&>svg:last-child]:transition-transform data-[state=open]:border-primary/50 data-[state=open]:bg-accent/60 data-[state=open]:[&>svg:last-child]:rotate-180"
+              className="group h-7 w-36 shrink-0 gap-1.5 rounded-md border-border px-2 text-xs font-medium transition-colors hover:bg-accent/60 focus:ring-1 focus:ring-ring [&>svg:last-child]:h-3.5 [&>svg:last-child]:w-3.5 [&>svg:last-child]:transition-transform data-[state=open]:border-ring data-[state=open]:bg-accent/60 data-[state=open]:[&>svg:last-child]:rotate-180"
             >
               {selectedProfile?.isDefault ? (
                 <Star className="h-3.5 w-3.5 shrink-0 fill-primary/20 text-primary" />
@@ -1140,7 +1141,7 @@ export function TerminalWorkspace() {
             <SelectContent
               align="end"
               sideOffset={6}
-              className="min-w-44 rounded-lg border-border/80 bg-popover/95 shadow-xl backdrop-blur-md"
+              className="min-w-44 rounded-md border-border"
             >
               {profiles.map((profile) => (
                 <SelectItem
@@ -1197,7 +1198,7 @@ export function TerminalWorkspace() {
         {draggedTabId && dropZone ? (
           <div
             className={cn(
-              "pointer-events-none absolute z-30 flex items-center justify-center rounded-md border-2 border-primary bg-primary/10 text-xs font-medium text-primary backdrop-blur-[1px] transition-all duration-150 ease-out",
+              "pointer-events-none absolute z-30 flex items-center justify-center rounded-md border-2 border-primary bg-primary/10 text-xs font-medium text-primary transition-all duration-150 ease-out",
               dropZone === "left" &&
                 "bottom-2 left-2 top-2 w-[calc(50%-0.5rem)]",
               dropZone === "right" &&

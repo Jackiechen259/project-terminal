@@ -95,7 +95,7 @@ export const TerminalPane = memo(function TerminalPane({
         <div className="flex h-full items-center justify-center bg-background">
           <button
             type="button"
-            className="flex items-center gap-2 rounded-md border border-border bg-surface px-4 py-3 text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+            className="flex items-center gap-2 rounded-md border border-border bg-surface px-4 py-3 text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onClick={() => onRestart(tabId)}
           >
             <RotateCcw className="h-4 w-4" />

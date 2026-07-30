@@ -1101,7 +1101,7 @@ function ProfileForm({
       ) : null}
       <Field label={t("Shell arguments")} hint={t("One argument per line")}>
         <textarea
-          className="form-textarea min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+          className="form-textarea min-h-20 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none transition-colors focus:border-ring focus:ring-1 focus:ring-ring"
           value={draft.shellArgs}
           onChange={(event) => update("shellArgs", event.target.value)}
           placeholder="-NoLogo"
@@ -1239,7 +1239,7 @@ function ProfileForm({
       </div>
       <Field label={t("Startup commands")} hint={t("One command per line")}>
         <textarea
-          className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+          className="min-h-20 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none transition-colors focus:border-ring focus:ring-1 focus:ring-ring"
           value={draft.startupCommands}
           onChange={(event) => update("startupCommands", event.target.value)}
           placeholder="python --version"
@@ -1250,7 +1250,7 @@ function ProfileForm({
         hint={t("One NAME=value pair per line")}
       >
         <textarea
-          className="min-h-20 w-full rounded-md border bg-background px-3 py-2 font-mono text-sm outline-none focus:ring-2 focus:ring-ring"
+          className="min-h-20 w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-sm outline-none transition-colors focus:border-ring focus:ring-1 focus:ring-ring"
           value={draft.environmentVariables}
           onChange={(event) =>
             update("environmentVariables", event.target.value)
@@ -1357,11 +1357,12 @@ function SettingsNavItem({
       onClick={onClick}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground",
-        active && "bg-accent text-accent-foreground",
+        "relative flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground",
+        active &&
+          "bg-accent text-accent-foreground before:absolute before:bottom-2 before:left-0 before:top-2 before:w-0.5 before:rounded-full before:bg-primary",
       )}
     >
-      <Icon className="h-4 w-4" />
+      <Icon className={cn("h-4 w-4", active && "text-primary")} />
       {label}
     </button>
   );

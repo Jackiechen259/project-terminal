@@ -16,8 +16,10 @@
     --popover: 240 10% 3.9%;
     --popover-foreground: 0 0% 98%;
 
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
+    /* Flat design: a single vivid blue accent instead of the neutral
+       zinc primary. Focus rings share the accent hue. */
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 47.4% 11.2%;
 
     --secondary: 240 3.7% 15.9%;
     --secondary-foreground: 0 0% 98%;
@@ -28,14 +30,14 @@
     --accent: 240 3.7% 15.9%;
     --accent-foreground: 0 0% 98%;
 
-    --destructive: 0 62.8% 30.6%;
+    --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 98%;
 
     --border: 240 3.7% 15.9%;
     --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
+    --ring: 217.2 91.2% 59.8%;
 
-    --radius: 0.5rem;
+    --radius: 0.375rem;
 
     /* App-chrome tokens - shared surface tones. */
     --bg: 240 10% 3.9%;
@@ -46,9 +48,6 @@
     --scrollbar: 240 5% 31%;
     --scrollbar-hover: 240 5% 45%;
     --frame-edge: 240 5% 20%;
-    --frame-accent-1: 210 45% 47%;
-    --frame-accent-2: 270 40% 48%;
-    --titlebar-shadow: 240 5% 4%;
   }
 
   :root[data-theme="eye-care"] {
@@ -80,9 +79,6 @@
     --scrollbar: 36 16% 58%;
     --scrollbar-hover: 34 18% 44%;
     --frame-edge: 38 22% 72%;
-    --frame-accent-1: 200 38% 48%;
-    --frame-accent-2: 32 43% 48%;
-    --titlebar-shadow: 35 18% 66%;
   }
 
   :root[data-theme="light"] {
@@ -93,8 +89,8 @@
     --card-foreground: 240 10% 3.9%;
     --popover: 0 0% 100%;
     --popover-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
+    --primary: 221.2 83.2% 53.3%;
+    --primary-foreground: 210 40% 98%;
     --secondary: 240 4.8% 95.9%;
     --secondary-foreground: 240 5.9% 10%;
     --muted: 240 4.8% 95.9%;
@@ -105,7 +101,7 @@
     --destructive-foreground: 0 0% 98%;
     --border: 240 5.9% 90%;
     --input: 240 5.9% 90%;
-    --ring: 240 5% 64.9%;
+    --ring: 221.2 83.2% 53.3%;
     --bg: 0 0% 100%;
     --surface: 240 20% 98%;
     --surface-2: 240 4.8% 95.9%;
@@ -114,9 +110,6 @@
     --scrollbar: 240 5% 65%;
     --scrollbar-hover: 240 4% 46%;
     --frame-edge: 240 6% 85%;
-    --frame-accent-1: 210 55% 50%;
-    --frame-accent-2: 270 42% 54%;
-    --titlebar-shadow: 240 6% 80%;
   }
 
   html,
@@ -200,7 +193,8 @@
   background-color: transparent !important;
 }
 
-/* A subtle top edge gives the borderless desktop shell a finished frame. */
+/* A subtle top edge gives the borderless desktop shell a finished frame.
+   Flat design: a plain 1px line, no gradient or glow. */
 .app-frame {
   position: relative;
 }
@@ -214,14 +208,7 @@
   height: 1px;
   content: "";
   pointer-events: none;
-  background: linear-gradient(
-    90deg,
-    hsl(var(--frame-edge)),
-    hsl(var(--frame-accent-1) / 0.7) 42%,
-    hsl(var(--frame-accent-2) / 0.55) 62%,
-    hsl(var(--frame-edge))
-  );
-  box-shadow: 0 1px 12px hsl(220 70% 55% / 0.15);
+  background: hsl(var(--frame-edge));
 }
 
 /* Desktop window chrome. The controls deliberately use familiar Windows hit
@@ -229,7 +216,6 @@
 .window-titlebar {
   position: relative;
   z-index: 30;
-  box-shadow: 0 1px 0 hsl(var(--titlebar-shadow) / 0.65);
 }
 
 .window-control {
@@ -253,7 +239,7 @@
 
 .window-control:focus-visible {
   z-index: 1;
-  outline: 2px solid hsl(210 75% 56%);
+  outline: 2px solid hsl(var(--ring));
   outline-offset: -2px;
 }
 

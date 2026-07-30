@@ -576,7 +576,7 @@ function SettingSwitch({
     >
       <span
         className={cn(
-          "block h-4 w-4 rounded-full shadow-sm transition-transform",
+          "block h-4 w-4 rounded-full transition-transform",
           checked
             ? "translate-x-6 bg-primary-foreground"
             : "translate-x-1 bg-foreground",

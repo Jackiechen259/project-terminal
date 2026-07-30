@@ -73,7 +73,7 @@ export function ContextMenu({ position, items, onClose }: ContextMenuProps) {
       ref={menuRef}
       role="menu"
       aria-label={t("Application context menu")}
-      className="fixed z-50 min-w-48 rounded-md border bg-popover p-1 text-popover-foreground shadow-lg"
+      className="fixed z-50 min-w-48 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md animate-in fade-in-0 zoom-in-95 duration-100"
       style={{ left: position.x, top: position.y }}
     >
       {items.map((item, index) => {
@@ -94,7 +94,7 @@ export function ContextMenu({ position, items, onClose }: ContextMenuProps) {
             role="menuitem"
             disabled={item.disabled}
             className={cn(
-              "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none hover:bg-accent focus:bg-accent disabled:pointer-events-none disabled:opacity-50",
+              "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none transition-colors hover:bg-accent focus:bg-accent disabled:pointer-events-none disabled:opacity-50",
               item.destructive &&
                 "text-destructive hover:bg-destructive/10 focus:bg-destructive/10",
             )}
