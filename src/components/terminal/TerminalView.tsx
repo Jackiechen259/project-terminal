@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
 import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -30,6 +31,9 @@ import { resolveTerminalTabTitle } from "./terminalTitle";
 
 /** How many times a single session may rebuild itself after dropped output. */
 const MAX_LAGGED_RESYNCS = 3;
+
+/** Per-terminal budget for decoded inline images, in MB. */
+const TERMINAL_IMAGE_STORAGE_LIMIT_MB = 32;
 
 /**
  * Single xterm.js view bound to a backend PTY session.
@@ -210,6 +214,17 @@ export const TerminalView = memo(function TerminalView({
     term.loadAddon(search);
     term.loadAddon(new UnicodeGraphemesAddon());
     term.loadAddon(new WebLinksAddon());
+    // Sixel/IIP rendering. This one must be loaded before `open()`: the addon
+    // wraps the core's `open` and `setRenderer`, and the latter is what keeps
+    // images alive across the asynchronous WebGL upgrade below.
+    term.loadAddon(
+      new ImageAddon({
+        // The 128 MB default is sized for a single terminal; this app keeps one
+        // instance per tab, and the images we expect (agent mascots, plots) are
+        // small.
+        storageLimit: TERMINAL_IMAGE_STORAGE_LIMIT_MB,
+      }),
+    );
     term.open(container);
     let webgl: WebglAddon | null = null;
     let disposed = false;

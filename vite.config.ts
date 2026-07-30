@@ -38,6 +38,7 @@ export default defineConfig(async () => ({
           "terminal-vendor": [
             "@xterm/xterm",
             "@xterm/addon-fit",
+            "@xterm/addon-image",
             "@xterm/addon-search",
             "@xterm/addon-unicode-graphemes",
             "@xterm/addon-web-links",

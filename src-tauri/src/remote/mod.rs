@@ -324,6 +324,7 @@ fn build_router(state: RemoteState) -> Router {
         .route("/xterm.js", get(xterm_js))
         .route("/xterm.css", get(xterm_css))
         .route("/xterm-addon-fit.js", get(xterm_addon_fit_js))
+        .route("/xterm-addon-image.js", get(xterm_addon_image_js))
         .route("/api/projects", get(list_projects))
         .route("/api/sessions", get(list_sessions).post(create_session))
         .route("/api/sessions/{id}", get(get_session))
@@ -368,6 +369,16 @@ async fn xterm_addon_fit_js() -> impl IntoResponse {
             "text/javascript; charset=utf-8",
         )],
         XTERM_ADDON_FIT_JS,
+    )
+}
+
+async fn xterm_addon_image_js() -> impl IntoResponse {
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/javascript; charset=utf-8",
+        )],
+        XTERM_ADDON_IMAGE_JS,
     )
 }
 
@@ -1291,6 +1302,7 @@ fn is_tailscale_ip(ip: IpAddr) -> bool {
 const XTERM_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/xterm.js"));
 const XTERM_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/xterm.css"));
 const XTERM_ADDON_FIT_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/xterm-addon-fit.js"));
+const XTERM_ADDON_IMAGE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/xterm-addon-image.js"));
 
 const MOBILE_PAGE: &str = include_str!("remote_page.html");
 

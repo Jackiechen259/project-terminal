@@ -226,8 +226,13 @@ pub(crate) fn build_session_spawn(
         }
     };
 
-    // Env vars from the profile, plus internal markers.
+    // Env vars from the profile, plus internal markers. TERM goes first so a
+    // profile that pins its own value overrides the resolved one.
     let mut env: Vec<(String, String)> = Vec::new();
+    env.push((
+        "TERM".into(),
+        crate::terminal::resolve_term(project.project_type, profile.shell_type).into(),
+    ));
     if project.project_type == crate::project::ProjectType::Local {
         if let Some(vars) = &profile.environment_variables {
             for (k, v) in vars {
@@ -1164,6 +1169,46 @@ mod tests {
         assert!(spawn.env.iter().any(|(k, v)| {
             k == "PROJECT_TERMINAL_READY" && v == "__PROJECT_TERMINAL_READY_session-1__"
         }));
+    }
+
+    #[test]
+    fn build_session_spawn_lets_a_profile_override_the_resolved_term() {
+        let app = test_state();
+        let _dir = seed_project(&app, "p1");
+        let mut profile = default_powershell_profile("profile-1".into(), "p1".into());
+        profile.shell_executable = Some("cmd.exe".into());
+        app.profiles.upsert(profile.clone()).unwrap();
+        let request = CreateTerminalRequest {
+            project_id: "p1".into(),
+            profile_id: "profile-1".into(),
+            rows: 24,
+            cols: 80,
+            scrollback_megabytes: None,
+        };
+
+        // A PowerShell profile advertises inline-image support by default.
+        let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
+        let term = |spawn: &crate::terminal::SessionSpawn| {
+            // Later entries win in the PTY, so the effective value is the last.
+            spawn
+                .env
+                .iter()
+                .filter(|(k, _)| k == "TERM")
+                .next_back()
+                .map(|(_, v)| v.clone())
+                .unwrap()
+        };
+        assert_eq!(term(&spawn), crate::terminal::TERM_SIXEL);
+
+        // ...and an explicit profile variable takes it back.
+        profile.environment_variables = Some(
+            [("TERM".to_string(), "xterm-256color".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        app.profiles.upsert(profile).unwrap();
+        let (spawn, _, _) = build_session_spawn(&app, &request, "session-2").unwrap();
+        assert_eq!(term(&spawn), "xterm-256color");
     }
 
     #[test]

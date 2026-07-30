@@ -176,6 +176,12 @@ adapter and the optional remote gateway share the same terminal manager, so
 session lifecycle and status cannot diverge between local and remote clients.
 Hiding the window keeps that process running; fully quitting stops all PTYs.
 
+### Inline images
+
+Terminals render inline images sent through the Sixel and iTerm (IIP) protocols, both in the desktop app and on the mobile remote page.
+
+Command-line tools decide whether they may emit images from the `TERM` value alone, so PowerShell and CMD sessions are started with `TERM=xterm-sixel`. Git Bash, WSL, and SSH sessions keep `TERM=xterm-256color`, because `xterm-sixel` has no terminfo entry and an unknown terminal type would break `vim`, `less`, and similar tools on the other side. Running `wsl` or `ssh` by hand from inside a PowerShell tab carries the sixel value across; set `TERM` in the profile's environment variables to override it.
+
 ### Project tab groups
 
 Tabs are grouped by project. Switching projects changes which group is visible, but terminal components remain mounted, so background processes and remote sessions continue running.
