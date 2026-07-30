@@ -19,6 +19,7 @@ fn main() {
         ("@xterm/xterm/lib/xterm.js", "xterm.js"),
         ("@xterm/xterm/css/xterm.css", "xterm.css"),
         ("@xterm/addon-fit/lib/addon-fit.js", "xterm-addon-fit.js"),
+        ("@xterm/addon-image/lib/addon-image.js", "xterm-addon-image.js"),
     ];
 
     for (src_rel, dst_name) in assets {

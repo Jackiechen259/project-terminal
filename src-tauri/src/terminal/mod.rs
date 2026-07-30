@@ -18,11 +18,41 @@ use crate::error::{AppError, AppResult};
 #[cfg(test)]
 use crate::profile::EnvironmentType;
 use crate::profile::{ShellType, TerminalProfile};
+use crate::project::ProjectType;
 pub use initializer::{build_activation_script, build_remote_initialization_commands};
 pub use manager::{SessionInfo, TerminalManager};
 use serde::Serialize;
 pub use session::{SessionSpawn, TerminalEvent, TerminalEventPayload, TerminalOutput};
 pub use wsl::{detect_wsl_distributions, DetectedWslDistribution};
+
+/// Terminal type for shells that may consult terminfo, directly or on a host
+/// reached through them.
+pub const TERM_PORTABLE: &str = "xterm-256color";
+
+/// Terminal type that additionally advertises inline-image support.
+pub const TERM_SIXEL: &str = "xterm-sixel";
+
+/// Pick the `TERM` announced to the child process.
+///
+/// CLI tools decide whether they may emit inline images from this string alone
+/// - Codex, for one, only enables its image output when `TERM` contains
+/// `sixel`. The terminal renders Sixel, so saying so is what makes those
+/// features work.
+///
+/// The catch is that `xterm-sixel` is not an ncurses terminfo entry, so it is
+/// only safe where nothing looks it up: PowerShell and CMD never consult
+/// terminfo. Git Bash, WSL and anything reached over SSH do (or hand `TERM` to
+/// a host that does) and keep [`TERM_PORTABLE`], where an unknown entry would
+/// break `vim`, `less` and friends.
+pub fn resolve_term(project_type: ProjectType, shell_type: ShellType) -> &'static str {
+    if project_type != ProjectType::Local {
+        return TERM_PORTABLE;
+    }
+    match shell_type {
+        ShellType::Powershell | ShellType::Cmd => TERM_SIXEL,
+        _ => TERM_PORTABLE,
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -372,6 +402,38 @@ mod tests {
                 "bash",
             ]
         );
+    }
+
+    #[test]
+    fn term_advertises_sixel_only_for_terminfo_free_local_shells() {
+        for shell in [ShellType::Powershell, ShellType::Cmd] {
+            assert_eq!(resolve_term(ProjectType::Local, shell), TERM_SIXEL);
+        }
+        for shell in [
+            ShellType::GitBash,
+            ShellType::Wsl,
+            ShellType::Bash,
+            ShellType::Zsh,
+            ShellType::Fish,
+            ShellType::Sh,
+            ShellType::RemoteDefault,
+            ShellType::RemoteBash,
+            ShellType::Custom,
+        ] {
+            assert_eq!(resolve_term(ProjectType::Local, shell), TERM_PORTABLE);
+        }
+    }
+
+    #[test]
+    fn term_stays_portable_for_projects_reached_through_another_host() {
+        // The shell type is irrelevant here: `ssh` and `wsl.exe` hand TERM to a
+        // host whose terminfo database has never heard of `xterm-sixel`.
+        for project_type in [ProjectType::Ssh, ProjectType::Wsl] {
+            assert_eq!(
+                resolve_term(project_type, ShellType::Powershell),
+                TERM_PORTABLE
+            );
+        }
     }
 
     #[test]

@@ -414,7 +414,7 @@ export function ProjectFilePanel({ onClose }: { onClose: () => void }) {
       )}
 
       {nativeDragOver ? (
-        <div className="pointer-events-none absolute inset-2 z-20 flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-primary bg-background/90 text-center text-sm font-medium shadow-xl">
+        <div className="pointer-events-none absolute inset-2 z-20 flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-primary bg-background/95 text-center text-sm font-medium">
           <ArrowUpFromLine className="h-7 w-7 text-primary" />
           {t("Drop files to upload")}
           <span className="max-w-[220px] text-[11px] font-normal text-muted-foreground">

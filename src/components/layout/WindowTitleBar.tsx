@@ -90,7 +90,7 @@ export function WindowTitleBar({
             )}
           </button>
         ) : null}
-        <span className="pointer-events-none flex h-5 w-5 items-center justify-center rounded-[5px] bg-[linear-gradient(145deg,#203a73,#291a57)] shadow-[0_0_12px_hsl(210_75%_56%_/_0.26)]">
+        <span className="pointer-events-none flex h-5 w-5 items-center justify-center rounded-[5px] bg-primary/15">
           <BrandMark className="h-[18px] w-[18px]" />
         </span>
         <span className="pointer-events-none truncate text-[13px] font-medium tracking-[0.01em]">

@@ -541,7 +541,7 @@ export function ProjectSidebar() {
         <div
           ref={previewRef}
           aria-hidden="true"
-          className="pointer-events-none fixed left-0 top-0 z-[60] flex max-w-56 will-change-transform items-center gap-2 rounded-md border border-primary/70 bg-surface/80 px-3 py-2 text-sm text-foreground opacity-80 shadow-xl shadow-black/40 backdrop-blur-sm"
+          className="pointer-events-none fixed left-0 top-0 z-[60] flex max-w-56 will-change-transform items-center gap-2 rounded-md border border-primary/60 bg-popover px-3 py-2 text-sm text-foreground opacity-90 shadow-md"
         >
           {draggedProject.type === "local" ? (
             <Folder className="h-4 w-4 shrink-0 text-primary" />
@@ -914,7 +914,7 @@ const CollectionGroup = memo(function CollectionGroup({
         onDropTarget({ kind: "collection", collectionId: collection.id });
       }}
     >
-      <div className="group flex items-center gap-1 rounded-md px-1 py-1 text-sm hover:bg-accent hover:text-accent-foreground">
+      <div className="group flex items-center gap-1 rounded-md px-1 py-1 text-sm transition-colors hover:bg-accent hover:text-accent-foreground">
         <button
           type="button"
           onClick={onToggleCollapsed}
@@ -945,7 +945,7 @@ const CollectionGroup = memo(function CollectionGroup({
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6 opacity-0 group-hover:opacity-100"
+          className="h-6 w-6 opacity-0 focus-visible:opacity-100 group-hover:opacity-100"
           aria-label={t("Rename collection")}
           onClick={(e) => {
             e.stopPropagation();
@@ -957,7 +957,7 @@ const CollectionGroup = memo(function CollectionGroup({
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6 opacity-0 group-hover:opacity-100"
+          className="h-6 w-6 opacity-0 focus-visible:opacity-100 group-hover:opacity-100"
           aria-label={t("Delete collection")}
           onClick={(e) => {
             e.stopPropagation();
@@ -1221,23 +1221,26 @@ const ProjectRow = memo(function ProjectRow({
           }
         }}
         className={cn(
-          "group relative flex cursor-default select-none items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground",
+          "group relative flex cursor-default select-none items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground",
           active && "bg-accent text-accent-foreground",
           isDragging && "opacity-40",
           indent === 1 && "ml-1",
         )}
         style={indent === 1 ? { paddingLeft: "0.5rem" } : undefined}
       >
+        {active ? (
+          <span className="pointer-events-none absolute bottom-1.5 left-0 top-1.5 w-0.5 rounded-full bg-primary" />
+        ) : null}
         {isDropBefore ? (
           <span className="pointer-events-none absolute left-0 right-0 top-0 h-0.5 bg-blue-500" />
         ) : null}
         {isDropAfter ? (
           <span className="pointer-events-none absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500" />
         ) : null}
-        <Icon className="h-4 w-4 shrink-0" />
+        <Icon className={cn("h-4 w-4 shrink-0", active && "text-primary")} />
         <span className="flex-1 truncate">{project.name}</span>
         {showTerminalCount && running ? (
-          <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-ok">
+          <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-ok">
             {running}
           </span>
         ) : null}
@@ -1250,7 +1253,7 @@ const ProjectRow = memo(function ProjectRow({
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6 opacity-0 group-hover:opacity-100"
+          className="h-6 w-6 opacity-0 focus-visible:opacity-100 group-hover:opacity-100"
           aria-label={t("Remove project")}
           onClick={(e) => {
             e.stopPropagation();

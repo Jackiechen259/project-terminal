@@ -173,6 +173,12 @@ Rust 应用后端
 
 桌面进程是实时 PTY 的唯一所有者。Tauri 命令适配器与可选远程网关共享同一个终端管理器，因此本地端与远程端的会话生命周期和状态不会产生分歧。隐藏窗口会保持该进程运行；完全退出应用时会停止全部 PTY。
 
+### 终端内嵌图片 (Inline Images)
+
+桌面端与手机远程网页终端都能渲染通过 Sixel 与 iTerm (IIP) 协议输出的内嵌图片。
+
+命令行工具仅凭 `TERM` 的取值来判断自己能否输出图片，因此 PowerShell 与 CMD 会话使用 `TERM=xterm-sixel` 启动。Git Bash、WSL 与 SSH 会话保持 `TERM=xterm-256color`：`xterm-sixel` 没有对应的 terminfo 条目，未知终端类型会让对端的 `vim`、`less` 等工具报错。若在 PowerShell 标签页里手动执行 `wsl` 或 `ssh`，sixel 取值会一并传过去；在配置 (Profile) 的环境变量中设置 `TERM` 即可覆盖。
+
 ### 项目标签页组 (Project Tab Groups)
 
 标签页按项目进行分组隔离。切换项目时会改变前端可见的标签页组，但终端组件依然保持挂载状态，后台进程和远程会话不会中断。

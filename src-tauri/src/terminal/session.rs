@@ -295,12 +295,21 @@ impl TerminalSession {
         if let Some(cwd) = &spawn.cwd {
             cmd.cwd(cwd);
         }
+        // Always set TERM so shells render colors correctly. These go in before
+        // the caller's variables so a profile-level override still wins - and
+        // so does the TERM the caller resolved for this shell type.
+        cmd.env("TERM", super::TERM_PORTABLE);
+        cmd.env("COLORTERM", "truecolor");
+        // `CommandBuilder::new` snapshots this process' environment, so a
+        // TERM_PROGRAM inherited from whatever terminal launched the app would
+        // follow the child around and misidentify it. That is not cosmetic:
+        // capability detection commonly treats TERM_PROGRAM as authoritative
+        // and stops looking at TERM once it is present.
+        cmd.env_remove("TERM_PROGRAM");
+        cmd.env_remove("TERM_PROGRAM_VERSION");
         for (k, v) in &spawn.env {
             cmd.env(k, v);
         }
-        // Always set TERM so shells render colors correctly.
-        cmd.env("TERM", "xterm-256color");
-        cmd.env("COLORTERM", "truecolor");
         cmd.env("PROJECT_TERMINAL", "1");
 
         let child = pair
