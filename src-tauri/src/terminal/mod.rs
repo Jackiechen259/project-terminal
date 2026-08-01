@@ -32,6 +32,26 @@ pub const TERM_PORTABLE: &str = "xterm-256color";
 /// Terminal type that additionally advertises inline-image support.
 pub const TERM_SIXEL: &str = "xterm-sixel";
 
+/// A compiled `xterm-sixel` terminfo entry - `xterm-256color` under a name that
+/// advertises Sixel - in the inline form ncurses accepts through `TERMINFO`.
+///
+/// Regenerate with ncurses' own tools:
+///
+/// ```text
+/// printf 'xterm-sixel|xterm-256color with sixel graphics,\n\tuse=xterm-256color,\n' > sixel.ti
+/// tic -x -o out sixel.ti
+/// infocmp -Q1 -q -A out xterm-sixel | grep -v '^#' | tr -d '\n\t '
+/// ```
+///
+/// The description it resolves to comes from the ncurses terminfo database,
+/// distributed under the X11-style ncurses license.
+const TERMINFO_SIXEL_ENTRY: &str = include_str!("xterm-sixel.terminfo.hex");
+
+/// The inline terminfo entry that makes [`TERM_SIXEL`] resolvable.
+pub fn terminfo_sixel_entry() -> &'static str {
+    TERMINFO_SIXEL_ENTRY.trim()
+}
+
 /// Pick the `TERM` announced to the child process.
 ///
 /// CLI tools decide whether they may emit inline images from this string alone
@@ -39,11 +59,12 @@ pub const TERM_SIXEL: &str = "xterm-sixel";
 /// `sixel`. The terminal renders Sixel, so saying so is what makes those
 /// features work.
 ///
-/// The catch is that `xterm-sixel` is not an ncurses terminfo entry, so it is
-/// only safe where nothing looks it up: PowerShell and CMD never consult
-/// terminfo. Git Bash, WSL and anything reached over SSH do (or hand `TERM` to
-/// a host that does) and keep [`TERM_PORTABLE`], where an unknown entry would
-/// break `vim`, `less` and friends.
+/// The catch is that `xterm-sixel` is not in any stock terminfo database. It is
+/// therefore only announced where [`resolve_term_env`] can hand the entry along
+/// with it: locally, to PowerShell and CMD. Git Bash, WSL and anything reached
+/// over SSH hand `TERM` to a host we cannot teach the name to and keep
+/// [`TERM_PORTABLE`], where an unknown type would break `vim`, `less` and
+/// friends.
 pub fn resolve_term(project_type: ProjectType, shell_type: ShellType) -> &'static str {
     if project_type != ProjectType::Local {
         return TERM_PORTABLE;
@@ -52,6 +73,26 @@ pub fn resolve_term(project_type: ProjectType, shell_type: ShellType) -> &'stati
         ShellType::Powershell | ShellType::Cmd => TERM_SIXEL,
         _ => TERM_PORTABLE,
     }
+}
+
+/// `TERM` plus, when the announced type is not in any terminfo database, the
+/// entry that defines it.
+///
+/// PowerShell and CMD do not consult terminfo themselves, but the tools run
+/// from them do: Git for Windows ships an ncurses-linked `less`, so an
+/// unresolvable `TERM` turns `git branch` into `'xterm-sixel': unknown terminal
+/// type.`. ncurses (6.3 and newer) reads a compiled entry straight out of
+/// `TERMINFO`, which lets us define the name for every tool in the session
+/// without touching the machine's terminfo database. Lookups for any other
+/// `TERM` fall through to that database as usual.
+pub fn resolve_term_env(project_type: ProjectType, shell_type: ShellType) -> Vec<(String, String)> {
+    let term = resolve_term(project_type, shell_type);
+    let mut env = vec![("TERM".to_string(), term.to_string())];
+    if term == TERM_SIXEL {
+        // Overrides an inherited TERMINFO; a profile variable takes it back.
+        env.push(("TERMINFO".to_string(), terminfo_sixel_entry().to_string()));
+    }
+    env
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -422,6 +463,61 @@ mod tests {
         ] {
             assert_eq!(resolve_term(ProjectType::Local, shell), TERM_PORTABLE);
         }
+    }
+
+    #[test]
+    fn sixel_term_is_announced_together_with_the_entry_that_defines_it() {
+        let terminfo = |env: &[(String, String)]| {
+            env.iter()
+                .find(|(k, _)| k == "TERMINFO")
+                .map(|(_, v)| v.clone())
+        };
+
+        for shell in [ShellType::Powershell, ShellType::Cmd] {
+            let env = resolve_term_env(ProjectType::Local, shell);
+            assert_eq!(env[0], ("TERM".to_string(), TERM_SIXEL.to_string()));
+            assert_eq!(terminfo(&env).as_deref(), Some(terminfo_sixel_entry()));
+        }
+
+        // Nothing to teach anyone about `xterm-256color`.
+        for (project_type, shell) in [
+            (ProjectType::Local, ShellType::GitBash),
+            (ProjectType::Ssh, ShellType::Powershell),
+            (ProjectType::Wsl, ShellType::Powershell),
+        ] {
+            let env = resolve_term_env(project_type, shell);
+            assert_eq!(env[0], ("TERM".to_string(), TERM_PORTABLE.to_string()));
+            assert_eq!(terminfo(&env), None);
+        }
+    }
+
+    #[test]
+    fn terminfo_entry_is_a_compiled_description_named_xterm_sixel() {
+        let entry = terminfo_sixel_entry();
+        let hex = entry
+            .strip_prefix("hex:")
+            .expect("ncurses only reads an inline entry tagged hex: or b64:");
+        assert_eq!(hex.len() % 2, 0, "hex encodes whole bytes");
+        let bytes: Vec<u8> = hex
+            .as_bytes()
+            .chunks(2)
+            .map(|pair| {
+                let digits = std::str::from_utf8(pair).expect("hex is ASCII");
+                u8::from_str_radix(digits, 16).expect("entry is hex encoded")
+            })
+            .collect();
+        // Header: magic, then the size of the null-terminated name section.
+        let magic = u16::from_le_bytes([bytes[0], bytes[1]]);
+        assert!(
+            magic == 0o432 || magic == 0o1036,
+            "unexpected terminfo magic {magic:o}"
+        );
+        let names_len = u16::from_le_bytes([bytes[2], bytes[3]]) as usize;
+        let names = std::str::from_utf8(&bytes[12..12 + names_len - 1]).expect("names are ASCII");
+        assert!(
+            names.split('|').any(|name| name == TERM_SIXEL),
+            "ncurses rejects an inline entry whose names do not include TERM: {names}"
+        );
     }
 
     #[test]

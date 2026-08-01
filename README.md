@@ -180,7 +180,7 @@ Hiding the window keeps that process running; fully quitting stops all PTYs.
 
 Terminals render inline images sent through the Sixel and iTerm (IIP) protocols, both in the desktop app and on the mobile remote page.
 
-Command-line tools decide whether they may emit images from the `TERM` value alone, so PowerShell and CMD sessions are started with `TERM=xterm-sixel`. Git Bash, WSL, and SSH sessions keep `TERM=xterm-256color`, because `xterm-sixel` has no terminfo entry and an unknown terminal type would break `vim`, `less`, and similar tools on the other side. Running `wsl` or `ssh` by hand from inside a PowerShell tab carries the sixel value across; set `TERM` in the profile's environment variables to override it.
+Command-line tools decide whether they may emit images from the `TERM` value alone, so PowerShell and CMD sessions are started with `TERM=xterm-sixel`. No stock terminfo database defines that name, so those sessions also carry the compiled entry for it in `TERMINFO`; ncurses 6.3 and newer read a description straight out of that variable, which is what keeps ncurses-linked tools launched from the shell working — without it, Git for Windows' `less` fails with `'xterm-sixel': unknown terminal type.` and takes `git branch`, `git log`, and `git diff` down with it. Git Bash, WSL, and SSH sessions keep `TERM=xterm-256color`, because the entry cannot follow `TERM` onto another host. Running `wsl` or `ssh` by hand from inside a PowerShell tab carries the sixel value across; set `TERM` in the profile's environment variables to override it.
 
 ### Project tab groups
 

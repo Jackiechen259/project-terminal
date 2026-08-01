@@ -229,9 +229,9 @@ pub(crate) fn build_session_spawn(
     // Env vars from the profile, plus internal markers. TERM goes first so a
     // profile that pins its own value overrides the resolved one.
     let mut env: Vec<(String, String)> = Vec::new();
-    env.push((
-        "TERM".into(),
-        crate::terminal::resolve_term(project.project_type, profile.shell_type).into(),
+    env.extend(crate::terminal::resolve_term_env(
+        project.project_type,
+        profile.shell_type,
     ));
     if project.project_type == crate::project::ProjectType::Local {
         if let Some(vars) = &profile.environment_variables {
@@ -1199,6 +1199,12 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(term(&spawn), crate::terminal::TERM_SIXEL);
+        // The name it announces is defined for the session, so terminfo
+        // consumers started from the shell can still resolve it.
+        assert!(spawn
+            .env
+            .iter()
+            .any(|(k, v)| k == "TERMINFO" && v == crate::terminal::terminfo_sixel_entry()));
 
         // ...and an explicit profile variable takes it back.
         profile.environment_variables = Some(
