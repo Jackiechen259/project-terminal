@@ -190,7 +190,7 @@ Tabs are grouped by project. Switching projects changes which group is visible, 
 
 Profiles are stored as first-class project resources. The Rust backend resolves the executable, arguments, working directory, environment activation, startup commands, and environment variables from saved configuration.
 
-On Windows, the profile settings page can import visible profiles from installed Stable, Preview, Canary, or unpackaged Windows Terminal settings. Re-importing skips profiles whose launch configuration is already present in the selected local project.
+On Windows, the profile settings page can import visible profiles from installed Stable, Preview, Canary, or unpackaged Windows Terminal settings. The import lists what it found and imports only the entries you tick; anything whose launch configuration is already present in the selected local project is marked as imported and cannot be selected again. The profile templates page offers the same picker, creating project-independent templates instead.
 
 ### Remote initialization
 

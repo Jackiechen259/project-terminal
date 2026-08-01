@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Check,
   ChevronLeft,
@@ -56,6 +56,7 @@ import type {
 } from "@/types";
 
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
+import { WindowsTerminalImportPanel } from "./WindowsTerminalImportPanel";
 
 export type SettingsSection = "general" | "profiles" | "templates";
 
@@ -307,7 +308,10 @@ export function SettingsDialog({
   const [editing, setEditing] = useState<ProfileDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [importing, setImporting] = useState(false);
+  /** Which destination the import picker is currently open for. */
+  const [importPicker, setImportPicker] = useState<
+    "profiles" | "templates" | null
+  >(null);
   const [importNotice, setImportNotice] = useState<string | null>(null);
   const hostOs = usePlatformStore((state) => state.info?.os);
 
@@ -324,6 +328,9 @@ export function SettingsDialog({
   const importFromWindowsTerminal = useProfileStore(
     (s) => s.importFromWindowsTerminal,
   );
+  const scanProfilesFromWindowsTerminal = useProfileStore(
+    (s) => s.scanWindowsTerminal,
+  );
   const deleteProfile = useProfileStore((s) => s.deleteProfile);
   const templates = useTemplateStore((s) => s.templates ?? EMPTY_TEMPLATES);
   const templatesLoaded = useTemplateStore((s) => s.loaded);
@@ -331,6 +338,12 @@ export function SettingsDialog({
   const createTemplate = useTemplateStore((s) => s.createTemplate);
   const updateTemplate = useTemplateStore((s) => s.updateTemplate);
   const deleteTemplate = useTemplateStore((s) => s.deleteTemplate);
+  const importTemplatesFromWindowsTerminal = useTemplateStore(
+    (s) => s.importFromWindowsTerminal,
+  );
+  const scanTemplatesFromWindowsTerminal = useTemplateStore(
+    (s) => s.scanWindowsTerminal,
+  );
   const [editingTemplate, setEditingTemplate] = useState<ProfileDraft | null>(
     null,
   );
@@ -356,6 +369,7 @@ export function SettingsDialog({
     setProjectId(initialId);
     setEditing(null);
     setError(null);
+    setImportPicker(null);
     setImportNotice(null);
     setEditingTemplate(null);
     setTemplateError(null);
@@ -377,22 +391,47 @@ export function SettingsDialog({
     setProjectId(nextProjectId);
     setEditing(null);
     setError(null);
+    setImportPicker(null);
     setImportNotice(null);
   }
 
   function startCreate() {
     if (!selectedProject) return;
-    setEditing(blankDraft(selectedProject.type));
-    setError(null);
+    startEditingProfile(blankDraft(selectedProject.type));
   }
 
-  async function importWindowsTerminalProfiles() {
-    if (!selectedProject) return;
-    try {
-      setImporting(true);
-      setError(null);
-      setImportNotice(null);
-      const result = await importFromWindowsTerminal(selectedProject.id);
+  /** The editor and the import picker share the content pane, so opening one
+   * always closes the other. */
+  function startEditingProfile(draft: ProfileDraft) {
+    setEditing(draft);
+    setError(null);
+    setImportPicker(null);
+  }
+
+  function startEditingTemplate(draft: ProfileDraft) {
+    setEditingTemplate(draft);
+    setTemplateError(null);
+    setImportPicker(null);
+  }
+
+  function openImportPicker(kind: "profiles" | "templates") {
+    setImportNotice(null);
+    setEditing(null);
+    setEditingTemplate(null);
+    setImportPicker(kind);
+  }
+
+  // The picker owns its own error surface, so these deliberately let failures
+  // propagate back to it instead of catching them here.
+  const scanProfileCandidates = useCallback(() => {
+    if (!projectId) throw new Error("No project selected");
+    return scanProfilesFromWindowsTerminal(projectId);
+  }, [projectId, scanProfilesFromWindowsTerminal]);
+
+  const importSelectedProfiles = useCallback(
+    async (keys: string[]) => {
+      if (!projectId) return;
+      const result = await importFromWindowsTerminal(projectId, keys);
       setImportNotice(
         result.imported.length
           ? t("Imported {count} Windows Terminal profile(s).", {
@@ -400,19 +439,26 @@ export function SettingsDialog({
             })
           : t("No new Windows Terminal profiles to import."),
       );
-      dispatchAppCommand({
-        type: "profiles-changed",
-        projectId: selectedProject.id,
-      });
-    } catch (cause) {
-      setError(
-        (cause as { message?: string }).message ??
-          t("Could not import Windows Terminal profiles."),
+      dispatchAppCommand({ type: "profiles-changed", projectId });
+      setImportPicker(null);
+    },
+    [projectId, importFromWindowsTerminal, t],
+  );
+
+  const importSelectedTemplates = useCallback(
+    async (keys: string[]) => {
+      const result = await importTemplatesFromWindowsTerminal(keys);
+      setImportNotice(
+        result.imported.length
+          ? t("Imported {count} Windows Terminal template(s).", {
+              count: result.imported.length,
+            })
+          : t("No new Windows Terminal templates to import."),
       );
-    } finally {
-      setImporting(false);
-    }
-  }
+      setImportPicker(null);
+    },
+    [importTemplatesFromWindowsTerminal, t],
+  );
 
   async function saveProfile() {
     if (!editing || !selectedProject) return;
@@ -517,7 +563,7 @@ export function SettingsDialog({
     try {
       setError(null);
       const duplicate = await duplicateProfile(profile.id);
-      setEditing(draftFromProfile(duplicate));
+      startEditingProfile(draftFromProfile(duplicate));
       dispatchAppCommand({ type: "profiles-changed", projectId });
     } catch (cause) {
       setError(
@@ -643,13 +689,18 @@ export function SettingsDialog({
                 onClick={() => {
                   setSection("general");
                   setError(null);
+                  setImportPicker(null);
                 }}
               />
               <SettingsNavItem
                 active={section === "profiles"}
                 icon={SquareTerminal}
                 label={t("Terminal profiles")}
-                onClick={() => setSection("profiles")}
+                onClick={() => {
+                  setSection("profiles");
+                  setImportPicker(null);
+                  setImportNotice(null);
+                }}
               />
               <SettingsNavItem
                 active={section === "templates"}
@@ -658,6 +709,8 @@ export function SettingsDialog({
                 onClick={() => {
                   setSection("templates");
                   setError(null);
+                  setImportPicker(null);
+                  setImportNotice(null);
                 }}
               />
             </nav>
@@ -701,10 +754,9 @@ export function SettingsDialog({
                       >
                         <button
                           type="button"
-                          onClick={() => {
-                            setEditing(draftFromProfile(profile));
-                            setError(null);
-                          }}
+                          onClick={() =>
+                            startEditingProfile(draftFromProfile(profile))
+                          }
                           className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left"
                         >
                           <span className="min-w-0 flex-1 truncate">
@@ -758,14 +810,11 @@ export function SettingsDialog({
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => void importWindowsTerminalProfiles()}
-                    disabled={importing}
+                    onClick={() => openImportPicker("profiles")}
                     className="mt-1 w-full justify-start"
                   >
                     <Download className="h-4 w-4" />
-                    {importing
-                      ? t("Importing…")
-                      : t("Import from Windows Terminal")}
+                    {t("Import from Windows Terminal")}
                   </Button>
                 ) : null}
                 {importNotice ? (
@@ -788,12 +837,11 @@ export function SettingsDialog({
                     <button
                       key={`built-in-${preset.id}`}
                       type="button"
-                      onClick={() => {
-                        setEditingTemplate(
+                      onClick={() =>
+                        startEditingTemplate(
                           draftFromBuiltInPreset(preset, "local"),
-                        );
-                        setTemplateError(null);
-                      }}
+                        )
+                      }
                       className={cn(
                         "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent",
                         editingTemplate?.builtInPresetId === preset.id &&
@@ -815,10 +863,9 @@ export function SettingsDialog({
                       <button
                         key={template.id}
                         type="button"
-                        onClick={() => {
-                          setEditingTemplate(draftFromTemplate(template));
-                          setTemplateError(null);
-                        }}
+                        onClick={() =>
+                          startEditingTemplate(draftFromTemplate(template))
+                        }
                         className={cn(
                           "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent",
                           editingTemplate?.id === template.id && "bg-accent",
@@ -841,14 +888,31 @@ export function SettingsDialog({
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => {
-                    setEditingTemplate(blankTemplateDraft());
-                    setTemplateError(null);
-                  }}
+                  onClick={() => startEditingTemplate(blankTemplateDraft())}
                   className="mt-3 w-full justify-start"
                 >
                   <Plus className="h-4 w-4" /> {t("New template")}
                 </Button>
+                {hostOs === "windows" ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => openImportPicker("templates")}
+                    className="mt-1 w-full justify-start"
+                  >
+                    <Download className="h-4 w-4" />
+                    {t("Import from Windows Terminal")}
+                  </Button>
+                ) : null}
+                {importNotice ? (
+                  <p
+                    className="mt-2 px-2 text-xs text-ok"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    {importNotice}
+                  </p>
+                ) : null}
               </div>
             ) : (
               <p className="mt-auto px-2 py-2 text-xs leading-relaxed text-muted-foreground">
@@ -860,6 +924,24 @@ export function SettingsDialog({
           <main className="app-scrollbar min-w-0 flex-1 overflow-y-auto p-6">
             {section === "general" ? (
               <GeneralSettingsPanel />
+            ) : importPicker === "templates" && section === "templates" ? (
+              <WindowsTerminalImportPanel
+                description={t(
+                  "Choose which Windows Terminal profiles to import as reusable templates.",
+                )}
+                scan={scanTemplatesFromWindowsTerminal}
+                onImport={importSelectedTemplates}
+                onCancel={() => setImportPicker(null)}
+              />
+            ) : importPicker === "profiles" && section === "profiles" ? (
+              <WindowsTerminalImportPanel
+                description={t(
+                  "Choose which Windows Terminal profiles to import into this project.",
+                )}
+                scan={scanProfileCandidates}
+                onImport={importSelectedProfiles}
+                onCancel={() => setImportPicker(null)}
+              />
             ) : section === "templates" && editingTemplate ? (
               <ProfileForm
                 draft={editingTemplate}

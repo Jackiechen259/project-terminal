@@ -176,6 +176,7 @@ pub fn run() {
                 commands::profile::test_terminal_profile,
                 commands::profile::detect_local_shells,
                 commands::profile::detect_python_environments,
+                commands::windows_terminal::scan_windows_terminal_profiles,
                 commands::windows_terminal::import_windows_terminal_profiles,
                 // Profile templates (global reusable presets)
                 commands::profile_template::list_profile_templates,
@@ -183,6 +184,8 @@ pub fn run() {
                 commands::profile_template::update_profile_template,
                 commands::profile_template::delete_profile_template,
                 commands::profile_template::create_profile_from_template,
+                commands::windows_terminal::scan_windows_terminal_templates,
+                commands::windows_terminal::import_windows_terminal_templates,
                 // SSH Connection CRUD (plan §12.5)
                 commands::ssh::list_ssh_connections,
                 commands::ssh::validate_ssh_connection,

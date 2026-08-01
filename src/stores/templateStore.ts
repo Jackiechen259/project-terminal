@@ -9,6 +9,8 @@ import {
   templateService,
   type FrontendError,
   type TemplateInput,
+  type WindowsTerminalScanResult,
+  type WindowsTerminalTemplateImportResult,
 } from "@/services";
 import type { ProfileTemplate } from "@/types";
 
@@ -22,6 +24,10 @@ export interface TemplateStoreState {
   createTemplate: (input: TemplateInput) => Promise<ProfileTemplate>;
   updateTemplate: (input: TemplateInput) => Promise<ProfileTemplate>;
   deleteTemplate: (id: string) => Promise<void>;
+  scanWindowsTerminal: () => Promise<WindowsTerminalScanResult>;
+  importFromWindowsTerminal: (
+    keys: string[],
+  ) => Promise<WindowsTerminalTemplateImportResult>;
   clearError: () => void;
 }
 
@@ -60,6 +66,24 @@ export const useTemplateStore = create<TemplateStoreState>((set, get) => ({
   deleteTemplate: async (id) => {
     await templateService.delete(id);
     set({ templates: get().templates.filter((t) => t.id !== id) });
+  },
+
+  // Read-only preview of what the settings files offer; touches no state.
+  scanWindowsTerminal: () => templateService.scanWindowsTerminal(),
+
+  importFromWindowsTerminal: async (keys) => {
+    const result = await templateService.importWindowsTerminal(keys);
+    if (result.imported.length) {
+      const importedIds = new Set(result.imported.map((item) => item.id));
+      set({
+        templates: [
+          ...get().templates.filter((item) => !importedIds.has(item.id)),
+          ...result.imported,
+        ],
+        loaded: true,
+      });
+    }
+    return result;
   },
 
   clearError: () => set({ error: null }),

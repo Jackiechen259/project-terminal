@@ -38,6 +38,7 @@ const PROFILE_CMD = {
   delete: "delete_terminal_profile",
   duplicate: "duplicate_terminal_profile",
   test: "test_terminal_profile",
+  scanWindowsTerminal: "scan_windows_terminal_profiles",
   importWindowsTerminal: "import_windows_terminal_profiles",
   detectShells: "detect_local_shells",
   detectPython: "detect_python_environments",
@@ -49,6 +50,8 @@ const TEMPLATE_CMD = {
   update: "update_profile_template",
   delete: "delete_profile_template",
   createFromTemplate: "create_profile_from_template",
+  scanWindowsTerminal: "scan_windows_terminal_templates",
+  importWindowsTerminal: "import_windows_terminal_templates",
 } as const;
 
 const SSH_CMD = {
@@ -102,6 +105,34 @@ export interface ProfileInput {
 
 export interface WindowsTerminalImportResult {
   imported: TerminalProfile[];
+  skippedCount: number;
+  sourceFiles: string[];
+}
+
+export interface WindowsTerminalTemplateImportResult {
+  imported: ProfileTemplate[];
+  skippedCount: number;
+  sourceFiles: string[];
+}
+
+/** One selectable entry in the Windows Terminal import picker. */
+export interface WindowsTerminalCandidate {
+  /** Launch-configuration signature; also the de-duplication key. */
+  key: string;
+  name: string;
+  shellType: TerminalProfile["shellType"];
+  shellExecutable?: string;
+  shellArgs?: string[];
+  wslDistribution?: string;
+  wslWorkingDirectory?: string;
+  environmentVariables?: Record<string, string>;
+  isWindowsTerminalDefault: boolean;
+  /** The destination already holds this launch configuration. */
+  alreadyExists: boolean;
+}
+
+export interface WindowsTerminalScanResult {
+  candidates: WindowsTerminalCandidate[];
   skippedCount: number;
   sourceFiles: string[];
 }
@@ -274,10 +305,14 @@ export const profileService = {
   duplicate: (id: string) =>
     invokeOrThrow<TerminalProfile>(PROFILE_CMD.duplicate, { id }),
   test: (id: string) => invokeOrThrow<string>(PROFILE_CMD.test, { id }),
-  importWindowsTerminal: (projectId: string) =>
+  scanWindowsTerminal: (projectId: string) =>
+    invokeOrThrow<WindowsTerminalScanResult>(PROFILE_CMD.scanWindowsTerminal, {
+      projectId,
+    }),
+  importWindowsTerminal: (projectId: string, keys: string[]) =>
     invokeOrThrow<WindowsTerminalImportResult>(
       PROFILE_CMD.importWindowsTerminal,
-      { projectId },
+      { projectId, keys },
     ),
 };
 
@@ -309,6 +344,13 @@ export const templateService = {
       projectId,
       name,
     }),
+  scanWindowsTerminal: () =>
+    invokeOrThrow<WindowsTerminalScanResult>(TEMPLATE_CMD.scanWindowsTerminal),
+  importWindowsTerminal: (keys: string[]) =>
+    invokeOrThrow<WindowsTerminalTemplateImportResult>(
+      TEMPLATE_CMD.importWindowsTerminal,
+      { keys },
+    ),
 };
 
 export const sshService = {

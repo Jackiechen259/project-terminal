@@ -187,7 +187,7 @@ Rust 应用后端
 
 Profile 作为项目的一等资源进行存储。Rust 后端会根据已保存的配置自动解析可执行文件、命令行参数、工作目录、开发环境激活脚本、启动命令以及环境变量。
 
-在 Windows 上，可以从终端配置页面导入 Stable、Preview、Canary 或非商店版 Windows Terminal 中的可见配置。再次导入时，会跳过所选本地项目中已有的相同启动配置。
+在 Windows 上，可以从终端配置页面导入 Stable、Preview、Canary 或非商店版 Windows Terminal 中的可见配置。导入时会先列出扫描到的配置，只导入你勾选的项；所选本地项目中已存在相同启动配置的条目会标记为已导入且无法再次勾选。配置模板页面提供同样的选择界面，导入后生成与项目无关的配置模板。
 
 ### 远程初始化 (Remote Initialization)
 

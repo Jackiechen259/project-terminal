@@ -1,9 +1,14 @@
 //! Import visible profiles from the local Windows Terminal settings files.
 //!
 //! Windows Terminal stores JSON-with-comments and accepts trailing commas, so
-//! the input is normalised before deserialisation. Imported profiles remain
-//! project-scoped and are de-duplicated against existing Project Terminal
-//! profiles.
+//! the input is normalised before deserialisation. The same drafts feed two
+//! destinations: project-scoped `TerminalProfile`s, and project-independent
+//! `ProfileTemplate`s.
+//!
+//! Importing is a two-step flow: a scan command lists what the settings files
+//! offer, and the import command takes back the keys the user picked. The key
+//! is the launch-configuration signature, which doubles as the de-duplication
+//! key, so a stale selection can never import something twice.
 
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
@@ -13,7 +18,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
-use crate::profile::{EnvironmentType, ShellType, TerminalProfile};
+use crate::profile::{EnvironmentType, ProfileTemplate, ShellType, TemplateIcon, TerminalProfile};
 use crate::project::ProjectType;
 use crate::state::{new_id, AppState};
 
@@ -21,6 +26,49 @@ use crate::state::{new_id, AppState};
 #[serde(rename_all = "camelCase")]
 pub struct WindowsTerminalImportResult {
     pub imported: Vec<TerminalProfile>,
+    pub skipped_count: usize,
+    pub source_files: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowsTerminalTemplateImportResult {
+    pub imported: Vec<ProfileTemplate>,
+    pub skipped_count: usize,
+    pub source_files: Vec<String>,
+}
+
+/// One selectable entry in the import picker.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowsTerminalCandidate {
+    /// Launch-configuration signature. Also the de-duplication key.
+    pub key: String,
+    pub name: String,
+    pub shell_type: ShellType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shell_executable: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub shell_args: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wsl_distribution: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wsl_working_directory: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment_variables: Option<BTreeMap<String, String>>,
+    /// This is the profile Windows Terminal opens by default.
+    pub is_windows_terminal_default: bool,
+    /// An entry with the same launch configuration is already present at the
+    /// destination, so importing it would be a no-op.
+    pub already_exists: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowsTerminalScanResult {
+    pub candidates: Vec<WindowsTerminalCandidate>,
+    /// Entries the settings files contained but that cannot be offered:
+    /// hidden profiles, unconvertible ones, and in-file duplicates.
     pub skipped_count: usize,
     pub source_files: Vec<String>,
 }
@@ -79,6 +127,27 @@ struct ImportedProfileDraft {
     wsl_working_directory: Option<String>,
 }
 
+impl ImportedProfileDraft {
+    fn signature(&self) -> String {
+        configuration_signature(
+            &self.name,
+            self.shell_type,
+            self.shell_executable.as_deref(),
+            &self.shell_args,
+            self.wsl_distribution.as_deref(),
+            self.wsl_working_directory.as_deref(),
+            self.environment_variables.as_ref(),
+        )
+    }
+
+    fn is_windows_terminal_default(&self, default_guids: &HashSet<String>) -> bool {
+        self.guid
+            .as_deref()
+            .map(normalize_guid)
+            .is_some_and(|guid| default_guids.contains(&guid))
+    }
+}
+
 impl WindowsTerminalProfiles {
     fn resolved(self) -> Vec<WindowsTerminalProfile> {
         match self {
@@ -114,22 +183,17 @@ impl WindowsTerminalProfile {
     }
 }
 
-pub fn import_windows_terminal_profiles_inner(
-    state: &AppState,
-    project_id: &str,
-) -> AppResult<WindowsTerminalImportResult> {
-    let paths = windows_terminal_settings_paths()?;
-    import_windows_terminal_profiles_from_paths_inner(state, project_id, &paths)
+/// Profiles read from every readable settings file, plus the counters both
+/// import destinations report back to the frontend.
+#[derive(Debug, Default)]
+struct CollectedDrafts {
+    drafts: Vec<ImportedProfileDraft>,
+    skipped_count: usize,
+    source_files: Vec<String>,
+    default_guids: HashSet<String>,
 }
 
-fn import_windows_terminal_profiles_from_paths_inner(
-    state: &AppState,
-    project_id: &str,
-    paths: &[PathBuf],
-) -> AppResult<WindowsTerminalImportResult> {
-    let project = state.projects.get(project_id)?;
-    require_local_project(&project)?;
-
+fn collect_windows_terminal_drafts(paths: &[PathBuf]) -> AppResult<CollectedDrafts> {
     let existing_paths: Vec<&PathBuf> = paths.iter().filter(|path| path.is_file()).collect();
     if existing_paths.is_empty() {
         return Err(AppError::Configuration(
@@ -137,40 +201,169 @@ fn import_windows_terminal_profiles_from_paths_inner(
         ));
     }
 
-    let mut drafts = Vec::new();
-    let mut skipped_count = 0;
-    let mut source_files = Vec::new();
+    let mut collected = CollectedDrafts::default();
     let mut parse_errors = Vec::new();
-    let mut default_guids = HashSet::new();
 
     for path in existing_paths {
         let source = path.to_string_lossy().into_owned();
         match read_windows_terminal_settings(path) {
             Ok(settings) => {
                 if let Some(guid) = settings.default_profile {
-                    default_guids.insert(normalize_guid(&guid));
+                    collected.default_guids.insert(normalize_guid(&guid));
                 }
                 for profile in settings.profiles.resolved() {
                     if profile.hidden.unwrap_or(false) {
-                        skipped_count += 1;
+                        collected.skipped_count += 1;
                     } else if let Some(draft) = convert_profile(profile) {
-                        drafts.push(draft);
+                        collected.drafts.push(draft);
                     } else {
-                        skipped_count += 1;
+                        collected.skipped_count += 1;
                     }
                 }
-                source_files.push(source);
+                collected.source_files.push(source);
             }
             Err(error) => parse_errors.push(format!("{source}: {error}")),
         }
     }
 
-    if source_files.is_empty() {
+    if collected.source_files.is_empty() {
         return Err(AppError::Configuration(format!(
             "Could not read Windows Terminal settings: {}",
             parse_errors.join("; ")
         )));
     }
+
+    Ok(collected)
+}
+
+/// Turn collected drafts into the picker list: de-duplicate within the scan,
+/// and flag the entries the destination already holds.
+fn build_scan_result(
+    collected: CollectedDrafts,
+    existing_signatures: &HashSet<String>,
+) -> WindowsTerminalScanResult {
+    let CollectedDrafts {
+        drafts,
+        mut skipped_count,
+        source_files,
+        default_guids,
+    } = collected;
+
+    let mut seen = HashSet::new();
+    let mut candidates = Vec::new();
+    for draft in drafts {
+        let key = draft.signature();
+        if !seen.insert(key.clone()) {
+            skipped_count += 1;
+            continue;
+        }
+        candidates.push(WindowsTerminalCandidate {
+            already_exists: existing_signatures.contains(&key),
+            key,
+            is_windows_terminal_default: draft.is_windows_terminal_default(&default_guids),
+            name: draft.name,
+            shell_type: draft.shell_type,
+            shell_executable: draft.shell_executable,
+            shell_args: draft.shell_args,
+            wsl_distribution: draft.wsl_distribution,
+            wsl_working_directory: draft.wsl_working_directory,
+            environment_variables: draft.environment_variables,
+        });
+    }
+
+    WindowsTerminalScanResult {
+        candidates,
+        skipped_count,
+        source_files,
+    }
+}
+
+pub fn scan_windows_terminal_profiles_inner(
+    state: &AppState,
+    project_id: &str,
+) -> AppResult<WindowsTerminalScanResult> {
+    let paths = windows_terminal_settings_paths()?;
+    scan_windows_terminal_profiles_from_paths_inner(state, project_id, &paths)
+}
+
+fn scan_windows_terminal_profiles_from_paths_inner(
+    state: &AppState,
+    project_id: &str,
+    paths: &[PathBuf],
+) -> AppResult<WindowsTerminalScanResult> {
+    let project = state.projects.get(project_id)?;
+    require_local_project(&project)?;
+    let collected = collect_windows_terminal_drafts(paths)?;
+    let existing: HashSet<String> = state
+        .profiles
+        .load()?
+        .profiles
+        .iter()
+        .filter(|profile| profile.project_id == project_id)
+        .map(profile_signature)
+        .collect();
+    Ok(build_scan_result(collected, &existing))
+}
+
+pub fn scan_windows_terminal_templates_inner(
+    state: &AppState,
+) -> AppResult<WindowsTerminalScanResult> {
+    let paths = windows_terminal_settings_paths()?;
+    scan_windows_terminal_templates_from_paths_inner(state, &paths)
+}
+
+fn scan_windows_terminal_templates_from_paths_inner(
+    state: &AppState,
+    paths: &[PathBuf],
+) -> AppResult<WindowsTerminalScanResult> {
+    let collected = collect_windows_terminal_drafts(paths)?;
+    let existing: HashSet<String> = state
+        .templates
+        .list()?
+        .iter()
+        .map(template_signature)
+        .collect();
+    Ok(build_scan_result(collected, &existing))
+}
+
+/// Keep only the drafts the user ticked in the picker. An unknown key simply
+/// selects nothing, so a selection made against stale settings is harmless.
+fn select_drafts(drafts: Vec<ImportedProfileDraft>, keys: &[String]) -> Vec<ImportedProfileDraft> {
+    let selected: HashSet<&str> = keys.iter().map(String::as_str).collect();
+    drafts
+        .into_iter()
+        .filter(|draft| selected.contains(draft.signature().as_str()))
+        .collect()
+}
+
+pub fn import_windows_terminal_profiles_inner(
+    state: &AppState,
+    project_id: &str,
+    keys: &[String],
+) -> AppResult<WindowsTerminalImportResult> {
+    let paths = windows_terminal_settings_paths()?;
+    import_windows_terminal_profiles_from_paths_inner(state, project_id, keys, &paths)
+}
+
+fn import_windows_terminal_profiles_from_paths_inner(
+    state: &AppState,
+    project_id: &str,
+    keys: &[String],
+    paths: &[PathBuf],
+) -> AppResult<WindowsTerminalImportResult> {
+    let project = state.projects.get(project_id)?;
+    require_local_project(&project)?;
+
+    let CollectedDrafts {
+        drafts,
+        source_files,
+        default_guids,
+        ..
+    } = collect_windows_terminal_drafts(paths)?;
+    let drafts = select_drafts(drafts, keys);
+    // Counts only selected entries the destination already held, so the
+    // frontend can say how much of the selection was redundant.
+    let mut skipped_count = 0;
 
     state.with_config_write(|| {
         // Re-check under the configuration lock so a concurrent project
@@ -192,11 +385,7 @@ fn import_windows_terminal_profiles_from_paths_inner(
             let now = Utc::now();
             let is_default = !project_has_profiles
                 && !assigned_default
-                && draft
-                    .guid
-                    .as_deref()
-                    .map(normalize_guid)
-                    .is_some_and(|guid| default_guids.contains(&guid));
+                && draft.is_windows_terminal_default(&default_guids);
             assigned_default |= is_default;
             let profile = TerminalProfile {
                 id: new_id("profile"),
@@ -248,6 +437,76 @@ fn import_windows_terminal_profiles_from_paths_inner(
         }
 
         Ok(WindowsTerminalImportResult {
+            imported,
+            skipped_count,
+            source_files,
+        })
+    })
+}
+
+pub fn import_windows_terminal_templates_inner(
+    state: &AppState,
+    keys: &[String],
+) -> AppResult<WindowsTerminalTemplateImportResult> {
+    let paths = windows_terminal_settings_paths()?;
+    import_windows_terminal_templates_from_paths_inner(state, keys, &paths)
+}
+
+fn import_windows_terminal_templates_from_paths_inner(
+    state: &AppState,
+    keys: &[String],
+    paths: &[PathBuf],
+) -> AppResult<WindowsTerminalTemplateImportResult> {
+    let CollectedDrafts {
+        drafts,
+        source_files,
+        ..
+    } = collect_windows_terminal_drafts(paths)?;
+    let drafts = select_drafts(drafts, keys);
+    let mut skipped_count = 0;
+
+    state.with_config_write(|| {
+        let mut collection = state.templates.load()?;
+        let mut signatures: HashSet<String> =
+            collection.templates.iter().map(template_signature).collect();
+        let mut imported = Vec::new();
+
+        for draft in drafts {
+            let now = Utc::now();
+            let template = ProfileTemplate {
+                id: new_id("tpl"),
+                name: draft.name,
+                icon: TemplateIcon::Terminal,
+                shell_type: draft.shell_type,
+                shell_executable: draft.shell_executable,
+                shell_args: draft.shell_args,
+                environment_type: EnvironmentType::None,
+                environment_name: None,
+                environment_path: None,
+                conda: None,
+                activation_command: None,
+                startup_commands: Vec::new(),
+                environment_variables: draft.environment_variables,
+                wsl_distribution: draft.wsl_distribution,
+                wsl_working_directory: draft.wsl_working_directory,
+                remote_shell_command: None,
+                created_at: now,
+                updated_at: now,
+            };
+            if !signatures.insert(template_signature(&template)) {
+                skipped_count += 1;
+                continue;
+            }
+            template.validate()?;
+            collection.templates.push(template.clone());
+            imported.push(template);
+        }
+
+        if !imported.is_empty() {
+            state.templates.save(&collection)?;
+        }
+
+        Ok(WindowsTerminalTemplateImportResult {
             imported,
             skipped_count,
             source_files,
@@ -390,21 +649,53 @@ fn parse_wsl_starting_directory(value: &str) -> Option<String> {
     Some(format!("/{}", path.trim_start_matches('/')))
 }
 
-fn profile_signature(profile: &TerminalProfile) -> String {
+/// Shared de-duplication key. Two entries collide when they would launch the
+/// same shell the same way, so re-running an import is a no-op.
+fn configuration_signature(
+    name: &str,
+    shell_type: ShellType,
+    shell_executable: Option<&str>,
+    shell_args: &[String],
+    wsl_distribution: Option<&str>,
+    wsl_working_directory: Option<&str>,
+    environment_variables: Option<&BTreeMap<String, String>>,
+) -> String {
     format!(
         "{}\u{1f}{:?}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
-        profile.name.trim().to_ascii_lowercase(),
-        profile.shell_type,
-        profile
-            .shell_executable
-            .as_deref()
+        name.trim().to_ascii_lowercase(),
+        shell_type,
+        shell_executable
             .unwrap_or_default()
             .replace('/', "\\")
             .to_ascii_lowercase(),
-        profile.shell_args.join("\u{1e}"),
-        profile.wsl_distribution.as_deref().unwrap_or_default(),
-        profile.wsl_working_directory.as_deref().unwrap_or_default(),
-        serde_json::to_string(&profile.environment_variables).unwrap_or_default(),
+        shell_args.join("\u{1e}"),
+        wsl_distribution.unwrap_or_default(),
+        wsl_working_directory.unwrap_or_default(),
+        serde_json::to_string(&environment_variables).unwrap_or_default(),
+    )
+}
+
+fn profile_signature(profile: &TerminalProfile) -> String {
+    configuration_signature(
+        &profile.name,
+        profile.shell_type,
+        profile.shell_executable.as_deref(),
+        &profile.shell_args,
+        profile.wsl_distribution.as_deref(),
+        profile.wsl_working_directory.as_deref(),
+        profile.environment_variables.as_ref(),
+    )
+}
+
+fn template_signature(template: &ProfileTemplate) -> String {
+    configuration_signature(
+        &template.name,
+        template.shell_type,
+        template.shell_executable.as_deref(),
+        &template.shell_args,
+        template.wsl_distribution.as_deref(),
+        template.wsl_working_directory.as_deref(),
+        template.environment_variables.as_ref(),
     )
 }
 
@@ -575,11 +866,35 @@ fn windows_terminal_settings_paths() -> AppResult<Vec<PathBuf>> {
 }
 
 #[tauri::command]
+pub fn scan_windows_terminal_profiles(
+    state: tauri::State<'_, AppState>,
+    project_id: String,
+) -> AppResult<WindowsTerminalScanResult> {
+    scan_windows_terminal_profiles_inner(&state, &project_id)
+}
+
+#[tauri::command]
+pub fn scan_windows_terminal_templates(
+    state: tauri::State<'_, AppState>,
+) -> AppResult<WindowsTerminalScanResult> {
+    scan_windows_terminal_templates_inner(&state)
+}
+
+#[tauri::command]
 pub fn import_windows_terminal_profiles(
     state: tauri::State<'_, AppState>,
     project_id: String,
+    keys: Vec<String>,
 ) -> AppResult<WindowsTerminalImportResult> {
-    import_windows_terminal_profiles_inner(&state, &project_id)
+    import_windows_terminal_profiles_inner(&state, &project_id, &keys)
+}
+
+#[tauri::command]
+pub fn import_windows_terminal_templates(
+    state: tauri::State<'_, AppState>,
+    keys: Vec<String>,
+) -> AppResult<WindowsTerminalTemplateImportResult> {
+    import_windows_terminal_templates_inner(&state, &keys)
 }
 
 #[cfg(test)]
@@ -719,18 +1034,39 @@ mod tests {
         )
         .unwrap();
 
+        let scan = scan_windows_terminal_profiles_from_paths_inner(
+            &state,
+            "local",
+            std::slice::from_ref(&settings_path),
+        )
+        .unwrap();
+        assert_eq!(scan.candidates.len(), 1);
+        assert!(scan.candidates[0].is_windows_terminal_default);
+        assert!(!scan.candidates[0].already_exists);
+        let keys: Vec<String> = scan.candidates.iter().map(|c| c.key.clone()).collect();
+
         let first = import_windows_terminal_profiles_from_paths_inner(
             &state,
             "local",
+            &keys,
             std::slice::from_ref(&settings_path),
         )
         .unwrap();
         assert_eq!(first.imported.len(), 1);
         assert!(first.imported[0].is_default);
 
+        let rescan = scan_windows_terminal_profiles_from_paths_inner(
+            &state,
+            "local",
+            std::slice::from_ref(&settings_path),
+        )
+        .unwrap();
+        assert!(rescan.candidates[0].already_exists);
+
         let second = import_windows_terminal_profiles_from_paths_inner(
             &state,
             "local",
+            &keys,
             std::slice::from_ref(&settings_path),
         )
         .unwrap();
@@ -738,4 +1074,168 @@ mod tests {
         assert_eq!(second.skipped_count, 1);
         assert_eq!(state.profiles.list_for_project("local").unwrap().len(), 1);
     }
+
+    #[test]
+    fn imports_only_the_selected_profiles() {
+        let root = tempfile::tempdir().unwrap();
+        let project_path = root.path().join("project");
+        fs::create_dir_all(&project_path).unwrap();
+        let state = AppState::from_repositories(
+            ProjectRepository::new(root.path().join("projects.json")),
+            ProfileRepository::new(root.path().join("profiles.json")),
+            TemplateRepository::new(root.path().join("templates.json")),
+            SshConnectionRepository::new(root.path().join("ssh.json")),
+        );
+        let now = Utc::now();
+        state
+            .projects
+            .upsert(Project {
+                id: "local".into(),
+                name: "Local".into(),
+                project_type: ProjectType::Local,
+                local: Some(LocalProjectConfig {
+                    path: project_path.to_string_lossy().into_owned(),
+                }),
+                ssh: None,
+                wsl: None,
+                default_profile_id: None,
+                created_at: now,
+                updated_at: now,
+            })
+            .unwrap();
+        let settings_path = root.path().join("settings.json");
+        fs::write(&settings_path, TWO_PROFILE_SETTINGS).unwrap();
+
+        let scan = scan_windows_terminal_profiles_from_paths_inner(
+            &state,
+            "local",
+            std::slice::from_ref(&settings_path),
+        )
+        .unwrap();
+        assert_eq!(scan.candidates.len(), 2);
+        let ubuntu = scan
+            .candidates
+            .iter()
+            .find(|candidate| candidate.name == "Ubuntu")
+            .unwrap();
+
+        let imported = import_windows_terminal_profiles_from_paths_inner(
+            &state,
+            "local",
+            std::slice::from_ref(&ubuntu.key),
+            std::slice::from_ref(&settings_path),
+        )
+        .unwrap();
+        assert_eq!(imported.imported.len(), 1);
+        assert_eq!(imported.imported[0].name, "Ubuntu");
+        assert_eq!(state.profiles.list_for_project("local").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn imports_selected_templates_without_a_project_and_skips_duplicates() {
+        let root = tempfile::tempdir().unwrap();
+        let state = AppState::from_repositories(
+            ProjectRepository::new(root.path().join("projects.json")),
+            ProfileRepository::new(root.path().join("profiles.json")),
+            TemplateRepository::new(root.path().join("templates.json")),
+            SshConnectionRepository::new(root.path().join("ssh.json")),
+        );
+        let settings_path = root.path().join("settings.json");
+        fs::write(&settings_path, TWO_PROFILE_SETTINGS).unwrap();
+
+        let scan = scan_windows_terminal_templates_from_paths_inner(
+            &state,
+            std::slice::from_ref(&settings_path),
+        )
+        .unwrap();
+        assert_eq!(scan.candidates.len(), 2);
+        assert!(scan.candidates.iter().all(|c| !c.already_exists));
+        let keys: Vec<String> = scan.candidates.iter().map(|c| c.key.clone()).collect();
+
+        let first = import_windows_terminal_templates_from_paths_inner(
+            &state,
+            &keys,
+            std::slice::from_ref(&settings_path),
+        )
+        .unwrap();
+        assert_eq!(first.imported.len(), 2);
+        assert_eq!(first.imported[0].icon, TemplateIcon::Terminal);
+        assert_eq!(first.imported[1].wsl_distribution.as_deref(), Some("Ubuntu"));
+
+        let rescan = scan_windows_terminal_templates_from_paths_inner(
+            &state,
+            std::slice::from_ref(&settings_path),
+        )
+        .unwrap();
+        assert!(rescan.candidates.iter().all(|c| c.already_exists));
+
+        let second = import_windows_terminal_templates_from_paths_inner(
+            &state,
+            &keys,
+            std::slice::from_ref(&settings_path),
+        )
+        .unwrap();
+        assert!(second.imported.is_empty());
+        assert_eq!(second.skipped_count, 2);
+        assert_eq!(state.templates.list().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn importing_an_empty_selection_writes_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let state = AppState::from_repositories(
+            ProjectRepository::new(root.path().join("projects.json")),
+            ProfileRepository::new(root.path().join("profiles.json")),
+            TemplateRepository::new(root.path().join("templates.json")),
+            SshConnectionRepository::new(root.path().join("ssh.json")),
+        );
+        let settings_path = root.path().join("settings.json");
+        fs::write(&settings_path, TWO_PROFILE_SETTINGS).unwrap();
+
+        let result = import_windows_terminal_templates_from_paths_inner(
+            &state,
+            &[],
+            std::slice::from_ref(&settings_path),
+        )
+        .unwrap();
+        assert!(result.imported.is_empty());
+        assert!(state.templates.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn scan_collapses_identical_entries_into_one_candidate() {
+        let root = tempfile::tempdir().unwrap();
+        let state = AppState::from_repositories(
+            ProjectRepository::new(root.path().join("projects.json")),
+            ProfileRepository::new(root.path().join("profiles.json")),
+            TemplateRepository::new(root.path().join("templates.json")),
+            SshConnectionRepository::new(root.path().join("ssh.json")),
+        );
+        let settings_path = root.path().join("settings.json");
+        fs::write(
+            &settings_path,
+            r#"{
+              "profiles": { "list": [
+                { "name": "PowerShell 7", "commandline": "pwsh.exe -NoLogo" },
+                { "name": "PowerShell 7", "commandline": "pwsh.exe -NoLogo" }
+              ] }
+            }"#,
+        )
+        .unwrap();
+
+        let scan = scan_windows_terminal_templates_from_paths_inner(
+            &state,
+            std::slice::from_ref(&settings_path),
+        )
+        .unwrap();
+        assert_eq!(scan.candidates.len(), 1);
+        assert_eq!(scan.skipped_count, 1);
+    }
+
+    const TWO_PROFILE_SETTINGS: &str = r#"{
+      "profiles": { "list": [
+        { "name": "PowerShell 7", "commandline": "pwsh.exe -NoLogo" },
+        { "name": "Ubuntu", "commandline": "wsl.exe -d Ubuntu" }
+      ] }
+    }"#;
 }

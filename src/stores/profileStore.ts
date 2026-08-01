@@ -10,6 +10,7 @@ import {
   type FrontendError,
   type ProfileInput,
   type WindowsTerminalImportResult,
+  type WindowsTerminalScanResult,
 } from "@/services";
 import type { TerminalProfile } from "@/types";
 
@@ -22,8 +23,12 @@ export interface ProfileStoreState {
   createProfile: (input: ProfileInput) => Promise<TerminalProfile>;
   updateProfile: (input: ProfileInput) => Promise<TerminalProfile>;
   duplicateProfile: (id: string) => Promise<TerminalProfile>;
+  scanWindowsTerminal: (
+    projectId: string,
+  ) => Promise<WindowsTerminalScanResult>;
   importFromWindowsTerminal: (
     projectId: string,
+    keys: string[],
   ) => Promise<WindowsTerminalImportResult>;
   deleteProfile: (id: string, projectId: string) => Promise<void>;
   defaultForProject: (projectId: string) => TerminalProfile | null;
@@ -97,8 +102,12 @@ export const useProfileStore = create<ProfileStoreState>((set, get) => ({
     return profile;
   },
 
-  importFromWindowsTerminal: async (projectId) => {
-    const result = await profileService.importWindowsTerminal(projectId);
+  // Read-only preview of what the settings files offer; touches no state.
+  scanWindowsTerminal: (projectId) =>
+    profileService.scanWindowsTerminal(projectId),
+
+  importFromWindowsTerminal: async (projectId, keys) => {
+    const result = await profileService.importWindowsTerminal(projectId, keys);
     if (result.imported.length) {
       const importedIds = new Set(result.imported.map((profile) => profile.id));
       const existing = (get().byProjectId[projectId] ?? []).filter(

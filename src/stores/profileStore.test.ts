@@ -10,6 +10,7 @@ vi.mock("@/services", () => ({
     update: vi.fn(),
     delete: vi.fn(),
     duplicate: vi.fn(),
+    scanWindowsTerminal: vi.fn(),
     importWindowsTerminal: vi.fn(),
     test: vi.fn(),
   },
@@ -148,7 +149,7 @@ describe("profileStore", () => {
   });
 
   describe("importFromWindowsTerminal", () => {
-    it("adds imported profiles to the selected project", async () => {
+    it("adds the selected imported profiles to the project", async () => {
       profileServiceMock.importWindowsTerminal.mockResolvedValueOnce({
         imported: [
           {
@@ -170,8 +171,12 @@ describe("profileStore", () => {
 
       const result = await useProfileStore
         .getState()
-        .importFromWindowsTerminal("proj-a");
+        .importFromWindowsTerminal("proj-a", ["key-a"]);
 
+      expect(profileServiceMock.importWindowsTerminal).toHaveBeenCalledWith(
+        "proj-a",
+        ["key-a"],
+      );
       expect(result.imported).toHaveLength(1);
       expect(useProfileStore.getState().byProjectId["proj-a"]?.[0].id).toBe(
         "imported",

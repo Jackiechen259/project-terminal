@@ -110,8 +110,28 @@ const zhCN: Record<string, string> = {
     "已导入 {count} 个 Windows Terminal 配置。",
   "No new Windows Terminal profiles to import.":
     "没有可导入的新 Windows Terminal 配置。",
-  "Could not import Windows Terminal profiles.":
-    "无法导入 Windows Terminal 配置。",
+  "Imported {count} Windows Terminal template(s).":
+    "已导入 {count} 个 Windows Terminal 配置模板。",
+  "No new Windows Terminal templates to import.":
+    "没有可导入的新 Windows Terminal 配置模板。",
+  "Choose which Windows Terminal profiles to import into this project.":
+    "选择要导入到该项目的 Windows Terminal 配置。",
+  "Choose which Windows Terminal profiles to import as reusable templates.":
+    "选择要导入为可复用配置模板的 Windows Terminal 配置。",
+  "Scanning Windows Terminal…": "正在扫描 Windows Terminal…",
+  "Could not read Windows Terminal settings.":
+    "无法读取 Windows Terminal 设置。",
+  "Could not import from Windows Terminal.": "无法从 Windows Terminal 导入。",
+  "Windows Terminal has no profiles that can be imported.":
+    "Windows Terminal 中没有可导入的配置。",
+  "Select all": "全选",
+  "{count} selected": "已选择 {count} 项",
+  "Windows Terminal default": "Windows Terminal 默认",
+  "Already imported": "已导入",
+  "Skipped {count} hidden or unsupported entries.":
+    "已跳过 {count} 个隐藏或不支持的项。",
+  "Import selected": "导入所选",
+  Retry: "重试",
   Templates: "模板",
   "No templates yet.": "暂无模板。",
   "New template": "新建模板",
@@ -413,8 +433,13 @@ const zhCNWorkspace: Record<string, string> = {
   "Close Project Terminal?": "关闭 Project Terminal？",
   "Choose whether running terminals should continue.":
     "请选择是否让正在运行的终端继续工作。",
+  "{count} terminal(s) are still running.": "仍有 {count} 个终端在运行。",
   "Hide to tray and keep running": "隐藏到系统托盘并继续运行",
+  "Terminals keep working in the background. Reopen from the tray icon.":
+    "终端将在后台继续运行，可从托盘图标重新打开。",
   "Stop all terminals and quit": "停止所有终端并退出",
+  "All sessions end immediately and unsaved work is lost.":
+    "所有会话将立即结束，未保存的内容会丢失。",
   "Remote access": "远程访问",
   "The gateway binds to loopback by default. Use Tailscale or an HTTPS reverse proxy for other devices.":
     "网关默认仅监听本机。其他设备请使用 Tailscale 或 HTTPS 反向代理。",
