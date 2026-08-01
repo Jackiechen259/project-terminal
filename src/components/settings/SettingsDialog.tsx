@@ -760,12 +760,15 @@ export function SettingsDialog({
                     size="sm"
                     onClick={() => void importWindowsTerminalProfiles()}
                     disabled={importing}
+                    title={t("Import from Windows Terminal")}
                     className="mt-1 w-full justify-start"
                   >
                     <Download className="h-4 w-4" />
-                    {importing
-                      ? t("Importing…")
-                      : t("Import from Windows Terminal")}
+                    <span className="truncate">
+                      {importing
+                        ? t("Importing…")
+                        : t("Import from Windows Terminal")}
+                    </span>
                   </Button>
                 ) : null}
                 {importNotice ? (
