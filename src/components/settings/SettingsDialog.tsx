@@ -811,9 +811,10 @@ export function SettingsDialog({
                     variant="ghost"
                     size="sm"
                     onClick={() => openImportPicker("profiles")}
-                    className="mt-1 w-full justify-start"
+                    title={t("Import from Windows Terminal")}
+                    className="mt-1 h-auto w-full justify-start whitespace-normal px-2 py-2 leading-snug"
                   >
-                    <Download className="h-4 w-4" />
+                    <Download className="h-4 w-4 shrink-0" />
                     {t("Import from Windows Terminal")}
                   </Button>
                 ) : null}
