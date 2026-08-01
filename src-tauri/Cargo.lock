@@ -2595,7 +2595,7 @@ dependencies = [
 
 [[package]]
 name = "project-terminal"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "axum",
  "base64 0.22.1",
