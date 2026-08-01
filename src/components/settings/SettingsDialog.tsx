@@ -6,6 +6,7 @@ import {
   Download,
   EyeOff,
   LayoutTemplate,
+  LoaderCircle,
   Plus,
   SlidersHorizontal,
   Sparkles,
@@ -761,12 +762,16 @@ export function SettingsDialog({
                     onClick={() => void importWindowsTerminalProfiles()}
                     disabled={importing}
                     title={t("Import from Windows Terminal")}
-                    className="mt-1 w-full justify-start"
+                    className="mt-1 h-auto w-full justify-start whitespace-normal px-2 py-2 leading-snug"
                   >
-                    <Download className="h-4 w-4" />
-                    <span className="truncate">
+                    {importing ? (
+                      <LoaderCircle className="h-4 w-4 shrink-0 animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4 shrink-0" />
+                    )}
+                    <span>
                       {importing
-                        ? t("Importing…")
+                        ? t("Importing")
                         : t("Import from Windows Terminal")}
                     </span>
                   </Button>
