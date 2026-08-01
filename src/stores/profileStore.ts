@@ -7,6 +7,7 @@ import { create } from "zustand";
 
 import {
   profileService,
+  templateService,
   type FrontendError,
   type ProfileInput,
   type WindowsTerminalImportResult,
@@ -23,6 +24,12 @@ export interface ProfileStoreState {
   createProfile: (input: ProfileInput) => Promise<TerminalProfile>;
   updateProfile: (input: ProfileInput) => Promise<TerminalProfile>;
   duplicateProfile: (id: string) => Promise<TerminalProfile>;
+  /** Materialize a global profile template as a profile of the given project. */
+  createFromTemplate: (
+    templateId: string,
+    projectId: string,
+    name: string,
+  ) => Promise<TerminalProfile>;
   scanWindowsTerminal: (
     projectId: string,
   ) => Promise<WindowsTerminalScanResult>;
@@ -97,6 +104,22 @@ export const useProfileStore = create<ProfileStoreState>((set, get) => ({
       byProjectId: {
         ...get().byProjectId,
         [profile.projectId]: [...existing, profile],
+      },
+    });
+    return profile;
+  },
+
+  createFromTemplate: async (templateId, projectId, name) => {
+    const profile = await templateService.createFromTemplate(
+      templateId,
+      projectId,
+      name,
+    );
+    const existing = get().byProjectId[projectId] ?? [];
+    set({
+      byProjectId: {
+        ...get().byProjectId,
+        [projectId]: [...existing, profile],
       },
     });
     return profile;

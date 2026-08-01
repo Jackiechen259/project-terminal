@@ -104,6 +104,17 @@ const zhCN: Record<string, string> = {
   "No profiles yet.": "暂无配置。",
   "Add a project to create profiles.": "添加项目后即可创建配置。",
   "New profile": "新建配置",
+  "Add from template": "从模板添加",
+  'Choose which profile templates to add to "{project}".':
+    "选择要添加到「{project}」的配置模板。",
+  "Loading templates…": "正在加载模板…",
+  "No profile templates yet. Create one on the Profile templates page first.":
+    "还没有配置模板，请先在「配置模板」页面创建。",
+  "Already added": "已添加",
+  "Add selected": "添加所选",
+  "Adding…": "正在添加…",
+  "Added {count} profile(s) from templates.": "已从模板添加 {count} 个配置。",
+  "Could not add profiles from templates.": "无法从模板添加配置。",
   "Import from Windows Terminal": "从 Windows Terminal 导入",
   "Importing": "正在导入",
   "Imported {count} Windows Terminal profile(s).":
@@ -316,7 +327,6 @@ const zhCNWorkspace: Record<string, string> = {
   "Session ended — click to restart": "会话已结束——点击重新启动",
   "Failed to start terminal": "启动终端失败",
   "Failed to launch preset terminal": "启动预设终端失败",
-  "Failed to launch from template": "从模板启动终端失败",
   "Failed to load terminal profiles": "加载终端配置失败",
   "Failed to refresh terminal profiles": "刷新终端配置失败",
   "Profile name": "配置名称",

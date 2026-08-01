@@ -55,6 +55,7 @@ import type {
   TerminalProfile,
 } from "@/types";
 
+import { AddFromTemplatePanel } from "./AddFromTemplatePanel";
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
 import { WindowsTerminalImportPanel } from "./WindowsTerminalImportPanel";
 
@@ -312,6 +313,7 @@ export function SettingsDialog({
   const [importPicker, setImportPicker] = useState<
     "profiles" | "templates" | null
   >(null);
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [importNotice, setImportNotice] = useState<string | null>(null);
   const hostOs = usePlatformStore((state) => state.info?.os);
 
@@ -325,6 +327,9 @@ export function SettingsDialog({
   const createProfile = useProfileStore((s) => s.createProfile);
   const updateProfile = useProfileStore((s) => s.updateProfile);
   const duplicateProfile = useProfileStore((s) => s.duplicateProfile);
+  const createProfileFromTemplate = useProfileStore(
+    (s) => s.createFromTemplate,
+  );
   const importFromWindowsTerminal = useProfileStore(
     (s) => s.importFromWindowsTerminal,
   );
@@ -334,6 +339,8 @@ export function SettingsDialog({
   const deleteProfile = useProfileStore((s) => s.deleteProfile);
   const templates = useTemplateStore((s) => s.templates ?? EMPTY_TEMPLATES);
   const templatesLoaded = useTemplateStore((s) => s.loaded);
+  const templatesLoading = useTemplateStore((s) => s.loading);
+  const templatesError = useTemplateStore((s) => s.error);
   const loadTemplates = useTemplateStore((s) => s.loadTemplates);
   const createTemplate = useTemplateStore((s) => s.createTemplate);
   const updateTemplate = useTemplateStore((s) => s.updateTemplate);
@@ -369,17 +376,18 @@ export function SettingsDialog({
     setProjectId(initialId);
     setEditing(null);
     setError(null);
-    setImportPicker(null);
+    closePanels();
     setImportNotice(null);
     setEditingTemplate(null);
     setTemplateError(null);
   }, [open, activeProjectId, initialSection, projects]);
 
+  // Templates back both the templates section and the profiles section's
+  // "Add from template" picker, so either surface may need them loaded.
   useEffect(() => {
-    if (open && section === "templates" && !templatesLoaded) {
-      void loadTemplates();
-    }
-  }, [open, section, templatesLoaded, loadTemplates]);
+    if (!open || templatesLoaded) return;
+    if (section === "templates" || templatePickerOpen) void loadTemplates();
+  }, [open, section, templatePickerOpen, templatesLoaded, loadTemplates]);
 
   useEffect(() => {
     if (open && section === "profiles" && projectId) {
@@ -387,11 +395,18 @@ export function SettingsDialog({
     }
   }, [open, projectId, loadForProject, section]);
 
+  /** The editor and the two pickers share the content pane, so opening any of
+   * them closes the others. */
+  function closePanels() {
+    setImportPicker(null);
+    setTemplatePickerOpen(false);
+  }
+
   function selectProject(nextProjectId: string) {
     setProjectId(nextProjectId);
     setEditing(null);
     setError(null);
-    setImportPicker(null);
+    closePanels();
     setImportNotice(null);
   }
 
@@ -400,25 +415,31 @@ export function SettingsDialog({
     startEditingProfile(blankDraft(selectedProject.type));
   }
 
-  /** The editor and the import picker share the content pane, so opening one
-   * always closes the other. */
   function startEditingProfile(draft: ProfileDraft) {
     setEditing(draft);
     setError(null);
-    setImportPicker(null);
+    closePanels();
   }
 
   function startEditingTemplate(draft: ProfileDraft) {
     setEditingTemplate(draft);
     setTemplateError(null);
-    setImportPicker(null);
+    closePanels();
   }
 
   function openImportPicker(kind: "profiles" | "templates") {
     setImportNotice(null);
     setEditing(null);
     setEditingTemplate(null);
+    setTemplatePickerOpen(false);
     setImportPicker(kind);
+  }
+
+  function openTemplatePicker() {
+    setImportNotice(null);
+    setEditing(null);
+    setImportPicker(null);
+    setTemplatePickerOpen(true);
   }
 
   // The picker owns its own error surface, so these deliberately let failures
@@ -443,6 +464,23 @@ export function SettingsDialog({
       setImportPicker(null);
     },
     [projectId, importFromWindowsTerminal, t],
+  );
+
+  const addSelectedTemplatesToProject = useCallback(
+    async (selectedTemplates: ProfileTemplate[]) => {
+      if (!projectId) return;
+      for (const template of selectedTemplates) {
+        await createProfileFromTemplate(template.id, projectId, template.name);
+      }
+      setImportNotice(
+        t("Added {count} profile(s) from templates.", {
+          count: selectedTemplates.length,
+        }),
+      );
+      dispatchAppCommand({ type: "profiles-changed", projectId });
+      setTemplatePickerOpen(false);
+    },
+    [projectId, createProfileFromTemplate, t],
   );
 
   const importSelectedTemplates = useCallback(
@@ -689,7 +727,7 @@ export function SettingsDialog({
                 onClick={() => {
                   setSection("general");
                   setError(null);
-                  setImportPicker(null);
+                  closePanels();
                 }}
               />
               <SettingsNavItem
@@ -698,7 +736,7 @@ export function SettingsDialog({
                 label={t("Terminal profiles")}
                 onClick={() => {
                   setSection("profiles");
-                  setImportPicker(null);
+                  closePanels();
                   setImportNotice(null);
                 }}
               />
@@ -709,7 +747,7 @@ export function SettingsDialog({
                 onClick={() => {
                   setSection("templates");
                   setError(null);
-                  setImportPicker(null);
+                  closePanels();
                   setImportNotice(null);
                 }}
               />
@@ -805,6 +843,16 @@ export function SettingsDialog({
                   className="mt-3 w-full justify-start"
                 >
                   <Plus className="h-4 w-4" /> {t("New profile")}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={openTemplatePicker}
+                  disabled={!selectedProject}
+                  className="mt-1 w-full justify-start"
+                >
+                  <LayoutTemplate className="h-4 w-4" />
+                  {t("Add from template")}
                 </Button>
                 {hostOs === "windows" && selectedProject?.type === "local" ? (
                   <Button
@@ -942,6 +990,18 @@ export function SettingsDialog({
                 scan={scanProfileCandidates}
                 onImport={importSelectedProfiles}
                 onCancel={() => setImportPicker(null)}
+              />
+            ) : templatePickerOpen &&
+              section === "profiles" &&
+              selectedProject ? (
+              <AddFromTemplatePanel
+                templates={templates}
+                profiles={profiles}
+                projectName={selectedProject.name}
+                loading={templatesLoading}
+                loadError={templatesError?.message ?? null}
+                onAdd={addSelectedTemplatesToProject}
+                onCancel={() => setTemplatePickerOpen(false)}
               />
             ) : section === "templates" && editingTemplate ? (
               <ProfileForm

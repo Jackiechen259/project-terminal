@@ -3,24 +3,9 @@ import { ChevronLeft } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/i18n";
+import { launchSummary } from "@/lib/profileSummary";
 import { cn } from "@/lib/utils";
-import type {
-  WindowsTerminalCandidate,
-  WindowsTerminalScanResult,
-} from "@/services";
-
-/** Human-readable one-liner describing how a candidate launches. */
-function launchSummary(candidate: WindowsTerminalCandidate): string {
-  if (candidate.wslDistribution) {
-    return candidate.wslWorkingDirectory
-      ? `wsl · ${candidate.wslDistribution} · ${candidate.wslWorkingDirectory}`
-      : `wsl · ${candidate.wslDistribution}`;
-  }
-  const command = [candidate.shellExecutable, ...(candidate.shellArgs ?? [])]
-    .filter(Boolean)
-    .join(" ");
-  return command || candidate.shellType;
-}
+import type { WindowsTerminalScanResult } from "@/services";
 
 /**
  * Two-step Windows Terminal import: scan on mount, then import only the

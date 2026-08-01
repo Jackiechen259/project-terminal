@@ -55,7 +55,6 @@ import { getProfileTemplateIcon } from "@/lib/profileTemplateIcons";
 import {
   environmentService,
   profileService,
-  templateService,
   terminalService,
   type ProfileInput,
 } from "@/services";
@@ -65,7 +64,6 @@ import { useTemplateStore } from "@/stores/templateStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { cn } from "@/lib/utils";
 import type {
-  ProfileTemplate,
   Project,
   TerminalProfile,
   TerminalSplitDirection,
@@ -516,53 +514,6 @@ export function TerminalWorkspace() {
     [activeProjectId, profiles, projects, registerTab, t],
   );
 
-  // Quick-launch from a saved template. Reuse a same-name project profile so
-  // repeated launches do not accumulate duplicate profiles.
-  const handleLaunchFromTemplate = useCallback(
-    async (template: ProfileTemplate): Promise<string | null> => {
-      if (!activeProjectId) return null;
-      setError(null);
-      try {
-        const existing = findProfileByName(profiles, template.name);
-        const profile =
-          existing ??
-          (await templateService.createFromTemplate(
-            template.id,
-            activeProjectId,
-            template.name,
-          ));
-        if (!existing) setProfiles((prev) => [...prev, profile]);
-        const sessionId = await terminalService.create({
-          projectId: activeProjectId,
-          profileId: profile.id,
-          rows: 24,
-          cols: 80,
-          scrollbackMegabytes:
-            useSettingsStore.getState().terminalScrollbackMegabytes,
-        });
-        const tab: TerminalTab = {
-          id: crypto.randomUUID(),
-          sessionId,
-          projectId: activeProjectId,
-          profileId: profile.id,
-          defaultTitle: profile.name,
-          title: profile.name,
-          cwd: "",
-          status: "running",
-          createdAt: Date.now(),
-          lastActivatedAt: Date.now(),
-        };
-        registerTab(tab);
-        return tab.id;
-      } catch (e) {
-        const err = e as { message?: string };
-        setError(err.message ?? t("Failed to launch from template"));
-        return null;
-      }
-    },
-    [activeProjectId, profiles, registerTab, t],
-  );
-
   async function handleRestart(tabId: string) {
     const oldTab = tabsById[tabId];
     if (!oldTab) return;
@@ -971,9 +922,9 @@ export function TerminalWorkspace() {
     );
 
     // Quick-launch sources are ordered by priority and claimed by normalized
-    // name. A materialized profile wins over templates, built-ins and Conda;
-    // saved templates then win over same-name built-ins so customizations
-    // apply.
+    // name. A materialized profile wins over built-ins and Conda. Saved
+    // templates are deliberately absent: they are added to a project from
+    // Settings › Terminal profiles, not launched implicitly from here.
     const claimedQuickLaunchNames = new Set(
       profiles.map((profile) => normalizedProfileName(profile.name)),
     );
@@ -985,13 +936,6 @@ export function TerminalWorkspace() {
       quickLaunchItems.push(item);
     };
 
-    for (const template of templateList) {
-      addQuickLaunchItem(template.name, {
-        label: template.name,
-        icon: getProfileTemplateIcon(template.icon),
-        onSelect: () => void handleLaunchFromTemplate(template),
-      });
-    }
     for (const preset of BUILT_IN_PROFILE_PRESETS) {
       addQuickLaunchItem(preset.name, {
         label: preset.name,
@@ -1036,7 +980,6 @@ export function TerminalWorkspace() {
     activeProjectId,
     condaEnvs,
     contextMenuProfiles,
-    handleLaunchFromTemplate,
     handleNewTerminal,
     handleQuickLaunch,
     profiles,

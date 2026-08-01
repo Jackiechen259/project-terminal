@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 
 import { useProfileStore } from "@/stores/profileStore";
-import { profileService } from "@/services";
+import { profileService, templateService } from "@/services";
 
 vi.mock("@/services", () => ({
   profileService: {
@@ -14,9 +14,13 @@ vi.mock("@/services", () => ({
     importWindowsTerminal: vi.fn(),
     test: vi.fn(),
   },
+  templateService: {
+    createFromTemplate: vi.fn(),
+  },
 }));
 
 const profileServiceMock = vi.mocked(profileService);
+const templateServiceMock = vi.mocked(templateService);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -106,6 +110,56 @@ describe("profileStore", () => {
       expect(list).toHaveLength(2);
       expect(list.find((p) => p.id === "new-default")?.isDefault).toBe(true);
       expect(list.find((p) => p.id === "old-default")?.isDefault).toBe(false);
+    });
+  });
+
+  describe("createFromTemplate", () => {
+    it("appends the materialized profile to the target project", async () => {
+      useProfileStore.setState({
+        byProjectId: {
+          "proj-a": [
+            {
+              id: "existing",
+              projectId: "proj-a",
+              name: "Existing",
+              shellType: "powershell",
+              environmentType: "none",
+              isDefault: true,
+              showInContextMenu: true,
+              createdAt: "2026-01-01T00:00:00Z",
+              updatedAt: "2026-01-01T00:00:00Z",
+            },
+          ],
+        },
+      });
+      templateServiceMock.createFromTemplate.mockResolvedValueOnce({
+        id: "from-template",
+        projectId: "proj-a",
+        name: "Codex",
+        shellType: "powershell",
+        environmentType: "none",
+        isDefault: false,
+        showInContextMenu: true,
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+      });
+
+      await useProfileStore
+        .getState()
+        .createFromTemplate("tpl-1", "proj-a", "Codex");
+
+      expect(templateServiceMock.createFromTemplate).toHaveBeenCalledWith(
+        "tpl-1",
+        "proj-a",
+        "Codex",
+      );
+      expect(useProfileStore.getState().byProjectId["proj-a"]).toHaveLength(2);
+      // Materializing a template never steals the project's default.
+      expect(
+        useProfileStore
+          .getState()
+          .byProjectId["proj-a"].find((p) => p.id === "existing")?.isDefault,
+      ).toBe(true);
     });
   });
 
