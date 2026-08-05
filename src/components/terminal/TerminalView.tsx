@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ImageAddon } from "@xterm/addon-image";
@@ -112,6 +113,18 @@ export const TerminalView = memo(function TerminalView({
     (state) => state.terminalFontFamily,
   );
   const terminalFontSize = useSettingsStore((state) => state.terminalFontSize);
+  const typography = useSettingsStore(
+    useShallow((state) => ({
+      fontWeight: state.terminalFontWeight,
+      fontWeightBold: state.terminalFontWeightBold,
+      lineHeight: state.terminalLineHeight,
+      letterSpacing: state.terminalLetterSpacing,
+      cursorStyle: state.terminalCursorStyle,
+      cursorInactiveStyle: state.terminalCursorInactiveStyle,
+      padding: state.terminalPadding,
+      minimumContrast: state.terminalMinimumContrast,
+    })),
+  );
   const terminalScrollbackLines = useSettingsStore(
     (state) => state.terminalScrollbackLines,
   );
@@ -134,6 +147,11 @@ export const TerminalView = memo(function TerminalView({
     () => resolveColorScheme(terminalColorScheme, theme, importedSchemes).theme,
     [terminalColorScheme, theme, importedSchemes],
   );
+  // `0` means derive it from the scheme, which is right almost always; the
+  // override is for agent output that uses dim truecolor the palette's own
+  // contrast cannot rescue.
+  const resolvedContrast =
+    typography.minimumContrast || minimumContrastFor(palette);
 
   const copySelection = useCallback(async () => {
     const selection = termRef.current?.getSelection() ?? "";
@@ -265,15 +283,18 @@ export const TerminalView = memo(function TerminalView({
     const term = new Terminal({
       allowProposedApi: true,
       cursorBlink,
-      cursorStyle: "block",
+      cursorStyle: typography.cursorStyle,
       // Split panes have no other focus affordance: the focused pane keeps a
-      // solid block, the rest fall back to an outline.
-      cursorInactiveStyle: "outline",
+      // solid cursor, the rest fall back to an outline.
+      cursorInactiveStyle: typography.cursorInactiveStyle,
       scrollback: terminalScrollbackLines,
       fontFamily: buildTerminalFontStack(terminalFontFamily),
       fontSize: terminalFontSize,
-      lineHeight: 1.2,
-      minimumContrastRatio: minimumContrastFor(palette),
+      fontWeight: typography.fontWeight,
+      fontWeightBold: typography.fontWeightBold,
+      lineHeight: typography.lineHeight,
+      letterSpacing: typography.letterSpacing,
+      minimumContrastRatio: resolvedContrast,
       allowTransparency: false,
       convertEol: false,
       // Bold is a weight, not a palette shift. The default remaps `\e[1;30m`
@@ -620,9 +641,15 @@ export const TerminalView = memo(function TerminalView({
 
     term.options.fontFamily = buildTerminalFontStack(terminalFontFamily);
     term.options.fontSize = terminalFontSize;
+    term.options.fontWeight = typography.fontWeight;
+    term.options.fontWeightBold = typography.fontWeightBold;
+    term.options.lineHeight = typography.lineHeight;
+    term.options.letterSpacing = typography.letterSpacing;
+    term.options.cursorStyle = typography.cursorStyle;
+    term.options.cursorInactiveStyle = typography.cursorInactiveStyle;
     term.options.scrollback = terminalScrollbackLines;
     term.options.cursorBlink = cursorBlink;
-    term.options.minimumContrastRatio = minimumContrastFor(palette);
+    term.options.minimumContrastRatio = resolvedContrast;
     term.options.theme = palette;
     const frame = requestAnimationFrame(() => {
       try {
@@ -638,9 +665,11 @@ export const TerminalView = memo(function TerminalView({
   }, [
     cursorBlink,
     palette,
+    resolvedContrast,
     terminalFontFamily,
     terminalFontSize,
     terminalScrollbackLines,
+    typography,
   ]);
 
   // A terminal opened before app bootstrap resolved was built without a pty
@@ -674,7 +703,15 @@ export const TerminalView = memo(function TerminalView({
 
   return (
     <div
-      className="relative h-full w-full bg-background p-2"
+      className="relative h-full w-full"
+      // The gutter takes the terminal's own background rather than the app's,
+      // so a colour scheme that differs from the chrome does not read as a
+      // mis-sized panel. Inline because it is a user setting, and the refit
+      // above depends on it: padding changes the fittable grid.
+      style={{
+        padding: `${typography.padding}px`,
+        background: palette.background,
+      }}
       onContextMenuCapture={handleContextMenu}
       onFocusCapture={onFocus}
     >

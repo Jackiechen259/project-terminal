@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+﻿import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -23,6 +29,7 @@ const mocks = vi.hoisted(() => ({
     ((event: KeyboardEvent) => boolean) | undefined,
   binaryHandler: undefined as ((data: string) => void) | undefined,
   terminalOptions: undefined as Record<string, unknown> | undefined,
+  liveTerminal: undefined as { options: Record<string, unknown> } | undefined,
 }));
 
 vi.mock("@/services", () => ({
@@ -51,6 +58,7 @@ vi.mock("@xterm/xterm", () => ({
     constructor(options: Record<string, unknown>) {
       this.options = { ...options };
       mocks.terminalOptions = { ...options };
+      mocks.liveTerminal = this;
     }
 
     loadAddon() {}
@@ -130,6 +138,7 @@ vi.mock("@xterm/addon-web-links", () => ({
 }));
 
 import { usePlatformStore } from "@/stores/platformStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 
 import { TerminalView } from "./TerminalView";
 
@@ -231,6 +240,42 @@ describe("TerminalView session lifecycle", () => {
     expect(mocks.openExternalUrl).toHaveBeenCalledWith("https://example.com");
   });
 
+  it("applies typography changes live instead of rebuilding the terminal", async () => {
+    // xterm only requires a rebuild for `allowTransparency` and
+    // `allowProposedApi`. Rebuilding for a font change would detach the PTY
+    // and replay its scrollback, which the user would see as a flash.
+    const view = render(
+      <TerminalView sessionId="session-one" active defaultTitle="PowerShell" />,
+    );
+    await waitFor(() => expect(mocks.attach).toHaveBeenCalled());
+    const attachCalls = mocks.attach.mock.calls.length;
+
+    act(() => {
+      useSettingsStore.getState().updateGeneralSettings({
+        terminalFontWeight: 600,
+        terminalLineHeight: 1.4,
+        terminalLetterSpacing: 1,
+        terminalCursorStyle: "bar",
+        terminalCursorInactiveStyle: "none",
+        terminalMinimumContrast: 7,
+      });
+    });
+
+    await waitFor(() => {
+      const options = mocks.liveTerminal?.options ?? {};
+      expect(options.fontWeight).toBe(600);
+      expect(options.lineHeight).toBe(1.4);
+      expect(options.letterSpacing).toBe(1);
+      expect(options.cursorStyle).toBe("bar");
+      expect(options.cursorInactiveStyle).toBe("none");
+      expect(options.minimumContrastRatio).toBe(7);
+    });
+    // No re-attach, so no terminal was disposed.
+    expect(mocks.attach.mock.calls.length).toBe(attachCalls);
+
+    view.unmount();
+  });
+
   it("describes the ConPTY backend to xterm", async () => {
     render(
       <TerminalView sessionId="session-one" active defaultTitle="PowerShell" />,
@@ -320,7 +365,7 @@ describe("TerminalView session lifecycle", () => {
     await waitFor(() => expect(mocks.attach).toHaveBeenCalledTimes(1));
 
     const onFrame = mocks.attach.mock.calls[0][2] as (frame: unknown) => void;
-    const payload = new TextEncoder().encode("hello ÿ  world");
+    const payload = new TextEncoder().encode("hello Ã¿  world");
     onFrame(payload.buffer);
 
     await waitFor(() =>

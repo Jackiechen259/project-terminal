@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { Check, FileUp, MonitorCog, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -239,8 +240,197 @@ export function AppearanceSettingsPanel() {
           </p>
         </div>
         <TerminalFontPicker />
+        <TypographyControls />
       </section>
     </div>
+  );
+}
+
+/**
+ * The rest of the terminal's typography.
+ *
+ * Every one of these is applied to the live terminal by assignment - xterm
+ * only requires a rebuild for `allowTransparency` and `allowProposedApi` - so
+ * the effect is immediate and nothing is torn down.
+ */
+function TypographyControls() {
+  const { t } = useTranslation();
+  const settings = useSettingsStore(
+    useShallow((state) => ({
+      fontWeight: state.terminalFontWeight,
+      fontWeightBold: state.terminalFontWeightBold,
+      lineHeight: state.terminalLineHeight,
+      letterSpacing: state.terminalLetterSpacing,
+      cursorStyle: state.terminalCursorStyle,
+      cursorInactiveStyle: state.terminalCursorInactiveStyle,
+      padding: state.terminalPadding,
+      minimumContrast: state.terminalMinimumContrast,
+    })),
+  );
+  const update = useSettingsStore((state) => state.updateGeneralSettings);
+
+  return (
+    <div className="grid gap-4 sm:grid-cols-2">
+      <Labelled label={t("Text weight")}>
+        <NumberSelect
+          label={t("Terminal text weight")}
+          value={settings.fontWeight}
+          options={[200, 300, 400, 500, 600, 700]}
+          onChange={(terminalFontWeight) => update({ terminalFontWeight })}
+        />
+      </Labelled>
+      <Labelled label={t("Bold weight")}>
+        <NumberSelect
+          label={t("Terminal bold weight")}
+          value={settings.fontWeightBold}
+          options={[400, 500, 600, 700, 800, 900]}
+          onChange={(terminalFontWeightBold) =>
+            update({ terminalFontWeightBold })
+          }
+        />
+      </Labelled>
+      <Labelled label={t("Line height")}>
+        <NumberSelect
+          label={t("Terminal line height")}
+          value={settings.lineHeight}
+          options={[1, 1.1, 1.2, 1.3, 1.4, 1.6, 1.8]}
+          onChange={(terminalLineHeight) => update({ terminalLineHeight })}
+        />
+      </Labelled>
+      <Labelled label={t("Letter spacing")}>
+        <NumberSelect
+          label={t("Terminal letter spacing")}
+          value={settings.letterSpacing}
+          options={[-1, -0.5, 0, 0.5, 1, 2, 3]}
+          format={(value) => `${value > 0 ? "+" : ""}${value}px`}
+          onChange={(terminalLetterSpacing) =>
+            update({ terminalLetterSpacing })
+          }
+        />
+      </Labelled>
+      <Labelled label={t("Padding")}>
+        <NumberSelect
+          label={t("Terminal padding")}
+          value={settings.padding}
+          options={[0, 4, 6, 8, 10, 12, 16, 24]}
+          format={(value) => `${value}px`}
+          onChange={(terminalPadding) => update({ terminalPadding })}
+        />
+      </Labelled>
+      <Labelled label={t("Cursor")}>
+        <select
+          aria-label={t("Terminal cursor style")}
+          className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+          value={settings.cursorStyle}
+          onChange={(event) =>
+            update({
+              terminalCursorStyle: event.target
+                .value as typeof settings.cursorStyle,
+            })
+          }
+        >
+          <option value="block">{t("Block")}</option>
+          <option value="bar">{t("Bar")}</option>
+          <option value="underline">{t("Underline")}</option>
+        </select>
+      </Labelled>
+      <Labelled
+        label={t("Unfocused cursor")}
+        hint={t("How the cursor draws in a split pane you are not typing in.")}
+      >
+        <select
+          aria-label={t("Terminal unfocused cursor style")}
+          className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+          value={settings.cursorInactiveStyle}
+          onChange={(event) =>
+            update({
+              terminalCursorInactiveStyle: event.target
+                .value as typeof settings.cursorInactiveStyle,
+            })
+          }
+        >
+          <option value="outline">{t("Outline")}</option>
+          <option value="block">{t("Block")}</option>
+          <option value="bar">{t("Bar")}</option>
+          <option value="underline">{t("Underline")}</option>
+          <option value="none">{t("Hidden")}</option>
+        </select>
+      </Labelled>
+      <Labelled
+        label={t("Minimum contrast")}
+        hint={t(
+          "Raise this when a tool prints dim colors that are hard to read.",
+        )}
+      >
+        <select
+          aria-label={t("Terminal minimum contrast")}
+          className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+          value={settings.minimumContrast}
+          onChange={(event) =>
+            update({ terminalMinimumContrast: Number(event.target.value) })
+          }
+        >
+          <option value={0}>{t("Match the color scheme")}</option>
+          <option value={1}>{t("Off")}</option>
+          <option value={4.5}>{t("Readable (4.5:1)")}</option>
+          <option value={7}>{t("High (7:1)")}</option>
+        </select>
+      </Labelled>
+    </div>
+  );
+}
+
+function Labelled({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block space-y-1.5">
+      <span className="text-sm font-medium">{label}</span>
+      {children}
+      {hint ? (
+        <span className="block text-xs text-muted-foreground">{hint}</span>
+      ) : null}
+    </label>
+  );
+}
+
+function NumberSelect({
+  label,
+  value,
+  options,
+  format = String,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  options: number[];
+  format?: (value: number) => string;
+  onChange: (value: number) => void;
+}) {
+  // A saved value outside the offered set - from a future build, or a hand
+  // edit - still has to be selectable or the control would silently move it.
+  const choices = options.includes(value)
+    ? options
+    : [...options, value].sort((a, b) => a - b);
+  return (
+    <select
+      aria-label={label}
+      className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+      value={value}
+      onChange={(event) => onChange(Number(event.target.value))}
+    >
+      {choices.map((option) => (
+        <option key={option} value={option}>
+          {format(option)}
+        </option>
+      ))}
+    </select>
   );
 }
 
