@@ -53,6 +53,7 @@ vi.mock("@xterm/xterm", () => ({
     cols = 132;
     options: Record<string, unknown> = {};
     buffer = { active: { viewportY: 0, baseY: 0 } };
+    modes = { bracketedPasteMode: false };
     element: HTMLElement | undefined;
 
     constructor(options: Record<string, unknown>) {
@@ -499,5 +500,49 @@ describe("TerminalView session lifecycle", () => {
 
     await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
     expect(mocks.paste).not.toHaveBeenCalled();
+  });
+
+  it("does not warn about newlines the shell's line editor will hold", async () => {
+    // With bracketed paste on - every modern shell's line editor - a
+    // multi-line paste lands in the editor and cannot execute, so the
+    // confirmation was pure noise. Size stays unconditional.
+    mocks.readClipboardText.mockResolvedValue("a\n".repeat(50));
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(
+      <TerminalView sessionId="session-one" active defaultTitle="PowerShell" />,
+    );
+    await waitFor(() => expect(mocks.customKeyHandler).toBeTypeOf("function"));
+    if (mocks.liveTerminal) {
+      (
+        mocks.liveTerminal as unknown as {
+          modes: { bracketedPasteMode: boolean };
+        }
+      ).modes.bracketedPasteMode = true;
+    }
+
+    mocks.customKeyHandler?.(
+      new KeyboardEvent("keydown", { key: "v", ctrlKey: true }),
+    );
+
+    await waitFor(() => expect(mocks.paste).toHaveBeenCalledTimes(1));
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it("sends a CSI-u sequence for chords xterm collapses", async () => {
+    render(
+      <TerminalView sessionId="session-one" active defaultTitle="PowerShell" />,
+    );
+    await waitFor(() => expect(mocks.customKeyHandler).toBeTypeOf("function"));
+    await waitFor(() => expect(mocks.attach).toHaveBeenCalled());
+
+    // xterm's Enter handling consults only altKey, so Shift+Enter would
+    // otherwise reach the program as a bare carriage return.
+    const handled = mocks.customKeyHandler?.(
+      new KeyboardEvent("keydown", { key: "Enter", shiftKey: true }),
+    );
+    expect(handled).toBe(false);
+    await waitFor(() =>
+      expect(mocks.write).toHaveBeenCalledWith("session-one", "\x1b[13;2u"),
+    );
   });
 });

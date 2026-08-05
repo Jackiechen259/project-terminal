@@ -70,6 +70,20 @@ export interface GeneralSettings {
    * contrast, even on a dark background.
    */
   terminalMinimumContrast: number;
+  /**
+   * Which renderer to draw with. `auto` starts on the DOM renderer and
+   * upgrades to WebGL when it works, which is what almost everyone wants;
+   * `dom` exists for machines where WebGL is unstable rather than absent.
+   */
+  terminalRenderer: "auto" | "webgl" | "dom";
+  /**
+   * Which chord pastes.
+   *
+   * Ctrl+V is the Windows convention, but intercepting it means `vim`'s
+   * blockwise-visual `^V` and `emacs`' page-down `^V` can never reach the
+   * program. Ctrl+Shift+V gives those back.
+   */
+  terminalPasteShortcut: "ctrl-v" | "ctrl-shift-v";
   terminalScrollbackLines: number;
   terminalScrollbackMegabytes: number;
   cursorBlink: boolean;
@@ -95,6 +109,8 @@ export const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   terminalCursorInactiveStyle: "outline",
   terminalPadding: 10,
   terminalMinimumContrast: 0,
+  terminalRenderer: "auto",
+  terminalPasteShortcut: "ctrl-v",
   terminalScrollbackLines: 10_000,
   terminalScrollbackMegabytes: 4,
   cursorBlink: true,
@@ -289,6 +305,8 @@ export const useSettingsStore = create<SettingsStoreState>()(
         terminalCursorInactiveStyle: state.terminalCursorInactiveStyle,
         terminalPadding: state.terminalPadding,
         terminalMinimumContrast: state.terminalMinimumContrast,
+        terminalRenderer: state.terminalRenderer,
+        terminalPasteShortcut: state.terminalPasteShortcut,
         terminalScrollbackLines: state.terminalScrollbackLines,
         terminalScrollbackMegabytes: state.terminalScrollbackMegabytes,
         cursorBlink: state.cursorBlink,

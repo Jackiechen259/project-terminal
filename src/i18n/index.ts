@@ -41,6 +41,19 @@ const zhCN: Record<string, string> = {
   "Ask before closing a terminal that is starting or still running.":
     "关闭正在启动或运行中的终端前进行确认。",
   "Confirm before closing a running terminal": "关闭运行中的终端前确认",
+  "Hardware rendering is unavailable; using software rendering.":
+    "硬件渲染不可用，正在使用软件渲染。",
+  Renderer: "渲染器",
+  "Terminal renderer": "终端渲染器",
+  "Automatic (hardware when available)": "自动（可用时使用硬件）",
+  "Hardware (WebGL)": "硬件（WebGL）",
+  "Software (DOM)": "软件（DOM）",
+  "Switch to software rendering if the terminal flickers or leaves artifacts.":
+    "如果终端闪烁或出现残影，可切换为软件渲染。",
+  "Paste shortcut": "粘贴快捷键",
+  "Terminal paste shortcut": "终端粘贴快捷键",
+  "Ctrl+Shift+V leaves Ctrl+V to programs such as vim and emacs.":
+    "使用 Ctrl+Shift+V 可将 Ctrl+V 留给 vim、emacs 等程序。",
   "Text weight": "文字字重",
   "Terminal text weight": "终端文字字重",
   "Bold weight": "粗体字重",

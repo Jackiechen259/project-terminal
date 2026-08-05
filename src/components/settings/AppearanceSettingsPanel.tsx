@@ -265,6 +265,8 @@ function TypographyControls() {
       cursorInactiveStyle: state.terminalCursorInactiveStyle,
       padding: state.terminalPadding,
       minimumContrast: state.terminalMinimumContrast,
+      renderer: state.terminalRenderer,
+      pasteShortcut: state.terminalPasteShortcut,
     })),
   );
   const update = useSettingsStore((state) => state.updateGeneralSettings);
@@ -354,6 +356,50 @@ function TypographyControls() {
           <option value="bar">{t("Bar")}</option>
           <option value="underline">{t("Underline")}</option>
           <option value="none">{t("Hidden")}</option>
+        </select>
+      </Labelled>
+      <Labelled
+        label={t("Renderer")}
+        hint={t(
+          "Switch to software rendering if the terminal flickers or leaves artifacts.",
+        )}
+      >
+        <select
+          aria-label={t("Terminal renderer")}
+          className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+          value={settings.renderer}
+          onChange={(event) =>
+            update({
+              terminalRenderer: event.target.value as typeof settings.renderer,
+            })
+          }
+        >
+          <option value="auto">
+            {t("Automatic (hardware when available)")}
+          </option>
+          <option value="webgl">{t("Hardware (WebGL)")}</option>
+          <option value="dom">{t("Software (DOM)")}</option>
+        </select>
+      </Labelled>
+      <Labelled
+        label={t("Paste shortcut")}
+        hint={t(
+          "Ctrl+Shift+V leaves Ctrl+V to programs such as vim and emacs.",
+        )}
+      >
+        <select
+          aria-label={t("Terminal paste shortcut")}
+          className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+          value={settings.pasteShortcut}
+          onChange={(event) =>
+            update({
+              terminalPasteShortcut: event.target
+                .value as typeof settings.pasteShortcut,
+            })
+          }
+        >
+          <option value="ctrl-v">Ctrl+V</option>
+          <option value="ctrl-shift-v">Ctrl+Shift+V</option>
         </select>
       </Labelled>
       <Labelled

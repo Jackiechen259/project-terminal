@@ -6,13 +6,13 @@ import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
 import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import type { WebglAddon } from "@xterm/addon-webgl";
-import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Search, TriangleAlert, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 
 import { useTranslation } from "@/i18n";
 import { listenForAppCommands } from "@/lib/appCommands";
 import { TerminalInputQueue } from "@/lib/terminalInputQueue";
+import { resolveExtraKeySequence } from "@/lib/terminalKeys";
 import { TerminalOutputQueue } from "@/lib/terminalOutputQueue";
 import { TerminalResizeQueue } from "@/lib/terminalResizeQueue";
 import { buildTerminalFontStack } from "@/lib/terminalFonts";
@@ -21,6 +21,7 @@ import {
   resolveColorScheme,
 } from "@/lib/terminalColorSchemes";
 import { getTerminalSearchDecorations } from "@/lib/terminalThemes";
+import { TerminalRenderer, type RendererState } from "@/lib/terminalRenderer";
 import { resolveWindowsPty } from "@/lib/terminalWindowsPty";
 import {
   isTerminalControlFrame,
@@ -119,6 +120,8 @@ export const TerminalView = memo(function TerminalView({
   const fitRef = useRef<FitAddon | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
   const resizeQueueRef = useRef<TerminalResizeQueue | null>(null);
+  const rendererRef = useRef<TerminalRenderer | null>(null);
+  const [rendererState, setRendererState] = useState<RendererState>("dom");
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Report a resize from outside the terminal's own effect. */
   const requestResize = useCallback((term: Terminal) => {
@@ -160,6 +163,7 @@ export const TerminalView = memo(function TerminalView({
     (state) => state.terminalScrollbackLines,
   );
   const cursorBlink = useSettingsStore((state) => state.cursorBlink);
+  const terminalRenderer = useSettingsStore((state) => state.terminalRenderer);
   const theme = useSettingsStore((state) => state.theme);
   const terminalColorScheme = useSettingsStore(
     (state) => state.terminalColorScheme,
@@ -196,7 +200,14 @@ export const TerminalView = memo(function TerminalView({
     const text = await terminalService.readClipboardText();
     if (!text) return;
     const lineCount = text.split(/\r\n|\r|\n/).length;
-    const requiresConfirmation = text.length >= 10_000 || lineCount > 20;
+    // Newlines are only dangerous when the shell will execute them. With
+    // bracketed paste on - which is every modern shell's line editor - a
+    // multi-line paste lands in the editor and cannot run, so warning about
+    // it is pure noise. Size stays unconditional: a multi-megabyte paste is
+    // a hang risk either way.
+    const bracketed = term.modes.bracketedPasteMode;
+    const requiresConfirmation =
+      text.length >= 10_000 || (!bracketed && lineCount > 20);
     if (
       requiresConfirmation &&
       !window.confirm(
@@ -361,29 +372,16 @@ export const TerminalView = memo(function TerminalView({
       }),
     );
     term.open(container);
-    let webgl: WebglAddon | null = null;
-    let disposed = false;
-    // DOM rendering can display the first prompt immediately. Upgrade to the
-    // heavier WebGL renderer asynchronously once its separate chunk arrives.
-    void import("@xterm/addon-webgl")
-      .then(({ WebglAddon }) => {
-        if (disposed) return;
-        try {
-          webgl = new WebglAddon();
-          webgl.onContextLoss(() => {
-            webgl?.dispose();
-            webgl = null;
-          });
-          term.loadAddon(webgl);
-        } catch {
-          webgl?.dispose();
-          webgl = null;
-        }
-      })
-      .catch(() => {
-        // The DOM renderer remains fully functional if the optional chunk
-        // cannot be loaded.
-      });
+    // DOM rendering can display the first prompt immediately. The renderer
+    // upgrades to WebGL once its separate chunk arrives, and gets it back
+    // after the GPU takes the context away.
+    const renderer = new TerminalRenderer(term, {
+      loadAddon: () =>
+        import("@xterm/addon-webgl").then(({ WebglAddon }) => WebglAddon),
+      onStateChange: setRendererState,
+    });
+    rendererRef.current = renderer;
+    renderer.start(useSettingsStore.getState().terminalRenderer);
     termRef.current = term;
     fitRef.current = fit;
     searchRef.current = search;
@@ -479,13 +477,25 @@ export const TerminalView = memo(function TerminalView({
       inputQueue.sendBinary(data),
     );
     term.attachCustomKeyEventHandler((event) => {
-      if (
-        event.type === "keydown" &&
-        event.ctrlKey &&
-        !event.altKey &&
-        event.key.toLowerCase() === "v"
-      ) {
+      if (event.type !== "keydown") return true;
+      // AltGr arrives as ctrl+alt on Windows layouts. xterm has its own
+      // AltGraph guard; excluding altKey here keeps this handler from
+      // swallowing the composed character before that guard runs.
+      if (event.altKey) return true;
+
+      const { terminalPasteShortcut } = useSettingsStore.getState();
+      const pasteChord =
+        terminalPasteShortcut === "ctrl-shift-v"
+          ? event.ctrlKey && event.shiftKey
+          : event.ctrlKey && !event.shiftKey;
+      if (pasteChord && event.key.toLowerCase() === "v") {
         void pasteClipboard();
+        return false;
+      }
+
+      const sequence = resolveExtraKeySequence(event);
+      if (sequence !== null) {
+        inputQueue.send(sequence);
         return false;
       }
       return true;
@@ -635,7 +645,6 @@ export const TerminalView = memo(function TerminalView({
       });
 
     return () => {
-      disposed = true;
       cancelled = true;
       inputQueue.dispose();
       outputQueue.dispose();
@@ -655,7 +664,8 @@ export const TerminalView = memo(function TerminalView({
       });
       void terminalService.detach(sessionId, clientId);
       sessionStorage.removeItem(snapshotKey);
-      webgl?.dispose();
+      renderer.dispose();
+      rendererRef.current = null;
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
@@ -705,6 +715,10 @@ export const TerminalView = memo(function TerminalView({
     typography,
   ]);
 
+  useEffect(() => {
+    rendererRef.current?.setPreference(terminalRenderer);
+  }, [terminalRenderer]);
+
   // A terminal opened before app bootstrap resolved was built without a pty
   // description. xterm reads it at resize time, so applying it late is enough
   // and costs nothing - unlike rebuilding the terminal, which would detach the
@@ -748,6 +762,17 @@ export const TerminalView = memo(function TerminalView({
       onContextMenuCapture={handleContextMenu}
       onFocusCapture={onFocus}
     >
+      {rendererState === "degraded" && active ? (
+        // Rendered as UI, never written into the terminal: a notice in the
+        // byte stream would corrupt whatever TUI is on screen.
+        <div
+          role="status"
+          className="pointer-events-none absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-md border border-border bg-popover/95 px-2 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur"
+        >
+          <TriangleAlert className="h-3.5 w-3.5 text-warn" />
+          {t("Hardware rendering is unavailable; using software rendering.")}
+        </div>
+      ) : null}
       {searchOpen && active ? (
         <form
           className="absolute right-4 top-3 z-20 flex items-center gap-1 rounded-md border border-border bg-popover/95 p-1 shadow-lg backdrop-blur"

@@ -20,6 +20,13 @@ fn main() {
         ("@xterm/xterm/css/xterm.css", "xterm.css"),
         ("@xterm/addon-fit/lib/addon-fit.js", "xterm-addon-fit.js"),
         ("@xterm/addon-image/lib/addon-image.js", "xterm-addon-image.js"),
+        // Character widths. Without it the phone renders the same PTY bytes
+        // at different widths than the desktop, so CJK and emoji columns do
+        // not line up when a session is taken over mid-command.
+        (
+            "@xterm/addon-unicode-graphemes/lib/addon-unicode-graphemes.js",
+            "xterm-addon-unicode-graphemes.js",
+        ),
     ];
 
     for (src_rel, dst_name) in assets {

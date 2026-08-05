@@ -930,6 +930,7 @@
     <script src="/xterm.js"></script>
     <script src="/xterm-addon-fit.js"></script>
     <script src="/xterm-addon-image.js"></script>
+    <script src="/xterm-addon-unicode-graphemes.js"></script>
     <script>
       const $ = (id) => document.getElementById(id);
       const CONTROL_RENEW_MS = 10000;
@@ -1116,6 +1117,12 @@
           });
           fitAddon = new FitAddon.FitAddon();
           terminal.loadAddon(fitAddon);
+          // Character widths, matching the desktop. Without it the same PTY
+          // bytes render at different widths here, so CJK and emoji columns
+          // stop lining up the moment a session is taken over mid-command.
+          terminal.loadAddon(
+            new UnicodeGraphemesAddon.UnicodeGraphemesAddon(),
+          );
           // Sixel/IIP rendering, loaded before open() because the addon wraps
           // the core's open and renderer hooks. Phones are memory-tight, so the
           // image cache stays well below the 128 MB default.
@@ -1154,7 +1161,10 @@
       }
 
       function resetTerminal() {
-        if (terminal) terminal.clear();
+        // `reset`, not `clear`: a session left in the alternate screen, or
+        // with mouse tracking or bracketed paste on, keeps those modes
+        // through a clear and mis-renders everything that follows.
+        if (terminal) terminal.reset();
         pendingOutput = [];
         clearLease();
       }
