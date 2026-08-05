@@ -16,16 +16,17 @@ import { TerminalOutputQueue } from "@/lib/terminalOutputQueue";
 import { TerminalResizeQueue } from "@/lib/terminalResizeQueue";
 import { buildTerminalFontStack } from "@/lib/terminalFonts";
 import {
-  getTerminalMinimumContrast,
-  getTerminalSearchDecorations,
-  getTerminalTheme,
-} from "@/lib/terminalThemes";
+  minimumContrastFor,
+  resolveColorScheme,
+} from "@/lib/terminalColorSchemes";
+import { getTerminalSearchDecorations } from "@/lib/terminalThemes";
 import { resolveWindowsPty } from "@/lib/terminalWindowsPty";
 import {
   isTerminalControlFrame,
   type TerminalSessionFrame,
 } from "@/lib/terminalFrames";
 import { terminalService } from "@/services";
+import { useColorSchemeStore } from "@/stores/colorSchemeStore";
 import { usePlatformStore } from "@/stores/platformStore";
 import {
   clampTerminalFontSize,
@@ -116,7 +117,23 @@ export const TerminalView = memo(function TerminalView({
   );
   const cursorBlink = useSettingsStore((state) => state.cursorBlink);
   const theme = useSettingsStore((state) => state.theme);
+  const terminalColorScheme = useSettingsStore(
+    (state) => state.terminalColorScheme,
+  );
+  const importedSchemes = useColorSchemeStore((state) => state.schemes);
+  const loadColorSchemes = useColorSchemeStore((state) => state.load);
   const platformInfo = usePlatformStore((state) => state.info);
+
+  // Only needed once a selection names something that is not built in. The
+  // store coalesces the calls every open terminal makes here.
+  useEffect(() => {
+    void loadColorSchemes();
+  }, [loadColorSchemes]);
+
+  const palette = useMemo(
+    () => resolveColorScheme(terminalColorScheme, theme, importedSchemes).theme,
+    [terminalColorScheme, theme, importedSchemes],
+  );
 
   const copySelection = useCallback(async () => {
     const selection = termRef.current?.getSelection() ?? "";
@@ -256,7 +273,7 @@ export const TerminalView = memo(function TerminalView({
       fontFamily: buildTerminalFontStack(terminalFontFamily),
       fontSize: terminalFontSize,
       lineHeight: 1.2,
-      minimumContrastRatio: getTerminalMinimumContrast(theme),
+      minimumContrastRatio: minimumContrastFor(palette),
       allowTransparency: false,
       convertEol: false,
       // Bold is a weight, not a palette shift. The default remaps `\e[1;30m`
@@ -270,7 +287,7 @@ export const TerminalView = memo(function TerminalView({
       overviewRuler: { width: OVERVIEW_RULER_WIDTH },
       windowsPty,
       linkHandler,
-      theme: getTerminalTheme(theme),
+      theme: palette,
     });
     const fit = new FitAddon();
     const search = new SearchAddon();
@@ -605,8 +622,8 @@ export const TerminalView = memo(function TerminalView({
     term.options.fontSize = terminalFontSize;
     term.options.scrollback = terminalScrollbackLines;
     term.options.cursorBlink = cursorBlink;
-    term.options.minimumContrastRatio = getTerminalMinimumContrast(theme);
-    term.options.theme = getTerminalTheme(theme);
+    term.options.minimumContrastRatio = minimumContrastFor(palette);
+    term.options.theme = palette;
     const frame = requestAnimationFrame(() => {
       try {
         fitRef.current?.fit();
@@ -620,10 +637,10 @@ export const TerminalView = memo(function TerminalView({
     // the refit above; none of them requires rebuilding the terminal.
   }, [
     cursorBlink,
+    palette,
     terminalFontFamily,
     terminalFontSize,
     terminalScrollbackLines,
-    theme,
   ]);
 
   // A terminal opened before app bootstrap resolved was built without a pty

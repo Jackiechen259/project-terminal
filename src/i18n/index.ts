@@ -41,6 +41,20 @@ const zhCN: Record<string, string> = {
   "Ask before closing a terminal that is starting or still running.":
     "关闭正在启动或运行中的终端前进行确认。",
   "Confirm before closing a running terminal": "关闭运行中的终端前确认",
+  "Interface theme": "界面主题",
+  "Applies to the window, sidebars, and dialogs.":
+    "应用于窗口、侧边栏和对话框。",
+  "Terminal colors": "终端配色",
+  "Terminal color scheme": "终端配色方案",
+  "Follow interface theme": "跟随界面主题",
+  "Import from file": "从文件导入",
+  "Color scheme": "配色方案",
+  "Imported {count} color scheme(s).": "已导入 {count} 个配色方案。",
+  "No new Windows Terminal color schemes to import.":
+    "没有可导入的新 Windows Terminal 配色方案。",
+  "Could not import color schemes.": "无法导入配色方案。",
+  "{scheme} by {author}": "{scheme}，作者 {author}",
+  "Delete {scheme}": "删除 {scheme}",
   "Terminal font": "终端字体",
   "Applied immediately to every open terminal. Only monospaced fonts installed on this machine are listed.":
     "立即应用到所有已打开的终端。仅列出本机已安装的等宽字体。",

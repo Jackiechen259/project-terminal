@@ -1,5 +1,6 @@
 import type { ITheme } from "@xterm/xterm";
 
+import type { StoredColorScheme } from "@/services";
 import { TERMINAL_THEMES } from "@/lib/terminalThemes";
 import type { AppTheme } from "@/stores/settingsStore";
 
@@ -381,6 +382,21 @@ export const BUILT_IN_COLOR_SCHEMES: TerminalColorScheme[] = [
     "Enkia",
   ),
 ];
+
+/**
+ * Reshape a stored scheme into the form xterm wants.
+ *
+ * The stored form is flat because that is what Windows Terminal writes and
+ * what a shared scheme file looks like; xterm wants a nested `ITheme`. Doing
+ * the conversion here rather than at the storage boundary keeps the on-disk
+ * format recognisable to anyone who opens it.
+ */
+export function toTerminalColorScheme(
+  stored: StoredColorScheme,
+): TerminalColorScheme {
+  const { id, name, createdAt: _c, updatedAt: _u, ...theme } = stored;
+  return { id, name, theme, attribution: undefined };
+}
 
 /** The ANSI entries, in the order a 4x4 swatch grid should show them. */
 export const ANSI_SWATCH_KEYS = [

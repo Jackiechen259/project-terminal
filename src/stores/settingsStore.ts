@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+import { FOLLOW_APP_THEME } from "@/lib/terminalColorSchemes";
 import { sanitizeFontFamily } from "@/lib/terminalFonts";
 import { createThrottledJSONStorage } from "@/lib/throttledStorage";
 
@@ -22,6 +23,14 @@ export interface GeneralSettings {
   showTerminalCount: boolean;
   openFileSidebarByDefault: boolean;
   /**
+   * Terminal colour scheme id, or the `follow-app-theme` sentinel.
+   *
+   * A sentinel rather than a concrete default so an existing installation
+   * sees no change on upgrade - the palette stays tied to the app theme until
+   * the user picks something else.
+   */
+  terminalColorScheme: string;
+  /**
    * Terminal font family name only, not a full CSS stack. Empty means "use
    * the bundled font"; `buildTerminalFontStack` appends the fallbacks.
    */
@@ -41,6 +50,7 @@ export const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   confirmDeleteProject: true,
   showTerminalCount: true,
   openFileSidebarByDefault: false,
+  terminalColorScheme: FOLLOW_APP_THEME,
   terminalFontFamily: "",
   terminalFontSize: 14,
   terminalScrollbackLines: 10_000,
@@ -135,6 +145,7 @@ export const useSettingsStore = create<SettingsStoreState>()(
         confirmDeleteProject: state.confirmDeleteProject,
         showTerminalCount: state.showTerminalCount,
         openFileSidebarByDefault: state.openFileSidebarByDefault,
+        terminalColorScheme: state.terminalColorScheme,
         terminalFontFamily: state.terminalFontFamily,
         terminalFontSize: state.terminalFontSize,
         terminalScrollbackLines: state.terminalScrollbackLines,

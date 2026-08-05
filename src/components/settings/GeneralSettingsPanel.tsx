@@ -20,8 +20,6 @@ import {
   useSettingsStore,
 } from "@/stores/settingsStore";
 
-import { TerminalFontPicker } from "./TerminalFontPicker";
-
 const FONT_SIZES = [10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24];
 const SCROLLBACK_LINES = [1_000, 5_000, 10_000, 25_000, 50_000, 100_000];
 const SCROLLBACK_MEGABYTES = [1, 2, 4, 8, 16, 32];
@@ -144,39 +142,6 @@ export function GeneralSettingsPanel() {
             <option value="en">{t("English")}</option>
             <option value="zh-CN">简体中文</option>
           </select>
-        </SettingRow>
-      </SettingsGroup>
-
-      <SettingsGroup
-        title={t("Appearance")}
-        description={t("Choose the colors used by the interface and terminal.")}
-      >
-        <SettingRow
-          title={t("Theme")}
-          description={t("Changes apply immediately.")}
-        >
-          <select
-            aria-label={t("Theme")}
-            className="h-9 w-36 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring"
-            value={theme ?? "dark"}
-            onChange={(event) =>
-              update({
-                theme: event.target.value as "dark" | "eye-care" | "light",
-              })
-            }
-          >
-            <option value="dark">{t("Dark")}</option>
-            <option value="eye-care">{t("Warm eye care")}</option>
-            <option value="light">{t("White")}</option>
-          </select>
-        </SettingRow>
-        <SettingRow
-          title={t("Terminal font")}
-          description={t(
-            "Applied immediately to every open terminal. Only monospaced fonts installed on this machine are listed.",
-          )}
-        >
-          <TerminalFontPicker />
         </SettingRow>
       </SettingsGroup>
 

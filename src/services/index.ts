@@ -137,6 +137,62 @@ export interface WindowsTerminalScanResult {
   sourceFiles: string[];
 }
 
+/**
+ * A colour scheme the user imported, as stored by the backend.
+ *
+ * Flat rather than an xterm `ITheme` because that is the shape both Windows
+ * Terminal and the on-disk file use; `toTerminalColorScheme` reshapes it.
+ */
+export interface StoredColorScheme {
+  id: string;
+  name: string;
+  background: string;
+  foreground: string;
+  cursor: string;
+  cursorAccent?: string;
+  selectionBackground?: string;
+  black: string;
+  red: string;
+  green: string;
+  yellow: string;
+  blue: string;
+  magenta: string;
+  cyan: string;
+  white: string;
+  brightBlack: string;
+  brightRed: string;
+  brightGreen: string;
+  brightYellow: string;
+  brightBlue: string;
+  brightMagenta: string;
+  brightCyan: string;
+  brightWhite: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WindowsTerminalSchemeCandidate {
+  key: string;
+  name: string;
+  background: string;
+  foreground: string;
+  /** The sixteen ANSI colours in order, for the picker's swatch strip. */
+  ansi: string[];
+  alreadyExists: boolean;
+}
+
+export interface WindowsTerminalSchemeScanResult {
+  candidates: WindowsTerminalSchemeCandidate[];
+  skippedCount: number;
+  sourceFiles: string[];
+}
+
+export interface WindowsTerminalSchemeImportResult {
+  imported: StoredColorScheme[];
+  skippedCount: number;
+  sourceFiles: string[];
+}
+
 export interface TemplateInput {
   id?: string;
   name: string;
@@ -327,6 +383,32 @@ export interface DetectedPythonEnvironment {
   path: string;
   kind: "venv";
 }
+
+/**
+ * Colour schemes the user imported. Built-in schemes are frontend code
+ * (`@/lib/terminalColorSchemes`) and never cross this boundary.
+ */
+export const colorSchemeService = {
+  list: () =>
+    invokeOrThrow<ListResponse<StoredColorScheme>>("list_color_schemes").then(
+      (r) => r.items,
+    ),
+  delete: (id: string) => invokeOrThrow<void>("delete_color_scheme", { id }),
+  importFromFile: (path: string) =>
+    invokeOrThrow<ListResponse<StoredColorScheme>>(
+      "import_color_schemes_from_file",
+      { path },
+    ).then((r) => r.items),
+  scanWindowsTerminal: () =>
+    invokeOrThrow<WindowsTerminalSchemeScanResult>(
+      "scan_windows_terminal_color_schemes",
+    ),
+  importWindowsTerminal: (keys: string[]) =>
+    invokeOrThrow<WindowsTerminalSchemeImportResult>(
+      "import_windows_terminal_color_schemes",
+      { keys },
+    ),
+};
 
 export const templateService = {
   list: () =>

@@ -6,6 +6,7 @@ import {
   Download,
   EyeOff,
   LayoutTemplate,
+  Palette,
   Plus,
   SlidersHorizontal,
   Sparkles,
@@ -56,10 +57,12 @@ import type {
 } from "@/types";
 
 import { AddFromTemplatePanel } from "./AddFromTemplatePanel";
+import { AppearanceSettingsPanel } from "./AppearanceSettingsPanel";
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
 import { WindowsTerminalImportPanel } from "./WindowsTerminalImportPanel";
 
-export type SettingsSection = "general" | "profiles" | "templates";
+export type SettingsSection =
+  "general" | "appearance" | "profiles" | "templates";
 
 type ProfileDraft = {
   id?: string;
@@ -709,11 +712,13 @@ export function SettingsDialog({
           <DialogDescription>
             {section === "general"
               ? t("Manage application-wide preferences.")
-              : section === "templates"
-                ? t(
-                    "Create reusable profile templates to quickly add to any project.",
-                  )
-                : t("Configure terminal profiles for each project.")}
+              : section === "appearance"
+                ? t("Choose the colors used by the interface and terminal.")
+                : section === "templates"
+                  ? t(
+                      "Create reusable profile templates to quickly add to any project.",
+                    )
+                  : t("Configure terminal profiles for each project.")}
           </DialogDescription>
         </DialogHeader>
 
@@ -726,6 +731,16 @@ export function SettingsDialog({
                 label={t("General")}
                 onClick={() => {
                   setSection("general");
+                  setError(null);
+                  closePanels();
+                }}
+              />
+              <SettingsNavItem
+                active={section === "appearance"}
+                icon={Palette}
+                label={t("Appearance")}
+                onClick={() => {
+                  setSection("appearance");
                   setError(null);
                   closePanels();
                 }}
@@ -973,6 +988,8 @@ export function SettingsDialog({
           <main className="app-scrollbar min-w-0 flex-1 overflow-y-auto p-6">
             {section === "general" ? (
               <GeneralSettingsPanel />
+            ) : section === "appearance" ? (
+              <AppearanceSettingsPanel />
             ) : importPicker === "templates" && section === "templates" ? (
               <WindowsTerminalImportPanel
                 description={t(

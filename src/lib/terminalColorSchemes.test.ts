@@ -61,7 +61,11 @@ describe("minimumContrastFor", () => {
   it("enforces readability on a light scheme", () => {
     // The bug this replaces: keyed to the application theme, a dark chrome
     // around Catppuccin Latte got `1`, and dim ANSI vanished into near-white.
-    for (const id of ["catppuccin-latte", "solarized-light", "one-half-light"]) {
+    for (const id of [
+      "catppuccin-latte",
+      "solarized-light",
+      "one-half-light",
+    ]) {
       const scheme = BUILT_IN_COLOR_SCHEMES.find((s) => s.id === id)!;
       expect(minimumContrastFor(scheme.theme), id).toBe(4.5);
     }
@@ -93,7 +97,9 @@ describe("resolveColorScheme", () => {
   };
 
   it("follows the application theme for the sentinel", () => {
-    expect(resolveColorScheme(FOLLOW_APP_THEME, "dark").id).toBe("project-dark");
+    expect(resolveColorScheme(FOLLOW_APP_THEME, "dark").id).toBe(
+      "project-dark",
+    );
     expect(resolveColorScheme(FOLLOW_APP_THEME, "light").id).toBe(
       "project-light",
     );
@@ -118,6 +124,8 @@ describe("resolveColorScheme", () => {
   it("reverts to the theme when an id no longer resolves", () => {
     // An imported scheme deleted since, or a selection synced from a machine
     // that had it. A terminal with no colours would be worse.
-    expect(resolveColorScheme("deleted-scheme", "dark").id).toBe("project-dark");
+    expect(resolveColorScheme("deleted-scheme", "dark").id).toBe(
+      "project-dark",
+    );
   });
 });
