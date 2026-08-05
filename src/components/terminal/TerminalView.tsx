@@ -13,6 +13,10 @@ import { useTranslation } from "@/i18n";
 import { listenForAppCommands } from "@/lib/appCommands";
 import { TerminalInputQueue } from "@/lib/terminalInputQueue";
 import { resolveExtraKeySequence } from "@/lib/terminalKeys";
+import {
+  parsePromptMark,
+  parseWorkingDirectory,
+} from "@/lib/terminalShellIntegration";
 import { TerminalOutputQueue } from "@/lib/terminalOutputQueue";
 import { TerminalResizeQueue } from "@/lib/terminalResizeQueue";
 import { buildTerminalFontStack } from "@/lib/terminalFonts";
@@ -101,6 +105,8 @@ export const TerminalView = memo(function TerminalView({
   defaultTitle,
   onExit,
   onTitleChange,
+  onCwdChange,
+  onCommandFinished,
   onFocus,
 }: {
   sessionId: string;
@@ -112,6 +118,10 @@ export const TerminalView = memo(function TerminalView({
   onExit?: (code: number | null, status?: "exited" | "error") => void;
   /** Called when the terminal emits OSC 0/2 to update its window title. */
   onTitleChange?: (title: string) => void;
+  /** Called when shell integration reports the working directory (OSC 7). */
+  onCwdChange?: (cwd: string) => void;
+  /** Called when shell integration reports a command finishing (OSC 133 D). */
+  onCommandFinished?: (exitCode: number | null) => void;
   /** Marks this terminal as the focused split pane. */
   onFocus?: () => void;
 }) {
@@ -140,6 +150,10 @@ export const TerminalView = memo(function TerminalView({
   const resyncAttemptsRef = useRef(0);
   const onTitleChangeRef = useRef(onTitleChange);
   const onExitRef = useRef(onExit);
+  const onCwdChangeRef = useRef(onCwdChange);
+  onCwdChangeRef.current = onCwdChange;
+  const onCommandFinishedRef = useRef(onCommandFinished);
+  onCommandFinishedRef.current = onCommandFinished;
   const { t } = useTranslation();
   const tRef = useRef(t);
   tRef.current = t;
@@ -497,6 +511,27 @@ export const TerminalView = memo(function TerminalView({
       if (sequence !== null) {
         inputQueue.send(sequence);
         return false;
+      }
+      return true;
+    });
+    // OSC 7: the shell reporting where it is. Only present when the profile
+    // opted into shell integration; xterm silently swallows the sequence
+    // otherwise, so there is nothing to clean up when it is off.
+    term.parser.registerOscHandler(7, (payload) => {
+      const cwd = parseWorkingDirectory(payload);
+      // The value came out of the PTY, so it is a claim rather than a fact.
+      // It is used for display, and re-validated by the backend before
+      // anything acts on it.
+      if (cwd) onCwdChangeRef.current?.(cwd);
+      // Consume it either way: a malformed report is not something to print.
+      return true;
+    });
+    // OSC 133: command boundaries. Recorded so the exit status of the last
+    // command is available without parsing output.
+    term.parser.registerOscHandler(133, (payload) => {
+      const mark = parsePromptMark(payload);
+      if (mark?.kind === "command-finished") {
+        onCommandFinishedRef.current?.(mark.exitCode);
       }
       return true;
     });

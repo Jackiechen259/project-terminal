@@ -99,6 +99,8 @@ export interface ProfileInput {
   wslDistribution?: string;
   wslWorkingDirectory?: string;
   remoteShellCommand?: string;
+  forceUtf8?: boolean;
+  shellIntegration?: boolean;
   isDefault: boolean;
   showInContextMenu: boolean;
 }
@@ -210,6 +212,8 @@ export interface TemplateInput {
   wslDistribution?: string;
   wslWorkingDirectory?: string;
   remoteShellCommand?: string;
+  forceUtf8?: boolean;
+  shellIntegration?: boolean;
 }
 
 export interface SshConnectionInput {

@@ -62,6 +62,9 @@ pub struct ProfileInput {
     /// `None` takes the per-shell default.
     #[serde(default)]
     pub force_utf8: Option<bool>,
+    /// Whether to inject the shell-integration hooks. `None` means off.
+    #[serde(default)]
+    pub shell_integration: Option<bool>,
     #[serde(default)]
     pub is_default: bool,
     #[serde(default = "default_true")]
@@ -92,6 +95,7 @@ fn build_profile_from_input(input: ProfileInput, id: String) -> AppResult<Termin
         wsl_working_directory: input.wsl_working_directory,
         remote_shell_command: input.remote_shell_command,
         force_utf8: input.force_utf8,
+        shell_integration: input.shell_integration,
         is_default: input.is_default,
         show_in_context_menu: input.show_in_context_menu,
         created_at: now,
@@ -154,6 +158,7 @@ pub fn update_terminal_profile_inner(
             wsl_working_directory: input.wsl_working_directory,
             remote_shell_command: input.remote_shell_command,
             force_utf8: input.force_utf8,
+            shell_integration: input.shell_integration,
             is_default: input.is_default,
             show_in_context_menu: input.show_in_context_menu,
             created_at: existing.created_at,
@@ -373,6 +378,7 @@ mod tests {
             wsl_working_directory: None,
             remote_shell_command: None,
             force_utf8: None,
+            shell_integration: None,
             is_default: false,
             show_in_context_menu: true,
         }

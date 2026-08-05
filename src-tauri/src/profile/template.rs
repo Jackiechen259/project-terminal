@@ -75,6 +75,10 @@ pub struct ProfileTemplate {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub force_utf8: Option<bool>,
 
+    /// See [`crate::profile::TerminalProfile::shell_integration`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell_integration: Option<bool>,
+
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -177,6 +181,7 @@ mod tests {
             wsl_working_directory: None,
             remote_shell_command: None,
             force_utf8: None,
+            shell_integration: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

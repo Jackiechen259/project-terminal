@@ -387,6 +387,7 @@ mod tests {
             wsl_working_directory: None,
             remote_shell_command: None,
             force_utf8: None,
+            shell_integration: None,
             is_default: false,
             show_in_context_menu: true,
             created_at: Utc::now(),

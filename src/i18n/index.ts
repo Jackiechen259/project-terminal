@@ -41,6 +41,15 @@ const zhCN: Record<string, string> = {
   "Ask before closing a terminal that is starting or still running.":
     "关闭正在启动或运行中的终端前进行确认。",
   "Confirm before closing a running terminal": "关闭运行中的终端前确认",
+  "Shell behavior": "Shell 行为",
+  "Report the working directory and command results": "上报工作目录与命令结果",
+  "Adds prompt hooks so new tabs can open in the same directory. The hooks wrap your existing prompt; starship, oh-my-posh and powerlevel10k keep working.":
+    "添加提示符钩子，使新标签页可以在同一目录中打开。钩子会包裹你现有的提示符，starship、oh-my-posh 和 powerlevel10k 仍可正常工作。",
+  "Configure the shell for UTF-8 output": "将 shell 配置为 UTF-8 输出",
+  "Prevents mojibake when a tool prints non-ASCII text.":
+    "避免工具输出非 ASCII 文本时出现乱码。",
+  "Runs `chcp 65001`, which can break `more` and batch scripts that print through the OEM code page.":
+    "会执行 `chcp 65001`，可能导致 `more` 以及通过 OEM 代码页输出的批处理脚本失效。",
   "Hardware rendering is unavailable; using software rendering.":
     "硬件渲染不可用，正在使用软件渲染。",
   Renderer: "渲染器",

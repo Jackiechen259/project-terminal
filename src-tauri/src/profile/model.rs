@@ -111,6 +111,15 @@ pub struct TerminalProfile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub force_utf8: Option<bool>,
 
+    /// Whether to inject the shell-integration hooks (OSC 7 and OSC 133).
+    ///
+    /// Off unless asked for. The hooks wrap the user's prompt, and a prompt
+    /// people have spent time on is not something to modify by default -
+    /// Windows Terminal ships its script and lets users install it for the
+    /// same reason. `None` means off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell_integration: Option<bool>,
+
     pub is_default: bool,
     #[serde(default = "default_true")]
     pub show_in_context_menu: bool,
@@ -190,6 +199,7 @@ mod tests {
             wsl_working_directory: None,
             remote_shell_command: None,
             force_utf8: None,
+            shell_integration: None,
             is_default: true,
             show_in_context_menu: true,
             created_at: now(),

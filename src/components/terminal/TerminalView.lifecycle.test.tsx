@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   binaryHandler: undefined as ((data: string) => void) | undefined,
   terminalOptions: undefined as Record<string, unknown> | undefined,
   liveTerminal: undefined as { options: Record<string, unknown> } | undefined,
+  oscHandlers: new Map<number, (payload: string) => boolean>(),
 }));
 
 vi.mock("@/services", () => ({
@@ -54,6 +55,15 @@ vi.mock("@xterm/xterm", () => ({
     options: Record<string, unknown> = {};
     buffer = { active: { viewportY: 0, baseY: 0 } };
     modes = { bracketedPasteMode: false };
+    parser = {
+      registerOscHandler: (
+        identifier: number,
+        handler: (payload: string) => boolean,
+      ) => {
+        mocks.oscHandlers.set(identifier, handler);
+        return { dispose: vi.fn() };
+      },
+    };
     element: HTMLElement | undefined;
 
     constructor(options: Record<string, unknown>) {
@@ -156,6 +166,7 @@ beforeEach(() => {
   mocks.customKeyHandler = undefined;
   mocks.binaryHandler = undefined;
   mocks.terminalOptions = undefined;
+  mocks.oscHandlers.clear();
   mocks.readClipboardText.mockResolvedValue("");
   usePlatformStore.setState({
     info: {
@@ -526,6 +537,52 @@ describe("TerminalView session lifecycle", () => {
 
     await waitFor(() => expect(mocks.paste).toHaveBeenCalledTimes(1));
     expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it("reports the working directory the shell claims, and rejects the rest", async () => {
+    const onCwdChange = vi.fn();
+    render(
+      <TerminalView
+        sessionId="session-one"
+        active
+        defaultTitle="PowerShell"
+        onCwdChange={onCwdChange}
+      />,
+    );
+    await waitFor(() => expect(mocks.oscHandlers.has(7)).toBe(true));
+    const osc7 = mocks.oscHandlers.get(7)!;
+
+    expect(osc7("file:///C:/Users/me/project")).toBe(true);
+    expect(onCwdChange).toHaveBeenCalledWith("C:\\Users\\me\\project");
+
+    onCwdChange.mockClear();
+    // The value came out of the PTY, so it is a claim rather than a fact. A
+    // path on another machine is not this session's directory, and a
+    // malformed report is consumed rather than printed.
+    expect(osc7("file://other-host/tmp")).toBe(true);
+    expect(osc7("not a url")).toBe(true);
+    expect(onCwdChange).not.toHaveBeenCalled();
+  });
+
+  it("records the exit status a command reports", async () => {
+    const onCommandFinished = vi.fn();
+    render(
+      <TerminalView
+        sessionId="session-one"
+        active
+        defaultTitle="PowerShell"
+        onCommandFinished={onCommandFinished}
+      />,
+    );
+    await waitFor(() => expect(mocks.oscHandlers.has(133)).toBe(true));
+    const osc133 = mocks.oscHandlers.get(133)!;
+
+    expect(osc133("A")).toBe(true);
+    expect(osc133("C")).toBe(true);
+    expect(onCommandFinished).not.toHaveBeenCalled();
+
+    expect(osc133("D;130")).toBe(true);
+    expect(onCommandFinished).toHaveBeenCalledWith(130);
   });
 
   it("sends a CSI-u sequence for chords xterm collapses", async () => {

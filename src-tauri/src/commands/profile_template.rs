@@ -57,6 +57,9 @@ pub struct TemplateInput {
     /// `None` takes the per-shell default.
     #[serde(default)]
     pub force_utf8: Option<bool>,
+    /// Whether to inject the shell-integration hooks. `None` means off.
+    #[serde(default)]
+    pub shell_integration: Option<bool>,
 }
 
 fn build_template_from_input(input: TemplateInput, id: String) -> AppResult<ProfileTemplate> {
@@ -79,6 +82,7 @@ fn build_template_from_input(input: TemplateInput, id: String) -> AppResult<Prof
         wsl_working_directory: input.wsl_working_directory,
         remote_shell_command: input.remote_shell_command,
         force_utf8: input.force_utf8,
+        shell_integration: input.shell_integration,
         created_at: now,
         updated_at: now,
     };
@@ -129,6 +133,7 @@ pub fn update_profile_template_inner(
             wsl_working_directory: input.wsl_working_directory,
             remote_shell_command: input.remote_shell_command,
             force_utf8: input.force_utf8,
+            shell_integration: input.shell_integration,
             created_at: existing.created_at,
             updated_at: now,
         };
@@ -196,6 +201,7 @@ pub fn create_profile_from_template_inner(
             wsl_working_directory: template.wsl_working_directory,
             remote_shell_command: template.remote_shell_command,
             force_utf8: template.force_utf8,
+            shell_integration: template.shell_integration,
             is_default: false,
             show_in_context_menu: true,
             created_at: now,
@@ -251,6 +257,7 @@ mod tests {
             wsl_working_directory: None,
             remote_shell_command: None,
             force_utf8: None,
+            shell_integration: None,
         }
     }
 

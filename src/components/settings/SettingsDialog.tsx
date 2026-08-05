@@ -61,6 +61,15 @@ import { AppearanceSettingsPanel } from "./AppearanceSettingsPanel";
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
 import { WindowsTerminalImportPanel } from "./WindowsTerminalImportPanel";
 
+/**
+ * Whether a shell gets the UTF-8 preamble unless told otherwise. Mirrors
+ * `forces_utf8_by_default` in `src-tauri/src/terminal/mod.rs`, so the checkbox
+ * shows what the backend will actually do.
+ */
+function forcesUtf8ByDefault(shellType: ShellType): boolean {
+  return shellType === "powershell";
+}
+
 export type SettingsSection =
   "general" | "appearance" | "profiles" | "templates";
 
@@ -85,6 +94,8 @@ type ProfileDraft = {
   wslDistribution: string;
   wslWorkingDirectory: string;
   remoteShellCommand: string;
+  forceUtf8: boolean | null;
+  shellIntegration: boolean;
   isDefault: boolean;
   showInContextMenu: boolean;
 };
@@ -156,6 +167,8 @@ function blankTemplateDraft(): ProfileDraft {
     wslDistribution: "",
     wslWorkingDirectory: "",
     remoteShellCommand: "",
+    forceUtf8: null,
+    shellIntegration: false,
     isDefault: false,
     showInContextMenu: true,
   };
@@ -186,6 +199,8 @@ function draftFromTemplate(template: ProfileTemplate): ProfileDraft {
     wslDistribution: template.wslDistribution ?? "",
     wslWorkingDirectory: template.wslWorkingDirectory ?? "",
     remoteShellCommand: template.remoteShellCommand ?? "",
+    forceUtf8: template.forceUtf8 ?? null,
+    shellIntegration: template.shellIntegration ?? false,
     isDefault: false,
     showInContextMenu: true,
   };
@@ -211,6 +226,8 @@ function blankDraft(projectType: "local" | "ssh" | "wsl"): ProfileDraft {
     wslDistribution: "",
     wslWorkingDirectory: "",
     remoteShellCommand: "",
+    forceUtf8: null,
+    shellIntegration: false,
     isDefault: false,
     showInContextMenu: true,
   };
@@ -254,6 +271,8 @@ function draftFromProfile(profile: TerminalProfile): ProfileDraft {
     wslDistribution: profile.wslDistribution ?? "",
     wslWorkingDirectory: profile.wslWorkingDirectory ?? "",
     remoteShellCommand: profile.remoteShellCommand ?? "",
+    forceUtf8: profile.forceUtf8 ?? null,
+    shellIntegration: profile.shellIntegration ?? false,
     isDefault: profile.isDefault,
     showInContextMenu: profile.showInContextMenu ?? true,
   };
@@ -550,6 +569,8 @@ export function SettingsDialog({
         wslDistribution: optional(editing.wslDistribution),
         wslWorkingDirectory: optional(editing.wslWorkingDirectory),
         remoteShellCommand: optional(editing.remoteShellCommand),
+        forceUtf8: editing.forceUtf8 ?? undefined,
+        shellIntegration: editing.shellIntegration || undefined,
         isDefault: editing.isDefault,
         showInContextMenu: editing.showInContextMenu,
       };
@@ -668,6 +689,8 @@ export function SettingsDialog({
         wslDistribution: optional(editingTemplate.wslDistribution),
         wslWorkingDirectory: optional(editingTemplate.wslWorkingDirectory),
         remoteShellCommand: optional(editingTemplate.remoteShellCommand),
+        forceUtf8: editingTemplate.forceUtf8 ?? undefined,
+        shellIntegration: editingTemplate.shellIntegration || undefined,
       };
       setSavingTemplate(true);
       setTemplateError(null);
@@ -1424,6 +1447,31 @@ function ProfileForm({
           placeholder="PYTHONUTF8=1"
         />
       </Field>
+      <div className="space-y-3 border-t pt-6">
+        <h3 className="font-medium">{t("Shell behavior")}</h3>
+        <Checkbox
+          checked={draft.shellIntegration}
+          onChange={(checked) => update("shellIntegration", checked)}
+          label={t("Report the working directory and command results")}
+        />
+        <p className="-mt-1 text-sm text-muted-foreground">
+          {t(
+            "Adds prompt hooks so new tabs can open in the same directory. The hooks wrap your existing prompt; starship, oh-my-posh and powerlevel10k keep working.",
+          )}
+        </p>
+        <Checkbox
+          checked={draft.forceUtf8 ?? forcesUtf8ByDefault(draft.shellType)}
+          onChange={(checked) => update("forceUtf8", checked)}
+          label={t("Configure the shell for UTF-8 output")}
+        />
+        <p className="-mt-1 text-sm text-muted-foreground">
+          {draft.shellType === "cmd"
+            ? t(
+                "Runs `chcp 65001`, which can break `more` and batch scripts that print through the OEM code page.",
+              )
+            : t("Prevents mojibake when a tool prints non-ASCII text.")}
+        </p>
+      </div>
       {showProjectOptions ? (
         <div className="space-y-3">
           <Checkbox

@@ -9,6 +9,7 @@ pub mod escaping;
 pub mod initializer;
 pub mod manager;
 pub mod scrollback;
+pub mod shell_integration;
 pub mod session;
 pub mod wsl;
 
@@ -520,6 +521,7 @@ mod tests {
             wsl_working_directory: None,
             remote_shell_command: None,
             force_utf8: None,
+            shell_integration: None,
             is_default: false,
             show_in_context_menu: true,
             created_at: Utc::now(),

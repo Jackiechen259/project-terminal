@@ -271,6 +271,12 @@ pub(crate) fn build_session_spawn(
             env.push((k.clone(), v.clone()));
         }
     }
+    if let Some(path) = shell_integration_script_path(&profile)? {
+        env.push((
+            crate::terminal::shell_integration::SCRIPT_PATH_ENV.to_string(),
+            path,
+        ));
+    }
     if let Some(wslenv) = wslenv_for_session(project.project_type, &env) {
         env.push(("WSLENV".into(), wslenv));
     }
@@ -311,6 +317,36 @@ pub(crate) fn build_session_spawn(
         project_type,
         profile,
     ))
+}
+
+/// Write this profile's shell-integration script to disk and return its path.
+///
+/// A file rather than typed input: the scripts define multi-line functions,
+/// and typing one at an interactive prompt makes PSReadLine repaint wrapped
+/// fragments into the terminal. The shell sources it with a single short line
+/// that the readiness handshake then swallows.
+///
+/// Returns `None` when the profile has not opted in, or when the shell has no
+/// prompt hook to attach to.
+fn shell_integration_script_path(
+    profile: &crate::profile::TerminalProfile,
+) -> AppResult<Option<String>> {
+    use std::io::Write;
+
+    if profile.shell_integration != Some(true) {
+        return Ok(None);
+    }
+    let Some(script) = crate::terminal::shell_integration::integration_script(profile.shell_type)
+    else {
+        return Ok(None);
+    };
+
+    // Kept out of the session directory and named per profile so repeated
+    // launches reuse one file rather than filling the temp directory.
+    let path = std::env::temp_dir().join(format!("project-terminal-si-{}", profile.id));
+    let mut file = std::fs::File::create(&path)?;
+    file.write_all(script.as_bytes())?;
+    Ok(Some(path.to_string_lossy().into_owned()))
 }
 
 /// Decide which of the variables we are about to set should follow a
@@ -565,12 +601,38 @@ fn apply_utf8_preamble(
     );
 }
 
+/// Source the shell-integration script, if the profile asked for it.
+///
+/// Runs after the shell is interactive, which is what makes the wrapping work:
+/// the user's `$PROFILE`, `.bashrc` or `config.fish` has already installed
+/// starship or oh-my-posh, so these hooks wrap that prompt rather than being
+/// wrapped by it.
+fn apply_shell_integration(
+    manager: &TerminalManager,
+    profile: &crate::profile::TerminalProfile,
+    session_id: &str,
+) {
+    if profile.shell_integration != Some(true) {
+        return;
+    }
+    let Some(command) = crate::terminal::shell_integration::source_command(profile.shell_type)
+    else {
+        return;
+    };
+    // A shell that cannot source it still works; it just does not report.
+    let _ = manager.write(
+        session_id,
+        shell_command_line(profile.shell_type, command).as_bytes(),
+    );
+}
+
 fn execute_startup_commands(
     manager: &TerminalManager,
     profile: &crate::profile::TerminalProfile,
     session_id: &str,
 ) -> AppResult<()> {
     apply_utf8_preamble(manager, profile, session_id);
+    apply_shell_integration(manager, profile, session_id);
 
     // Phase 3.6/3.7: Environment activation is evaluated and pushed first.
     // Plan Â§20.8 / Â§22: if activation generation fails, we MUST retain the

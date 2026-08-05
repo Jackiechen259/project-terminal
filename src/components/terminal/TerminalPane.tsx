@@ -54,6 +54,17 @@ export const TerminalPane = memo(function TerminalPane({
     (title: string) => updateTab(tabId, { title }),
     [tabId, updateTab],
   );
+  // Only arrives when the profile opted into shell integration. Until now
+  // `cwd` was written as "" at creation and never updated.
+  const handleCwdChange = useCallback(
+    (cwd: string) => updateTab(tabId, { cwd }),
+    [tabId, updateTab],
+  );
+  const handleCommandFinished = useCallback(
+    (exitCode: number | null) =>
+      updateTab(tabId, { lastCommandExitCode: exitCode ?? undefined }),
+    [tabId, updateTab],
+  );
 
   if (!tab) return null;
 
@@ -86,6 +97,8 @@ export const TerminalPane = memo(function TerminalPane({
             onFocus={select}
             onExit={handleExit}
             onTitleChange={handleTitleChange}
+            onCwdChange={handleCwdChange}
+            onCommandFinished={handleCommandFinished}
           />
         </Suspense>
       ) : ["starting", "connecting", "initializing"].includes(tab.status) ? (
