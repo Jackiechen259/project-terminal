@@ -426,6 +426,12 @@ export const terminalService = {
     invokeOrThrow<SessionInfo>("session_get", { sessionId }),
   write: (sessionId: string, data: string) =>
     invokeOrThrow<void>("write_terminal", { sessionId, data }),
+  // xterm's `onBinary` payload is not text; it must not be UTF-8 encoded.
+  writeBinary: (sessionId: string, data: Uint8Array) =>
+    invokeOrThrow<void>("write_terminal_binary", {
+      sessionId,
+      data: Array.from(data),
+    }),
   resize: (sessionId: string, rows: number, cols: number) =>
     invokeOrThrow<void>("resize_terminal", { sessionId, rows, cols }),
   close: (sessionId: string) =>

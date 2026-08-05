@@ -632,6 +632,21 @@ pub fn write_terminal(
     terminal.manager.write(&session_id, data.as_bytes())
 }
 
+/// Byte-transparent counterpart of [`write_terminal`].
+///
+/// xterm.js splits terminal input across two events: `onData` carries UTF-8
+/// text, while `onBinary` carries bytes that are not text at all - most
+/// visibly the mouse reports of the default (non-SGR) encoding, whose
+/// coordinates are raw byte values that UTF-8 encoding would corrupt.
+#[tauri::command]
+pub fn write_terminal_binary(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+    data: Vec<u8>,
+) -> AppResult<()> {
+    terminal.manager.write(&session_id, &data)
+}
+
 #[tauri::command]
 pub fn resize_terminal(
     terminal: State<'_, TerminalState>,

@@ -326,13 +326,20 @@ export const TerminalView = memo(function TerminalView({
       }
     };
 
-    const inputQueue = new TerminalInputQueue(terminalService.write);
+    const inputQueue = new TerminalInputQueue(
+      terminalService.write,
+      terminalService.writeBinary,
+    );
     const outputQueue = new TerminalOutputQueue(
       (data) => term.write(data),
       (callback, delay) => window.setTimeout(callback, delay),
       (handle) => window.clearTimeout(handle),
     );
     const disposable = term.onData((data) => inputQueue.send(data));
+    // Mouse reports use this event instead of `onData` whenever the program
+    // selected the default encoding rather than SGR - `vim` with
+    // `ttymouse=xterm2`, `mc`, `w3m`. Without it their clicks are discarded.
+    const binaryDisposable = term.onBinary((data) => inputQueue.sendBinary(data));
     term.attachCustomKeyEventHandler((event) => {
       if (
         event.type === "keydown" &&
@@ -496,6 +503,7 @@ export const TerminalView = memo(function TerminalView({
       outputQueue.dispose();
       resizeQueue.dispose();
       disposable.dispose();
+      binaryDisposable.dispose();
       titleDisposable.dispose();
       ro.disconnect();
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);

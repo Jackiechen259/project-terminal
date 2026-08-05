@@ -203,6 +203,7 @@ pub fn run() {
                 commands::terminal::session_list,
                 commands::terminal::session_get,
                 commands::terminal::write_terminal,
+                commands::terminal::write_terminal_binary,
                 commands::terminal::resize_terminal,
                 commands::terminal::close_terminal,
                 commands::terminal::restart_terminal,
