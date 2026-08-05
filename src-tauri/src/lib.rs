@@ -7,6 +7,7 @@
 //! non-zero code. The Tauri runtime itself surfaces `run()` errors through
 //! the same dialog path.
 
+mod appearance;
 mod commands;
 mod config_dirs;
 pub mod error;
@@ -151,6 +152,12 @@ pub fn run() {
                 commands::clipboard::read_clipboard_text,
                 // Opening terminal links (scheme-validated; never the WebView)
                 commands::opener::open_external_url,
+                // Terminal colour schemes
+                commands::appearance::list_color_schemes,
+                commands::appearance::delete_color_scheme,
+                commands::appearance::import_color_schemes_from_file,
+                commands::windows_terminal::scan_windows_terminal_color_schemes,
+                commands::windows_terminal::import_windows_terminal_color_schemes,
                 // Remote access gateway (shares the desktop terminal manager)
                 commands::remote::remote_access_info,
                 commands::remote::set_remote_lan_access,

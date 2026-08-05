@@ -1,4 +1,5 @@
-//! Import visible profiles from the local Windows Terminal settings files.
+//! Import visible profiles and colour schemes from the local Windows Terminal
+//! settings files.
 //!
 //! Windows Terminal stores JSON-with-comments and accepts trailing commas, so
 //! the input is normalised before deserialisation. The same drafts feed two
@@ -17,6 +18,7 @@ use std::path::{Path, PathBuf};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
+use crate::appearance::TerminalColorScheme;
 use crate::error::{AppError, AppResult};
 use crate::profile::{EnvironmentType, ProfileTemplate, ShellType, TemplateIcon, TerminalProfile};
 use crate::project::ProjectType;
@@ -80,6 +82,43 @@ struct WindowsTerminalSettings {
     default_profile: Option<String>,
     #[serde(default)]
     profiles: WindowsTerminalProfiles,
+    /// Colour schemes sit in the same file as the profiles, so importing them
+    /// costs nothing beyond this field and the conversion below.
+    #[serde(default)]
+    schemes: Vec<WindowsTerminalScheme>,
+}
+
+/// A `schemes[]` entry.
+///
+/// Windows Terminal names the sixth ANSI colour `purple`; every other terminal
+/// and xterm.js itself call it magenta. It has no `cursorAccent` and no
+/// separate selection foreground.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WindowsTerminalScheme {
+    name: String,
+    background: String,
+    foreground: String,
+    #[serde(default)]
+    cursor_color: Option<String>,
+    #[serde(default)]
+    selection_background: Option<String>,
+    black: String,
+    red: String,
+    green: String,
+    yellow: String,
+    blue: String,
+    purple: String,
+    cyan: String,
+    white: String,
+    bright_black: String,
+    bright_red: String,
+    bright_green: String,
+    bright_yellow: String,
+    bright_blue: String,
+    bright_purple: String,
+    bright_cyan: String,
+    bright_white: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -759,7 +798,7 @@ fn split_windows_commandline(value: &str) -> Vec<String> {
     arguments
 }
 
-fn normalise_jsonc(value: &str) -> String {
+pub(crate) fn normalise_jsonc(value: &str) -> String {
     let characters: Vec<char> = value.chars().collect();
     let mut without_comments = String::with_capacity(value.len());
     let mut index = 0;
@@ -839,6 +878,212 @@ fn normalise_jsonc(value: &str) -> String {
         index += 1;
     }
     result
+}
+
+/// One colour scheme offered in the import picker.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowsTerminalSchemeCandidate {
+    /// The scheme's name, which is also its de-duplication key: Windows
+    /// Terminal itself requires names to be unique within a settings file.
+    pub key: String,
+    pub name: String,
+    pub background: String,
+    pub foreground: String,
+    /// The sixteen ANSI colours in order, for the picker's swatch strip.
+    pub ansi: Vec<String>,
+    pub already_exists: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowsTerminalSchemeScanResult {
+    pub candidates: Vec<WindowsTerminalSchemeCandidate>,
+    /// Schemes the file contained but that cannot be offered: malformed
+    /// colours, or a name already seen in an earlier file.
+    pub skipped_count: usize,
+    pub source_files: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowsTerminalSchemeImportResult {
+    pub imported: Vec<TerminalColorScheme>,
+    pub skipped_count: usize,
+    pub source_files: Vec<String>,
+}
+
+/// Turn a Windows Terminal scheme into ours, or reject it.
+///
+/// Rejection is per scheme and total: a palette with one unparseable colour is
+/// dropped rather than half-imported, because a scheme missing a background is
+/// unusable in a way the user cannot see until they select it.
+fn convert_scheme(scheme: WindowsTerminalScheme) -> Option<TerminalColorScheme> {
+    let name = scheme.name.trim().to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let now = Utc::now();
+    let converted = TerminalColorScheme {
+        id: new_id("scheme"),
+        name,
+        // Windows Terminal leaves the cursor to the terminal when unset. The
+        // foreground is what every terminal falls back to.
+        cursor: scheme
+            .cursor_color
+            .unwrap_or_else(|| scheme.foreground.clone()),
+        cursor_accent: Some(scheme.background.clone()),
+        background: scheme.background,
+        foreground: scheme.foreground,
+        selection_background: scheme.selection_background,
+        black: scheme.black,
+        red: scheme.red,
+        green: scheme.green,
+        yellow: scheme.yellow,
+        blue: scheme.blue,
+        magenta: scheme.purple,
+        cyan: scheme.cyan,
+        white: scheme.white,
+        bright_black: scheme.bright_black,
+        bright_red: scheme.bright_red,
+        bright_green: scheme.bright_green,
+        bright_yellow: scheme.bright_yellow,
+        bright_blue: scheme.bright_blue,
+        bright_magenta: scheme.bright_purple,
+        bright_cyan: scheme.bright_cyan,
+        bright_white: scheme.bright_white,
+        created_at: now,
+        updated_at: now,
+    };
+    converted.validate().ok().map(|()| converted)
+}
+
+/// Read every settings file we can find and convert the schemes in them.
+///
+/// Returns the schemes in file order, the count dropped, and which files were
+/// actually read - a missing Windows Terminal install is not an error, it just
+/// contributes nothing.
+fn collect_windows_terminal_schemes(
+    paths: &[PathBuf],
+) -> AppResult<(Vec<TerminalColorScheme>, usize, Vec<String>)> {
+    let mut schemes: Vec<TerminalColorScheme> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut skipped = 0usize;
+    let mut sources = Vec::new();
+
+    for path in paths {
+        if !path.is_file() {
+            continue;
+        }
+        let settings = read_windows_terminal_settings(path)?;
+        sources.push(path.to_string_lossy().into_owned());
+        for scheme in settings.schemes {
+            match convert_scheme(scheme) {
+                // A scheme of the same name in a later file (Preview after
+                // Stable, say) is the same scheme.
+                Some(converted) if seen.insert(converted.name.to_lowercase()) => {
+                    schemes.push(converted);
+                }
+                _ => skipped += 1,
+            }
+        }
+    }
+
+    Ok((schemes, skipped, sources))
+}
+
+pub fn scan_windows_terminal_color_schemes_inner(
+    state: &AppState,
+    paths: &[PathBuf],
+) -> AppResult<WindowsTerminalSchemeScanResult> {
+    let (schemes, skipped_count, source_files) = collect_windows_terminal_schemes(paths)?;
+    let existing: HashSet<String> = state
+        .color_schemes
+        .list()?
+        .into_iter()
+        .map(|scheme| scheme.name.to_lowercase())
+        .collect();
+    let candidates = schemes
+        .into_iter()
+        .map(|scheme| WindowsTerminalSchemeCandidate {
+            key: scheme.name.clone(),
+            already_exists: existing.contains(&scheme.name.to_lowercase()),
+            ansi: vec![
+                scheme.black.clone(),
+                scheme.red.clone(),
+                scheme.green.clone(),
+                scheme.yellow.clone(),
+                scheme.blue.clone(),
+                scheme.magenta.clone(),
+                scheme.cyan.clone(),
+                scheme.white.clone(),
+                scheme.bright_black.clone(),
+                scheme.bright_red.clone(),
+                scheme.bright_green.clone(),
+                scheme.bright_yellow.clone(),
+                scheme.bright_blue.clone(),
+                scheme.bright_magenta.clone(),
+                scheme.bright_cyan.clone(),
+                scheme.bright_white.clone(),
+            ],
+            background: scheme.background.clone(),
+            foreground: scheme.foreground.clone(),
+            name: scheme.name,
+        })
+        .collect();
+    Ok(WindowsTerminalSchemeScanResult {
+        candidates,
+        skipped_count,
+        source_files,
+    })
+}
+
+pub fn import_windows_terminal_color_schemes_inner(
+    state: &AppState,
+    paths: &[PathBuf],
+    keys: &[String],
+) -> AppResult<WindowsTerminalSchemeImportResult> {
+    let (schemes, skipped_count, source_files) = collect_windows_terminal_schemes(paths)?;
+    let selected: HashSet<&str> = keys.iter().map(String::as_str).collect();
+    state.with_config_write(|| {
+        let existing: HashSet<String> = state
+            .color_schemes
+            .list()?
+            .into_iter()
+            .map(|scheme| scheme.name.to_lowercase())
+            .collect();
+        let mut imported = Vec::new();
+        for scheme in schemes {
+            if !selected.contains(scheme.name.as_str())
+                || existing.contains(&scheme.name.to_lowercase())
+            {
+                continue;
+            }
+            imported.push(state.color_schemes.upsert(scheme)?);
+        }
+        Ok(WindowsTerminalSchemeImportResult {
+            imported,
+            skipped_count,
+            source_files: source_files.clone(),
+        })
+    })
+}
+
+#[tauri::command]
+pub fn scan_windows_terminal_color_schemes(
+    state: tauri::State<'_, AppState>,
+) -> AppResult<WindowsTerminalSchemeScanResult> {
+    let paths = windows_terminal_settings_paths()?;
+    scan_windows_terminal_color_schemes_inner(&state, &paths)
+}
+
+#[tauri::command]
+pub fn import_windows_terminal_color_schemes(
+    state: tauri::State<'_, AppState>,
+    keys: Vec<String>,
+) -> AppResult<WindowsTerminalSchemeImportResult> {
+    let paths = windows_terminal_settings_paths()?;
+    import_windows_terminal_color_schemes_inner(&state, &paths, &keys)
 }
 
 fn windows_terminal_settings_paths() -> AppResult<Vec<PathBuf>> {
@@ -990,6 +1235,79 @@ mod tests {
             profiles[0].environment.get("COMMON"),
             Some(&serde_json::Value::String("yes".into()))
         );
+    }
+
+    /// A `schemes` array as Windows Terminal writes one, with a JSONC comment
+    /// and a trailing comma so the shared normaliser is exercised too.
+    fn scheme_settings_json() -> &'static str {
+        r##"{
+          // Windows Terminal writes comments into this file.
+          "profiles": { "list": [] },
+          "schemes": [
+            {
+              "name": "Campbell",
+              "background": "#0C0C0C", "foreground": "#CCCCCC",
+              "cursorColor": "#FFFFFF", "selectionBackground": "#3A3A3A",
+              "black": "#0C0C0C", "red": "#C50F1F", "green": "#13A10E",
+              "yellow": "#C19C00", "blue": "#0037DA", "purple": "#881798",
+              "cyan": "#3A96DD", "white": "#CCCCCC",
+              "brightBlack": "#767676", "brightRed": "#E74856",
+              "brightGreen": "#16C60C", "brightYellow": "#F9F1A5",
+              "brightBlue": "#3B78FF", "brightPurple": "#B4009E",
+              "brightCyan": "#61D6D6", "brightWhite": "#F2F2F2",
+            },
+            {
+              "name": "Broken",
+              "background": "not-a-colour", "foreground": "#CCCCCC",
+              "black": "#0C0C0C", "red": "#C50F1F", "green": "#13A10E",
+              "yellow": "#C19C00", "blue": "#0037DA", "purple": "#881798",
+              "cyan": "#3A96DD", "white": "#CCCCCC",
+              "brightBlack": "#767676", "brightRed": "#E74856",
+              "brightGreen": "#16C60C", "brightYellow": "#F9F1A5",
+              "brightBlue": "#3B78FF", "brightPurple": "#B4009E",
+              "brightCyan": "#61D6D6", "brightWhite": "#F2F2F2"
+            },
+          ],
+        }"##
+    }
+
+    #[test]
+    fn imports_colour_schemes_from_the_same_settings_file_as_profiles() {
+        let root = tempfile::tempdir().unwrap();
+        let state = AppState::from_repositories(
+            ProjectRepository::new(root.path().join("projects.json")),
+            ProfileRepository::new(root.path().join("profiles.json")),
+            TemplateRepository::new(root.path().join("templates.json")),
+            SshConnectionRepository::new(root.path().join("ssh.json")),
+        );
+        let settings_path = root.path().join("settings.json");
+        fs::write(&settings_path, scheme_settings_json()).unwrap();
+        let paths = std::slice::from_ref(&settings_path);
+
+        let scan = scan_windows_terminal_color_schemes_inner(&state, paths).unwrap();
+        assert_eq!(scan.candidates.len(), 1);
+        assert_eq!(scan.candidates[0].name, "Campbell");
+        assert!(!scan.candidates[0].already_exists);
+        // A scheme with an unusable colour is dropped whole rather than
+        // half-imported.
+        assert_eq!(scan.skipped_count, 1);
+        assert_eq!(scan.candidates[0].ansi.len(), 16);
+
+        let keys = vec!["Campbell".to_string()];
+        let result = import_windows_terminal_color_schemes_inner(&state, paths, &keys).unwrap();
+        assert_eq!(result.imported.len(), 1);
+        let imported = &result.imported[0];
+        // Windows Terminal's `purple` is everyone else's magenta.
+        assert_eq!(imported.magenta, "#881798");
+        assert_eq!(imported.bright_magenta, "#B4009E");
+        assert_eq!(imported.cursor, "#FFFFFF");
+
+        // Importing again is a no-op, and the scan now says so.
+        let rescan = scan_windows_terminal_color_schemes_inner(&state, paths).unwrap();
+        assert!(rescan.candidates[0].already_exists);
+        let again = import_windows_terminal_color_schemes_inner(&state, paths, &keys).unwrap();
+        assert!(again.imported.is_empty());
+        assert_eq!(state.color_schemes.list().unwrap().len(), 1);
     }
 
     #[test]
