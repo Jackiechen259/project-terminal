@@ -355,6 +355,8 @@ const zhCNWorkspace: Record<string, string> = {
   "Command to run after opening the shell": "打开 Shell 后运行的命令",
   "Environment variables": "环境变量",
   "One NAME=value pair per line": "每行一个 NAME=value",
+  "One NAME=value pair per line. These are set by the command sent to the host, so they are visible in its process list - do not put secrets here.":
+    "每行一个 NAME=value。它们由发送到主机的命令设置，因此在该主机的进程列表中可见——请勿在此填写密钥。",
   "Show this profile in the + button context menu":
     "在 + 按钮右键菜单中显示此配置",
   "Use this as the default profile for new terminals":

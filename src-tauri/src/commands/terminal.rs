@@ -233,12 +233,13 @@ pub(crate) fn build_session_spawn(
         project.project_type,
         profile.shell_type,
     ));
-    if project.project_type == crate::project::ProjectType::Local {
-        if let Some(vars) = &profile.environment_variables {
-            for (k, v) in vars {
-                env.push((k.clone(), v.clone()));
-            }
+    if let Some(vars) = &profile.environment_variables {
+        for (k, v) in vars {
+            env.push((k.clone(), v.clone()));
         }
+    }
+    if let Some(wslenv) = wslenv_for_session(project.project_type, &env) {
+        env.push(("WSLENV".into(), wslenv));
     }
     env.push(("PROJECT_TERMINAL_PROJECT_ID".into(), project.id.clone()));
     env.push(("PROJECT_TERMINAL_PROFILE_ID".into(), profile.id.clone()));
@@ -273,6 +274,38 @@ pub(crate) fn build_session_spawn(
         project_type,
         profile,
     ))
+}
+
+/// Decide which of the variables we are about to set should follow a
+/// `wsl.exe` child into its distribution.
+///
+/// Two cases need it, and neither works without `WSLENV`:
+///
+/// - A WSL project's shell is `wsl.exe`, so a profile's environment variables
+///   never reach the user's shell at all without being named here.
+/// - A local PowerShell session announces `TERM=xterm-sixel` together with the
+///   compiled entry that defines it. Typing `wsl` in that tab carries `TERM`
+///   across on its own; carrying `TERMINFO` too is what stops the Linux side
+///   failing with `'xterm-sixel': unknown terminal type`.
+///
+/// Internal markers are deliberately left out - nothing inside the
+/// distribution reads them.
+fn wslenv_for_session(
+    project_type: crate::project::ProjectType,
+    env: &[(String, String)],
+) -> Option<String> {
+    use crate::project::ProjectType;
+
+    if !matches!(project_type, ProjectType::Local | ProjectType::Wsl) {
+        return None;
+    }
+    let names: Vec<&str> = env
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .filter(|name| !name.starts_with("PROJECT_TERMINAL"))
+        .filter(|name| !name.eq_ignore_ascii_case("WSLENV"))
+        .collect();
+    crate::terminal::wsl::merge_wslenv(std::env::var("WSLENV").ok().as_deref(), names)
 }
 
 /// Escape a remote working-directory path for use inside `cd --`, preserving
@@ -1291,6 +1324,201 @@ mod tests {
         assert_eq!(project_type, ProjectType::Wsl);
         assert_eq!(spawn.program, "wsl.exe");
         assert!(spawn.readiness_marker.is_none());
+    }
+
+    /// Insert a WSL project whose profile carries `vars`, and build its spawn.
+    fn wsl_spawn_with_environment(
+        vars: &[(&str, &str)],
+    ) -> crate::terminal::SessionSpawn {
+        let app = test_state();
+        app.projects
+            .upsert(Project {
+                id: "wsl-project".into(),
+                name: "Ubuntu".into(),
+                project_type: ProjectType::Wsl,
+                local: None,
+                ssh: None,
+                wsl: Some(WslProjectConfig {
+                    distribution: "Ubuntu".into(),
+                    working_directory: None,
+                }),
+                default_profile_id: Some("wsl-profile".into()),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            })
+            .unwrap();
+        let mut profile = default_wsl_profile(
+            "wsl-profile".into(),
+            "wsl-project".into(),
+            "Ubuntu".into(),
+            None,
+        );
+        profile.environment_variables = Some(
+            vars.iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        );
+        app.profiles.upsert(profile).unwrap();
+
+        let request = CreateTerminalRequest {
+            project_id: "wsl-project".into(),
+            profile_id: "wsl-profile".into(),
+            rows: 24,
+            cols: 80,
+            scrollback_megabytes: None,
+        };
+        build_session_spawn(&app, &request, "session-1").unwrap().0
+    }
+
+    #[test]
+    fn wsl_profile_environment_variables_reach_the_distribution() {
+        let spawn = wsl_spawn_with_environment(&[("FOO", "bar")]);
+
+        // Setting the variable is only half of it: `wsl.exe` forwards nothing
+        // that `WSLENV` does not name.
+        assert!(spawn.env.iter().any(|(k, v)| k == "FOO" && v == "bar"));
+        let wslenv = spawn
+            .env
+            .iter()
+            .find(|(k, _)| k == "WSLENV")
+            .map(|(_, v)| v.as_str())
+            .expect("WSLENV should be set for a WSL session");
+        assert!(
+            wslenv.split(':').any(|entry| entry == "FOO"),
+            "WSLENV {wslenv} should carry FOO"
+        );
+        // Internal markers are of no use inside the distribution.
+        assert!(!wslenv.contains("PROJECT_TERMINAL"));
+    }
+
+    #[test]
+    fn local_sixel_session_carries_its_terminfo_entry_into_wsl() {
+        let app = test_state();
+        let _dir = seed_project(&app, "p1");
+        app.profiles
+            .upsert(default_powershell_profile(
+                "profile-1".into(),
+                "p1".into(),
+            ))
+            .unwrap();
+
+        let request = CreateTerminalRequest {
+            project_id: "p1".into(),
+            profile_id: "profile-1".into(),
+            rows: 24,
+            cols: 80,
+            scrollback_megabytes: None,
+        };
+        let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
+
+        // Typing `wsl` in a PowerShell tab hands `TERM=xterm-sixel` to a host
+        // that has never heard of it. Forwarding the entry that defines it is
+        // what keeps `less` and `vim` alive over there.
+        let wslenv = spawn
+            .env
+            .iter()
+            .find(|(k, _)| k == "WSLENV")
+            .map(|(_, v)| v.as_str())
+            .expect("WSLENV should be set for a local session");
+        let entries: Vec<&str> = wslenv.split(':').collect();
+        assert!(entries.contains(&"TERM"), "WSLENV {wslenv} should carry TERM");
+        assert!(
+            entries.contains(&"TERMINFO"),
+            "WSLENV {wslenv} should carry TERMINFO"
+        );
+    }
+
+    #[test]
+    fn ssh_profile_environment_variables_travel_in_the_remote_command() {
+        // Variables set on the local `ssh.exe` process do not cross the wire -
+        // OpenSSH forwards only what `SendEnv` names, and Windows OpenSSH
+        // ships no `SendEnv`. The remote command is the route that works.
+        let mut profile = crate::profile::TerminalProfile {
+            shell_type: ShellType::RemoteBash,
+            ..default_powershell_profile("p".into(), "proj".into())
+        };
+        profile.environment_variables = Some(
+            [("FOO".to_string(), "it's quoted".to_string())]
+                .into_iter()
+                .collect(),
+        );
+
+        let command = remote_start_command(&profile, "/srv/app")
+            .unwrap()
+            .expect("remote command");
+
+        assert!(command.contains("export FOO="), "{command}");
+        assert!(command.contains("cd --"), "{command}");
+    }
+
+    #[test]
+    fn remote_fish_profiles_get_fish_syntax() {
+        let mut profile = crate::profile::TerminalProfile {
+            shell_type: ShellType::RemoteFish,
+            ..default_powershell_profile("p".into(), "proj".into())
+        };
+        profile.environment_variables = Some(
+            [("FOO".to_string(), "bar".to_string())]
+                .into_iter()
+                .collect(),
+        );
+
+        let command = remote_start_command(&profile, "/srv/app")
+            .unwrap()
+            .expect("remote command");
+
+        // `export` is not a fish builtin; emitting it produced a syntax error
+        // before the user's shell ever opened.
+        assert!(command.contains("set -gx FOO"), "{command}");
+        assert!(!command.contains("export FOO"), "{command}");
+    }
+
+    #[test]
+    fn ssh_askpass_environment_wins_over_a_colliding_profile_variable() {
+        // `askpass_environment` is appended last precisely so a profile cannot
+        // redirect the password prompt. `CommandBuilder` is last-write-wins.
+        let app = test_state();
+        let _dir = seed_project(&app, "p1");
+        let mut profile = default_powershell_profile("profile-1".into(), "p1".into());
+        profile.environment_variables = Some(
+            [("SSH_ASKPASS".to_string(), "hijacked".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        app.profiles.upsert(profile).unwrap();
+
+        let request = CreateTerminalRequest {
+            project_id: "p1".into(),
+            profile_id: "profile-1".into(),
+            rows: 24,
+            cols: 80,
+            scrollback_megabytes: None,
+        };
+        let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
+
+        let last_askpass = spawn
+            .env
+            .iter()
+            .filter(|(k, _)| k == "SSH_ASKPASS")
+            .next_back();
+        // No SSH connection here, so the profile value is the only one; the
+        // ordering guarantee is what the assertion below pins.
+        assert_eq!(
+            last_askpass.map(|(_, v)| v.as_str()),
+            Some("hijacked"),
+            "profile variables must be present before the askpass block"
+        );
+        let askpass_index = spawn
+            .env
+            .iter()
+            .position(|(k, _)| k == "SSH_ASKPASS")
+            .unwrap();
+        let marker_index = spawn
+            .env
+            .iter()
+            .position(|(k, _)| k == "PROJECT_TERMINAL_READY")
+            .unwrap();
+        assert!(askpass_index < marker_index);
     }
 
     #[test]

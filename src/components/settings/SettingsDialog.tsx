@@ -1390,7 +1390,13 @@ function ProfileForm({
       </Field>
       <Field
         label={t("Environment variables")}
-        hint={t("One NAME=value pair per line")}
+        hint={
+          projectType === "ssh"
+            ? t(
+                "One NAME=value pair per line. These are set by the command sent to the host, so they are visible in its process list - do not put secrets here.",
+              )
+            : t("One NAME=value pair per line")
+        }
       >
         <textarea
           className="min-h-20 w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-sm outline-none transition-colors focus:border-ring focus:ring-1 focus:ring-ring"
