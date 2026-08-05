@@ -15,6 +15,8 @@ interface TerminalPaneProps {
   tabId: string;
   visible: boolean;
   focused: boolean;
+  /** True while this pane shares the workspace with other visible panes. */
+  splitActive?: boolean;
   panePosition: string;
   style?: CSSProperties;
   onSelect: (tabId: string) => void;
@@ -30,6 +32,7 @@ export const TerminalPane = memo(function TerminalPane({
   tabId,
   visible,
   focused,
+  splitActive = false,
   panePosition,
   style,
   onSelect,
@@ -59,6 +62,10 @@ export const TerminalPane = memo(function TerminalPane({
       className={cn(
         "absolute min-h-0 min-w-0",
         visible ? panePosition : "hidden",
+        // Ring the pane the keyboard is talking to. `cursorInactiveStyle`
+        // already outlines the cursor in the others; this reads at a glance
+        // from across the window, which a cursor does not.
+        splitActive && focused && "ring-1 ring-inset ring-primary/40",
       )}
       style={style}
       onMouseDown={select}
@@ -105,6 +112,16 @@ export const TerminalPane = memo(function TerminalPane({
           </button>
         </div>
       )}
+      {splitActive && !focused ? (
+        // A scrim rather than `opacity` on the pane itself: opacity promotes
+        // the xterm canvas into its own compositing layer, which can cost the
+        // WebGL fast path. Not focusable and click-through, so selecting this
+        // pane still works.
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 bg-background/20"
+        />
+      ) : null}
     </div>
   );
 });

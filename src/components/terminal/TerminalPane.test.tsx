@@ -116,6 +116,52 @@ describe("TerminalPane", () => {
     expect(terminalViewRender).not.toHaveBeenCalled();
   });
 
+  it("marks the focused pane and dims the others, but only in a split", () => {
+    const { container, rerender } = render(
+      <>
+        <TerminalPane
+          tabId="one"
+          visible
+          focused
+          splitActive
+          panePosition=""
+          onSelect={vi.fn()}
+          onRestart={vi.fn()}
+        />
+        <TerminalPane
+          tabId="two"
+          visible
+          focused={false}
+          splitActive
+          panePosition=""
+          onSelect={vi.fn()}
+          onRestart={vi.fn()}
+        />
+      </>,
+    );
+
+    const [first, second] = [...container.children] as HTMLElement[];
+    expect(first.className).toContain("ring-primary/40");
+    expect(first.querySelector("[aria-hidden]")).toBeNull();
+    expect(second.className).not.toContain("ring-primary/40");
+    expect(second.querySelector("[aria-hidden]")).not.toBeNull();
+
+    // A lone terminal is unambiguous; nothing should be ringed or dimmed.
+    rerender(
+      <TerminalPane
+        tabId="one"
+        visible
+        focused
+        panePosition="inset-0"
+        onSelect={vi.fn()}
+        onRestart={vi.fn()}
+      />,
+    );
+    const only = container.firstElementChild as HTMLElement;
+    expect(only.className).not.toContain("ring-primary/40");
+    expect(only.querySelector("[aria-hidden]")).toBeNull();
+  });
+
   it("offers an in-place retry when startup fails", () => {
     const onRestart = vi.fn();
     useTerminalStore.getState().updateTab("one", {

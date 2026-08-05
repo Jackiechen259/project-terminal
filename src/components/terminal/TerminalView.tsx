@@ -1,11 +1,4 @@
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ImageAddon } from "@xterm/addon-image";
@@ -408,7 +401,9 @@ export const TerminalView = memo(function TerminalView({
     // Mouse reports use this event instead of `onData` whenever the program
     // selected the default encoding rather than SGR - `vim` with
     // `ttymouse=xterm2`, `mc`, `w3m`. Without it their clicks are discarded.
-    const binaryDisposable = term.onBinary((data) => inputQueue.sendBinary(data));
+    const binaryDisposable = term.onBinary((data) =>
+      inputQueue.sendBinary(data),
+    );
     term.attachCustomKeyEventHandler((event) => {
       if (
         event.type === "keydown" &&

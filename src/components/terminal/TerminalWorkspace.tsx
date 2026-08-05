@@ -1181,6 +1181,9 @@ export function TerminalWorkspace() {
                       ? focusedSplitPane?.paneId === pane?.paneId
                       : tab.id === activeTabId
                   }
+                  // Only a split shows more than one terminal at a time, so
+                  // only a split needs to say which one has the keyboard.
+                  splitActive={isSplitPane}
                   panePosition={pane ? "" : "inset-0"}
                   style={pane?.style}
                   onSelect={selectTerminalPane}

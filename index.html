@@ -29,7 +29,10 @@
         --startup-foreground: #fafafa;
         --startup-muted: #a1a1aa;
         --startup-border: #27272a;
-        --startup-accent: hsl(210 75% 56%);
+        /* Mirrors --primary in src/index.css. Every theme must define this:
+           without an override the splash keeps the dark accent and the
+           progress bar reads as the wrong theme until React takes over. */
+        --startup-accent: hsl(217.2 91.2% 59.8%);
       }
 
       :root[data-theme="eye-care"] {
@@ -39,6 +42,7 @@
         --startup-foreground: hsl(35 18% 18%);
         --startup-muted: hsl(35 12% 42%);
         --startup-border: hsl(38 22% 78%);
+        --startup-accent: hsl(33 25% 26%);
       }
 
       :root[data-theme="light"] {
@@ -48,6 +52,7 @@
         --startup-foreground: hsl(240 10% 3.9%);
         --startup-muted: hsl(240 3.8% 46.1%);
         --startup-border: hsl(240 5.9% 90%);
+        --startup-accent: hsl(221.2 83.2% 53.3%);
       }
 
       html,

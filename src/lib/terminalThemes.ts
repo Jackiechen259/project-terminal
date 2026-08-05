@@ -112,32 +112,33 @@ export function getTerminalMinimumContrast(theme: AppTheme | undefined) {
  * Search decorations are opt-in per query: without this object the addon
  * renders no highlight at all, and the terminal only scrolls to each match.
  */
-const TERMINAL_SEARCH_DECORATIONS: Record<AppTheme, ISearchDecorationOptions> = {
-  dark: {
-    matchBackground: "#3f3f46",
-    matchBorder: "#52525b",
-    matchOverviewRuler: "#a1a1aa",
-    activeMatchBackground: "#a16207",
-    activeMatchBorder: "#facc15",
-    activeMatchColorOverviewRuler: "#facc15",
-  },
-  "eye-care": {
-    matchBackground: "#e0d3b2",
-    matchBorder: "#b9a97f",
-    matchOverviewRuler: "#8a7b56",
-    activeMatchBackground: "#e8c46a",
-    activeMatchBorder: "#8a651d",
-    activeMatchColorOverviewRuler: "#8a651d",
-  },
-  light: {
-    matchBackground: "#dbeafe",
-    matchBorder: "#93c5fd",
-    matchOverviewRuler: "#60a5fa",
-    activeMatchBackground: "#fde68a",
-    activeMatchBorder: "#a16207",
-    activeMatchColorOverviewRuler: "#a16207",
-  },
-};
+const TERMINAL_SEARCH_DECORATIONS: Record<AppTheme, ISearchDecorationOptions> =
+  {
+    dark: {
+      matchBackground: "#3f3f46",
+      matchBorder: "#52525b",
+      matchOverviewRuler: "#a1a1aa",
+      activeMatchBackground: "#a16207",
+      activeMatchBorder: "#facc15",
+      activeMatchColorOverviewRuler: "#facc15",
+    },
+    "eye-care": {
+      matchBackground: "#e0d3b2",
+      matchBorder: "#b9a97f",
+      matchOverviewRuler: "#8a7b56",
+      activeMatchBackground: "#e8c46a",
+      activeMatchBorder: "#8a651d",
+      activeMatchColorOverviewRuler: "#8a651d",
+    },
+    light: {
+      matchBackground: "#dbeafe",
+      matchBorder: "#93c5fd",
+      matchOverviewRuler: "#60a5fa",
+      activeMatchBackground: "#fde68a",
+      activeMatchBorder: "#a16207",
+      activeMatchColorOverviewRuler: "#a16207",
+    },
+  };
 
 export function getTerminalSearchDecorations(
   theme: AppTheme | undefined,

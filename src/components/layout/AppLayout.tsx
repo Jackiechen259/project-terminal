@@ -36,7 +36,7 @@ export function AppLayout() {
   const { t } = useTranslation();
 
   return (
-    <div className="app-frame flex h-full w-full flex-col overflow-hidden bg-bg text-fg">
+    <div className="app-frame flex h-full w-full flex-col overflow-hidden bg-bg text-foreground">
       <WindowTitleBar
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={() => setSidebarCollapsed((collapsed) => !collapsed)}

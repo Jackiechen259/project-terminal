@@ -116,7 +116,7 @@ const zhCN: Record<string, string> = {
   "Added {count} profile(s) from templates.": "已从模板添加 {count} 个配置。",
   "Could not add profiles from templates.": "无法从模板添加配置。",
   "Import from Windows Terminal": "从 Windows Terminal 导入",
-  "Importing": "正在导入",
+  Importing: "正在导入",
   "Imported {count} Windows Terminal profile(s).":
     "已导入 {count} 个 Windows Terminal 配置。",
   "No new Windows Terminal profiles to import.":
