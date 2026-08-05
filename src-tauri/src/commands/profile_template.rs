@@ -60,6 +60,12 @@ pub struct TemplateInput {
     /// Whether to inject the shell-integration hooks. `None` means off.
     #[serde(default)]
     pub shell_integration: Option<bool>,
+    /// Terminal colour scheme id overriding the global selection.
+    #[serde(default)]
+    pub color_scheme_id: Option<String>,
+    /// Tab and focused-pane accent, `#rrggbb`.
+    #[serde(default)]
+    pub accent_color: Option<String>,
 }
 
 fn build_template_from_input(input: TemplateInput, id: String) -> AppResult<ProfileTemplate> {
@@ -83,6 +89,8 @@ fn build_template_from_input(input: TemplateInput, id: String) -> AppResult<Prof
         remote_shell_command: input.remote_shell_command,
         force_utf8: input.force_utf8,
         shell_integration: input.shell_integration,
+        color_scheme_id: input.color_scheme_id,
+        accent_color: input.accent_color,
         created_at: now,
         updated_at: now,
     };
@@ -134,6 +142,8 @@ pub fn update_profile_template_inner(
             remote_shell_command: input.remote_shell_command,
             force_utf8: input.force_utf8,
             shell_integration: input.shell_integration,
+            color_scheme_id: input.color_scheme_id,
+            accent_color: input.accent_color,
             created_at: existing.created_at,
             updated_at: now,
         };
@@ -202,6 +212,8 @@ pub fn create_profile_from_template_inner(
             remote_shell_command: template.remote_shell_command,
             force_utf8: template.force_utf8,
             shell_integration: template.shell_integration,
+            color_scheme_id: template.color_scheme_id,
+            accent_color: template.accent_color,
             is_default: false,
             show_in_context_menu: true,
             created_at: now,
@@ -258,6 +270,8 @@ mod tests {
             remote_shell_command: None,
             force_utf8: None,
             shell_integration: None,
+            color_scheme_id: None,
+            accent_color: None,
         }
     }
 

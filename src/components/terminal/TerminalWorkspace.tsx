@@ -800,11 +800,21 @@ export function TerminalWorkspace() {
   const renderTerminalTab = (id: string) => {
     const tab = tabsById[id];
     if (!tab) return null;
+    // Set once here; the underline below and the focused-pane ring in
+    // TerminalPane both read it, so neither needs to know about profiles.
+    const accent = profiles.find(
+      (profile) => profile.id === tab.profileId,
+    )?.accentColor;
     return (
       <button
         key={id}
         type="button"
         role="tab"
+        style={
+          accent
+            ? ({ "--profile-accent": accent } as React.CSSProperties)
+            : undefined
+        }
         data-terminal-tab-id={id}
         aria-selected={id === activeTabId}
         data-active={id === activeTabId}
@@ -823,7 +833,9 @@ export function TerminalWorkspace() {
         className={cn(
           "group relative flex shrink-0 cursor-default items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground data-[dragging=true]:opacity-50",
           id === activeTabId &&
-            "bg-accent text-accent-foreground after:pointer-events-none after:absolute after:inset-x-1.5 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary",
+            // The underline takes the profile's accent when it has one, so a
+            // production tab is identifiable without reading its label.
+            "bg-accent text-accent-foreground after:pointer-events-none after:absolute after:inset-x-1.5 after:bottom-0 after:h-0.5 after:rounded-full after:bg-[color:var(--profile-accent,hsl(var(--primary)))]",
         )}
         onContextMenu={(event) => {
           event.preventDefault();
@@ -1211,7 +1223,10 @@ export function TerminalWorkspace() {
                   aria-orientation={horizontal ? "vertical" : "horizontal"}
                   aria-valuenow={Math.round(split.ratio * 100)}
                   className={cn(
-                    "absolute z-20 bg-border/80 transition-colors hover:bg-primary",
+                    // A 1px line is hard to grab, so the hit area is widened
+                    // with a transparent pseudo-element rather than by drawing
+                    // a thicker separator.
+                    "absolute z-20 bg-border/80 transition-colors duration-100 hover:bg-primary/70",
                     horizontal
                       ? "-ml-0.5 w-1 cursor-col-resize"
                       : "-mt-0.5 h-1 cursor-row-resize",

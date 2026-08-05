@@ -41,6 +41,10 @@ const zhCN: Record<string, string> = {
   "Ask before closing a terminal that is starting or still running.":
     "关闭正在启动或运行中的终端前进行确认。",
   "Confirm before closing a running terminal": "关闭运行中的终端前确认",
+  "Give a profile its own colors so a production session is never mistaken for a local one.":
+    "为配置指定专属颜色，避免把生产会话误认成本地会话。",
+  "Use the global setting": "使用全局设置",
+  "Accent color": "强调色",
   "Shell behavior": "Shell 行为",
   "Report the working directory and command results": "上报工作目录与命令结果",
   "Adds prompt hooks so new tabs can open in the same directory. The hooks wrap your existing prompt; starship, oh-my-posh and powerlevel10k keep working.":

@@ -41,6 +41,7 @@ import {
   getProfileTemplateIcon,
   PROFILE_TEMPLATE_ICON_OPTIONS,
 } from "@/lib/profileTemplateIcons";
+import { BUILT_IN_COLOR_SCHEMES } from "@/lib/terminalColorSchemes";
 import { cn } from "@/lib/utils";
 import type { ProfileInput, TemplateInput } from "@/services";
 import { useProfileStore } from "@/stores/profileStore";
@@ -60,6 +61,55 @@ import { AddFromTemplatePanel } from "./AddFromTemplatePanel";
 import { AppearanceSettingsPanel } from "./AppearanceSettingsPanel";
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
 import { WindowsTerminalImportPanel } from "./WindowsTerminalImportPanel";
+
+/** Sentinel for "no per-profile scheme"; Radix Select rejects an empty value. */
+const PROFILE_SCHEME_INHERIT = "__inherit__";
+
+/**
+ * Accents offered for a profile.
+ *
+ * A fixed set rather than a colour picker: these are chosen to stay legible
+ * against all three application themes, which an arbitrary hex is not.
+ */
+const PROFILE_ACCENTS = [
+  "#ef4444",
+  "#f97316",
+  "#eab308",
+  "#22c55e",
+  "#06b6d4",
+  "#3b82f6",
+  "#a855f7",
+  "#ec4899",
+] as const;
+
+function AccentSwatch({
+  color,
+  label,
+  selected,
+  onSelect,
+}: {
+  color: string;
+  label: string;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-pressed={selected}
+      onClick={onSelect}
+      className={cn(
+        "h-6 w-6 rounded-full border transition-shadow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        selected
+          ? "ring-2 ring-primary ring-offset-2 ring-offset-background"
+          : "",
+        color ? "border-black/10" : "border-dashed border-muted-foreground",
+      )}
+      style={color ? { background: color } : undefined}
+    />
+  );
+}
 
 /**
  * Whether a shell gets the UTF-8 preamble unless told otherwise. Mirrors
@@ -96,6 +146,8 @@ type ProfileDraft = {
   remoteShellCommand: string;
   forceUtf8: boolean | null;
   shellIntegration: boolean;
+  colorSchemeId: string;
+  accentColor: string;
   isDefault: boolean;
   showInContextMenu: boolean;
 };
@@ -169,6 +221,8 @@ function blankTemplateDraft(): ProfileDraft {
     remoteShellCommand: "",
     forceUtf8: null,
     shellIntegration: false,
+    colorSchemeId: "",
+    accentColor: "",
     isDefault: false,
     showInContextMenu: true,
   };
@@ -201,6 +255,8 @@ function draftFromTemplate(template: ProfileTemplate): ProfileDraft {
     remoteShellCommand: template.remoteShellCommand ?? "",
     forceUtf8: template.forceUtf8 ?? null,
     shellIntegration: template.shellIntegration ?? false,
+    colorSchemeId: template.colorSchemeId ?? "",
+    accentColor: template.accentColor ?? "",
     isDefault: false,
     showInContextMenu: true,
   };
@@ -228,6 +284,8 @@ function blankDraft(projectType: "local" | "ssh" | "wsl"): ProfileDraft {
     remoteShellCommand: "",
     forceUtf8: null,
     shellIntegration: false,
+    colorSchemeId: "",
+    accentColor: "",
     isDefault: false,
     showInContextMenu: true,
   };
@@ -273,6 +331,8 @@ function draftFromProfile(profile: TerminalProfile): ProfileDraft {
     remoteShellCommand: profile.remoteShellCommand ?? "",
     forceUtf8: profile.forceUtf8 ?? null,
     shellIntegration: profile.shellIntegration ?? false,
+    colorSchemeId: profile.colorSchemeId ?? "",
+    accentColor: profile.accentColor ?? "",
     isDefault: profile.isDefault,
     showInContextMenu: profile.showInContextMenu ?? true,
   };
@@ -571,6 +631,8 @@ export function SettingsDialog({
         remoteShellCommand: optional(editing.remoteShellCommand),
         forceUtf8: editing.forceUtf8 ?? undefined,
         shellIntegration: editing.shellIntegration || undefined,
+        colorSchemeId: optional(editing.colorSchemeId),
+        accentColor: optional(editing.accentColor),
         isDefault: editing.isDefault,
         showInContextMenu: editing.showInContextMenu,
       };
@@ -691,6 +753,8 @@ export function SettingsDialog({
         remoteShellCommand: optional(editingTemplate.remoteShellCommand),
         forceUtf8: editingTemplate.forceUtf8 ?? undefined,
         shellIntegration: editingTemplate.shellIntegration || undefined,
+        colorSchemeId: optional(editingTemplate.colorSchemeId),
+        accentColor: optional(editingTemplate.accentColor),
       };
       setSavingTemplate(true);
       setTemplateError(null);
@@ -1447,6 +1511,62 @@ function ProfileForm({
           placeholder="PYTHONUTF8=1"
         />
       </Field>
+      <div className="space-y-4 border-t pt-6">
+        <div>
+          <h3 className="font-medium">{t("Appearance")}</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t(
+              "Give a profile its own colors so a production session is never mistaken for a local one.",
+            )}
+          </p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label={t("Color scheme")}>
+            <Select
+              value={draft.colorSchemeId || PROFILE_SCHEME_INHERIT}
+              onValueChange={(value) =>
+                update(
+                  "colorSchemeId",
+                  value === PROFILE_SCHEME_INHERIT ? "" : value,
+                )
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={PROFILE_SCHEME_INHERIT}>
+                  {t("Use the global setting")}
+                </SelectItem>
+                {BUILT_IN_COLOR_SCHEMES.map((scheme) => (
+                  <SelectItem key={scheme.id} value={scheme.id}>
+                    {scheme.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field label={t("Accent color")}>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <AccentSwatch
+                color=""
+                label={t("None")}
+                selected={draft.accentColor === ""}
+                onSelect={() => update("accentColor", "")}
+              />
+              {PROFILE_ACCENTS.map((color) => (
+                <AccentSwatch
+                  key={color}
+                  color={color}
+                  label={color}
+                  selected={draft.accentColor === color}
+                  onSelect={() => update("accentColor", color)}
+                />
+              ))}
+            </div>
+          </Field>
+        </div>
+      </div>
       <div className="space-y-3 border-t pt-6">
         <h3 className="font-medium">{t("Shell behavior")}</h3>
         <Checkbox

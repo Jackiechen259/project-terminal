@@ -79,6 +79,24 @@ pub struct ProfileTemplate {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shell_integration: Option<bool>,
 
+    /// Terminal colour scheme id for this profile, overriding the global
+    /// selection.
+    ///
+    /// The point is not decoration. A terminal organised by project, where the
+    /// SSH-to-production profile is unmistakably red and local development is
+    /// calm blue, is a safety mechanism - the same reasoning behind the
+    /// PS1-turns-red-on-prod convention people hand-roll badly.
+    ///
+    /// Colour only, deliberately. Per-profile typography would make a split
+    /// with two profiles in it look broken.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_scheme_id: Option<String>,
+
+    /// Accent for this profile's tab and focused-pane ring. `#rrggbb`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accent_color: Option<String>,
+
+
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -182,6 +200,8 @@ mod tests {
             remote_shell_command: None,
             force_utf8: None,
             shell_integration: None,
+            color_scheme_id: None,
+            accent_color: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

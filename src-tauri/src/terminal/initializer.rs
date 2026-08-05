@@ -388,6 +388,8 @@ mod tests {
             remote_shell_command: None,
             force_utf8: None,
             shell_integration: None,
+            color_scheme_id: None,
+            accent_color: None,
             is_default: false,
             show_in_context_menu: true,
             created_at: Utc::now(),

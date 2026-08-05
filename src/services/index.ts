@@ -101,6 +101,10 @@ export interface ProfileInput {
   remoteShellCommand?: string;
   forceUtf8?: boolean;
   shellIntegration?: boolean;
+  /** Terminal colour scheme for this profile, overriding the global choice. */
+  colorSchemeId?: string;
+  /** Tab and focused-pane accent, `#rrggbb`. */
+  accentColor?: string;
   isDefault: boolean;
   showInContextMenu: boolean;
 }
@@ -214,6 +218,10 @@ export interface TemplateInput {
   remoteShellCommand?: string;
   forceUtf8?: boolean;
   shellIntegration?: boolean;
+  /** Terminal colour scheme for this profile, overriding the global choice. */
+  colorSchemeId?: string;
+  /** Tab and focused-pane accent, `#rrggbb`. */
+  accentColor?: string;
 }
 
 export interface SshConnectionInput {

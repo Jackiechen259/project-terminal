@@ -65,6 +65,12 @@ pub struct ProfileInput {
     /// Whether to inject the shell-integration hooks. `None` means off.
     #[serde(default)]
     pub shell_integration: Option<bool>,
+    /// Terminal colour scheme id overriding the global selection.
+    #[serde(default)]
+    pub color_scheme_id: Option<String>,
+    /// Tab and focused-pane accent, `#rrggbb`.
+    #[serde(default)]
+    pub accent_color: Option<String>,
     #[serde(default)]
     pub is_default: bool,
     #[serde(default = "default_true")]
@@ -96,6 +102,8 @@ fn build_profile_from_input(input: ProfileInput, id: String) -> AppResult<Termin
         remote_shell_command: input.remote_shell_command,
         force_utf8: input.force_utf8,
         shell_integration: input.shell_integration,
+        color_scheme_id: input.color_scheme_id,
+        accent_color: input.accent_color,
         is_default: input.is_default,
         show_in_context_menu: input.show_in_context_menu,
         created_at: now,
@@ -159,6 +167,8 @@ pub fn update_terminal_profile_inner(
             remote_shell_command: input.remote_shell_command,
             force_utf8: input.force_utf8,
             shell_integration: input.shell_integration,
+            color_scheme_id: input.color_scheme_id,
+            accent_color: input.accent_color,
             is_default: input.is_default,
             show_in_context_menu: input.show_in_context_menu,
             created_at: existing.created_at,
@@ -379,6 +389,8 @@ mod tests {
             remote_shell_command: None,
             force_utf8: None,
             shell_integration: None,
+            color_scheme_id: None,
+            accent_color: None,
             is_default: false,
             show_in_context_menu: true,
         }

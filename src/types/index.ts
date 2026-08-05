@@ -112,6 +112,10 @@ export interface TerminalProfile {
   forceUtf8?: boolean;
   /** Inject the OSC 7 / OSC 133 prompt hooks. Undefined = off. */
   shellIntegration?: boolean;
+  /** Terminal colour scheme for this profile, overriding the global choice. */
+  colorSchemeId?: string;
+  /** Tab and focused-pane accent, `#rrggbb`. */
+  accentColor?: string;
 
   isDefault: boolean;
   showInContextMenu: boolean;
@@ -151,6 +155,10 @@ export interface ProfileTemplate {
   forceUtf8?: boolean;
   /** Inject the OSC 7 / OSC 133 prompt hooks. Undefined = off. */
   shellIntegration?: boolean;
+  /** Terminal colour scheme for this profile, overriding the global choice. */
+  colorSchemeId?: string;
+  /** Tab and focused-pane accent, `#rrggbb`. */
+  accentColor?: string;
 
   createdAt: string;
   updatedAt: string;

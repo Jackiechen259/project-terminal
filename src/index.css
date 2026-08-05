@@ -53,6 +53,23 @@
     border-color: hsl(var(--border));
   }
 
+  /*
+   * The startup screen has honoured this since it was written; the
+   * application never did. Transitions are not cut to zero, which some
+   * screen readers and focus managers depend on firing, but to a duration
+   * short enough not to read as motion.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
   /* A restrained scrollbar treatment for app chrome and xterm's viewport. */
   .app-scrollbar,
   .xterm .xterm-viewport {

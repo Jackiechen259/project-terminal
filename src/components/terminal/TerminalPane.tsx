@@ -3,6 +3,7 @@ import { LoaderCircle, RotateCcw } from "lucide-react";
 
 import { useTranslation } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { useProfileStore } from "@/stores/profileStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 
 import { loadTerminalView } from "./terminalViewLoader";
@@ -40,6 +41,14 @@ export const TerminalPane = memo(function TerminalPane({
 }: TerminalPaneProps) {
   const tab = useTerminalStore((state) => state.tabsById[tabId]);
   const updateTab = useTerminalStore((state) => state.updateTab);
+  // A profile may carry its own palette and accent. The point is not
+  // decoration: an SSH-to-production tab that is unmistakably a different
+  // colour from a local one is a safety mechanism.
+  const profile = useProfileStore((state) =>
+    tab
+      ? state.byProjectId[tab.projectId]?.find((p) => p.id === tab.profileId)
+      : undefined,
+  );
   const { t } = useTranslation();
   const select = useCallback(() => {
     if (visible) onSelect(tabId);
@@ -76,9 +85,18 @@ export const TerminalPane = memo(function TerminalPane({
         // Ring the pane the keyboard is talking to. `cursorInactiveStyle`
         // already outlines the cursor in the others; this reads at a glance
         // from across the window, which a cursor does not.
-        splitActive && focused && "ring-1 ring-inset ring-primary/40",
+        splitActive &&
+          focused &&
+          "ring-1 ring-inset ring-[color:var(--profile-accent,hsl(var(--primary)/0.4))]",
       )}
-      style={style}
+      style={{
+        ...style,
+        // One variable, consumed by the focus ring here and by the tab in the
+        // strip, so neither has to know about profiles.
+        ...(profile?.accentColor
+          ? ({ "--profile-accent": profile.accentColor } as React.CSSProperties)
+          : {}),
+      }}
       onMouseDown={select}
     >
       {tab.sessionId ? (
@@ -99,6 +117,7 @@ export const TerminalPane = memo(function TerminalPane({
             onTitleChange={handleTitleChange}
             onCwdChange={handleCwdChange}
             onCommandFinished={handleCommandFinished}
+            colorSchemeId={profile?.colorSchemeId}
           />
         </Suspense>
       ) : ["starting", "connecting", "initializing"].includes(tab.status) ? (

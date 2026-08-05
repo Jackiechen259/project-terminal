@@ -445,6 +445,8 @@ fn import_windows_terminal_profiles_from_paths_inner(
                 remote_shell_command: None,
                 force_utf8: None,
                 shell_integration: None,
+                color_scheme_id: None,
+                accent_color: None,
                 is_default,
                 show_in_context_menu: true,
                 created_at: now,
@@ -533,6 +535,8 @@ fn import_windows_terminal_templates_from_paths_inner(
                 remote_shell_command: None,
                 force_utf8: None,
                 shell_integration: None,
+                color_scheme_id: None,
+                accent_color: None,
                 created_at: now,
                 updated_at: now,
             };

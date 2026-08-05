@@ -107,6 +107,7 @@ export const TerminalView = memo(function TerminalView({
   onTitleChange,
   onCwdChange,
   onCommandFinished,
+  colorSchemeId,
   onFocus,
 }: {
   sessionId: string;
@@ -122,6 +123,8 @@ export const TerminalView = memo(function TerminalView({
   onCwdChange?: (cwd: string) => void;
   /** Called when shell integration reports a command finishing (OSC 133 D). */
   onCommandFinished?: (exitCode: number | null) => void;
+  /** Palette from this terminal's profile, overriding the global choice. */
+  colorSchemeId?: string;
   /** Marks this terminal as the focused split pane. */
   onFocus?: () => void;
 }) {
@@ -193,8 +196,16 @@ export const TerminalView = memo(function TerminalView({
   }, [loadColorSchemes]);
 
   const palette = useMemo(
-    () => resolveColorScheme(terminalColorScheme, theme, importedSchemes).theme,
-    [terminalColorScheme, theme, importedSchemes],
+    () =>
+      // The profile wins when it names one. Resolution falls back to the
+      // global choice for an id that no longer exists, so deleting a scheme
+      // does not leave a profile without colours.
+      resolveColorScheme(
+        colorSchemeId || terminalColorScheme,
+        theme,
+        importedSchemes,
+      ).theme,
+    [colorSchemeId, terminalColorScheme, theme, importedSchemes],
   );
   // `0` means derive it from the scheme, which is right almost always; the
   // override is for agent output that uses dim truecolor the palette's own

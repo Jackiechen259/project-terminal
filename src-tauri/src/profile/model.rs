@@ -120,6 +120,24 @@ pub struct TerminalProfile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shell_integration: Option<bool>,
 
+    /// Terminal colour scheme id for this profile, overriding the global
+    /// selection.
+    ///
+    /// The point is not decoration. A terminal organised by project, where the
+    /// SSH-to-production profile is unmistakably red and local development is
+    /// calm blue, is a safety mechanism - the same reasoning behind the
+    /// PS1-turns-red-on-prod convention people hand-roll badly.
+    ///
+    /// Colour only, deliberately. Per-profile typography would make a split
+    /// with two profiles in it look broken.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_scheme_id: Option<String>,
+
+    /// Accent for this profile's tab and focused-pane ring. `#rrggbb`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accent_color: Option<String>,
+
+
     pub is_default: bool,
     #[serde(default = "default_true")]
     pub show_in_context_menu: bool,
@@ -149,6 +167,15 @@ impl TerminalProfile {
             return Err(crate::error::AppError::Configuration(
                 "Profile name must not be empty".to_string(),
             ));
+        }
+        // The accent reaches a CSS custom property. Validating the shape here
+        // means no consumer has to sanitize it.
+        if let Some(accent) = &self.accent_color {
+            if !crate::appearance::color_scheme::is_hex_color(accent) {
+                return Err(crate::error::AppError::Configuration(format!(
+                    "Profile accent color must be #rrggbb, got {accent}"
+                )));
+            }
         }
         // Conda config requires at least a name or a path, when present.
         if let Some(conda) = &self.conda {
@@ -200,6 +227,8 @@ mod tests {
             remote_shell_command: None,
             force_utf8: None,
             shell_integration: None,
+            color_scheme_id: None,
+            accent_color: None,
             is_default: true,
             show_in_context_menu: true,
             created_at: now(),
@@ -252,6 +281,34 @@ mod tests {
             parsed.environment_variables.unwrap().get("PYTHONUTF8"),
             Some(&"1".to_string())
         );
+    }
+
+    #[test]
+    fn validate_rejects_an_accent_that_is_not_a_hex_colour() {
+        // It reaches a CSS custom property, so validating the shape here
+        // keeps every consumer from having to sanitize it.
+        let mut p = sample_profile();
+        p.accent_color = Some("red; background: url(x)".into());
+        assert!(p.validate().is_err());
+        p.accent_color = Some("#ff8800".into());
+        p.validate().unwrap();
+        p.accent_color = None;
+        p.validate().unwrap();
+    }
+
+    #[test]
+    fn a_profile_saved_before_appearance_existed_still_loads() {
+        // `serde(default)` plus `skip_serializing_if` is what keeps existing
+        // profiles.json files readable without a migration.
+        let json = serde_json::to_value(sample_profile()).unwrap();
+        assert!(json.get("colorSchemeId").is_none());
+        assert!(json.get("accentColor").is_none());
+
+        let mut without = json.clone();
+        without.as_object_mut().unwrap().remove("shellIntegration");
+        let parsed: TerminalProfile = serde_json::from_value(without).unwrap();
+        assert_eq!(parsed.color_scheme_id, None);
+        assert_eq!(parsed.accent_color, None);
     }
 
     #[test]
