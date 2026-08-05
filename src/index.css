@@ -2,6 +2,32 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * The terminal font ships with the application.
+ *
+ * Cascadia Mono is not installed on a stock Windows - it arrives with Windows
+ * Terminal or Visual Studio - so the previous stack landed most users on
+ * Consolas, which has no glyphs in the Nerd Fonts private-use ranges. That is
+ * what turns a starship or oh-my-posh prompt into a row of boxes.
+ *
+ * "Mono" here means the variant without ligatures, which is the right default
+ * for a terminal: ligatures break column alignment in `git log --graph`,
+ * `less` and diff output. "NF" is Microsoft's own Nerd Fonts build.
+ *
+ * SIL Open Font License 1.1; the licence text ships beside the file.
+ *
+ * `font-display: block` rather than `swap`: xterm measures its character cell
+ * once at construction and caches the result, so a face swapped in afterwards
+ * would leave the grid sized for the fallback for the rest of the session.
+ */
+@font-face {
+  font-family: "Cascadia Mono NF";
+  src: url("./assets/fonts/CascadiaMonoNF.woff2") format("woff2");
+  font-weight: 200 700;
+  font-style: normal;
+  font-display: block;
+}
+
 /* Theme tokens are NOT declared here. `src/styles/tokens.ts` is their single
    source of truth, and the Vite plugin in `vite.config.ts` renders them into
    the document head - which is what also makes them available to the startup

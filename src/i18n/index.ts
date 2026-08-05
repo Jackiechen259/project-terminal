@@ -41,6 +41,14 @@ const zhCN: Record<string, string> = {
   "Ask before closing a terminal that is starting or still running.":
     "关闭正在启动或运行中的终端前进行确认。",
   "Confirm before closing a running terminal": "关闭运行中的终端前确认",
+  "Terminal font": "终端字体",
+  "Applied immediately to every open terminal. Only monospaced fonts installed on this machine are listed.":
+    "立即应用到所有已打开的终端。仅列出本机已安装的等宽字体。",
+  "{font} (bundled)": "{font}（内置）",
+  "Prompt icons available — starship and oh-my-posh will render.":
+    "提示符图标可用——starship 与 oh-my-posh 能正常显示。",
+  "This font has no prompt icons. The third line above will show boxes in starship and oh-my-posh.":
+    "该字体没有提示符图标。在 starship 与 oh-my-posh 中，上方第三行会显示为方块。",
   "Font size": "字体大小",
   "Applied immediately to every open terminal.": "立即应用到所有已打开的终端。",
   "Terminal font size": "终端字体大小",

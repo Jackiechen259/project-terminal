@@ -371,3 +371,11 @@ The repository must contain the Actions secret `TAURI_SIGNING_PRIVATE_KEY`. The 
 ## License
 
 Licensed under the [Apache License 2.0](./LICENSE).
+
+### Bundled fonts
+
+The terminal ships with Microsoft's **Cascadia Mono NF**, used unmodified under
+the [SIL Open Font License 1.1](./src/assets/fonts/OFL.txt). It is bundled
+because Cascadia is not installed on a stock Windows, and the Consolas fallback
+has no glyphs in the Nerd Fonts ranges that starship and oh-my-posh prompts are
+drawn from. See [`src/assets/fonts/README.md`](./src/assets/fonts/README.md).

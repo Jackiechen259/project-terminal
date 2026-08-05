@@ -20,6 +20,8 @@ import {
   useSettingsStore,
 } from "@/stores/settingsStore";
 
+import { TerminalFontPicker } from "./TerminalFontPicker";
+
 const FONT_SIZES = [10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24];
 const SCROLLBACK_LINES = [1_000, 5_000, 10_000, 25_000, 50_000, 100_000];
 const SCROLLBACK_MEGABYTES = [1, 2, 4, 8, 16, 32];
@@ -42,6 +44,9 @@ export function GeneralSettingsPanel() {
   );
   const openFileSidebarByDefault = useSettingsStore(
     (state) => state.openFileSidebarByDefault,
+  );
+  const terminalFontFamily = useSettingsStore(
+    (state) => state.terminalFontFamily,
   );
   const terminalFontSize = useSettingsStore((state) => state.terminalFontSize);
   const terminalScrollbackLines = useSettingsStore(
@@ -100,6 +105,7 @@ export function GeneralSettingsPanel() {
     showTerminalCount === DEFAULT_GENERAL_SETTINGS.showTerminalCount &&
     openFileSidebarByDefault ===
       DEFAULT_GENERAL_SETTINGS.openFileSidebarByDefault &&
+    terminalFontFamily === DEFAULT_GENERAL_SETTINGS.terminalFontFamily &&
     terminalFontSize === DEFAULT_GENERAL_SETTINGS.terminalFontSize &&
     terminalScrollbackLines ===
       DEFAULT_GENERAL_SETTINGS.terminalScrollbackLines &&
@@ -163,6 +169,14 @@ export function GeneralSettingsPanel() {
             <option value="eye-care">{t("Warm eye care")}</option>
             <option value="light">{t("White")}</option>
           </select>
+        </SettingRow>
+        <SettingRow
+          title={t("Terminal font")}
+          description={t(
+            "Applied immediately to every open terminal. Only monospaced fonts installed on this machine are listed.",
+          )}
+        >
+          <TerminalFontPicker />
         </SettingRow>
       </SettingsGroup>
 

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+import { sanitizeFontFamily } from "@/lib/terminalFonts";
 import { createThrottledJSONStorage } from "@/lib/throttledStorage";
 
 export const MIN_TERMINAL_FONT_SIZE = 10;
@@ -20,6 +21,11 @@ export interface GeneralSettings {
   confirmDeleteProject: boolean;
   showTerminalCount: boolean;
   openFileSidebarByDefault: boolean;
+  /**
+   * Terminal font family name only, not a full CSS stack. Empty means "use
+   * the bundled font"; `buildTerminalFontStack` appends the fallbacks.
+   */
+  terminalFontFamily: string;
   terminalFontSize: number;
   terminalScrollbackLines: number;
   terminalScrollbackMegabytes: number;
@@ -35,6 +41,7 @@ export const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   confirmDeleteProject: true,
   showTerminalCount: true,
   openFileSidebarByDefault: false,
+  terminalFontFamily: "",
   terminalFontSize: 14,
   terminalScrollbackLines: 10_000,
   terminalScrollbackMegabytes: 4,
@@ -91,6 +98,11 @@ export const useSettingsStore = create<SettingsStoreState>()(
       updateGeneralSettings: (patch) =>
         set((state) => ({
           ...patch,
+          // This value is interpolated into a CSS font-family declaration.
+          terminalFontFamily:
+            patch.terminalFontFamily === undefined
+              ? state.terminalFontFamily
+              : sanitizeFontFamily(patch.terminalFontFamily),
           terminalFontSize:
             patch.terminalFontSize === undefined
               ? state.terminalFontSize
@@ -123,6 +135,7 @@ export const useSettingsStore = create<SettingsStoreState>()(
         confirmDeleteProject: state.confirmDeleteProject,
         showTerminalCount: state.showTerminalCount,
         openFileSidebarByDefault: state.openFileSidebarByDefault,
+        terminalFontFamily: state.terminalFontFamily,
         terminalFontSize: state.terminalFontSize,
         terminalScrollbackLines: state.terminalScrollbackLines,
         terminalScrollbackMegabytes: state.terminalScrollbackMegabytes,

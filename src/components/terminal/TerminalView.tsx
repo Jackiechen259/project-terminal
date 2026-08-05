@@ -14,6 +14,7 @@ import { listenForAppCommands } from "@/lib/appCommands";
 import { TerminalInputQueue } from "@/lib/terminalInputQueue";
 import { TerminalOutputQueue } from "@/lib/terminalOutputQueue";
 import { TerminalResizeQueue } from "@/lib/terminalResizeQueue";
+import { buildTerminalFontStack } from "@/lib/terminalFonts";
 import {
   getTerminalMinimumContrast,
   getTerminalSearchDecorations,
@@ -106,6 +107,9 @@ export const TerminalView = memo(function TerminalView({
   const { t } = useTranslation();
   const tRef = useRef(t);
   tRef.current = t;
+  const terminalFontFamily = useSettingsStore(
+    (state) => state.terminalFontFamily,
+  );
   const terminalFontSize = useSettingsStore((state) => state.terminalFontSize);
   const terminalScrollbackLines = useSettingsStore(
     (state) => state.terminalScrollbackLines,
@@ -249,7 +253,7 @@ export const TerminalView = memo(function TerminalView({
       // solid block, the rest fall back to an outline.
       cursorInactiveStyle: "outline",
       scrollback: terminalScrollbackLines,
-      fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, monospace',
+      fontFamily: buildTerminalFontStack(terminalFontFamily),
       fontSize: terminalFontSize,
       lineHeight: 1.2,
       minimumContrastRatio: getTerminalMinimumContrast(theme),
@@ -597,6 +601,7 @@ export const TerminalView = memo(function TerminalView({
     const term = termRef.current;
     if (!term) return;
 
+    term.options.fontFamily = buildTerminalFontStack(terminalFontFamily);
     term.options.fontSize = terminalFontSize;
     term.options.scrollback = terminalScrollbackLines;
     term.options.cursorBlink = cursorBlink;
@@ -611,7 +616,15 @@ export const TerminalView = memo(function TerminalView({
       }
     });
     return () => cancelAnimationFrame(frame);
-  }, [cursorBlink, terminalFontSize, terminalScrollbackLines, theme]);
+    // Every option here changes the cell size or the palette, so each needs
+    // the refit above; none of them requires rebuilding the terminal.
+  }, [
+    cursorBlink,
+    terminalFontFamily,
+    terminalFontSize,
+    terminalScrollbackLines,
+    theme,
+  ]);
 
   // A terminal opened before app bootstrap resolved was built without a pty
   // description. xterm reads it at resize time, so applying it late is enough
