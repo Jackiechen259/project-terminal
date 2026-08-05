@@ -46,6 +46,29 @@ const DEBOUNCE = 4;
 const MAX_WAIT = 16;
 
 describe("TerminalOutputQueue", () => {
+  it("flushes on a byte cap rather than buffering without bound", () => {
+    // Neither timer bounds memory: a process writing faster than the WebView
+    // schedules callbacks keeps landing inside the debounce window, and the
+    // max-wait timer only fires when the event loop gets a turn.
+    const writes: number[] = [];
+    let time = 0;
+    const queue = new TerminalOutputQueue(
+      (data) => writes.push(data.byteLength),
+      // Timers that never fire, standing in for a starved event loop.
+      () => 1,
+      () => undefined,
+      () => time,
+    );
+
+    const megabyte = new Uint8Array(1024 * 1024);
+    queue.send(megabyte);
+    expect(writes).toEqual([]);
+
+    time += 1;
+    queue.send(megabyte);
+    expect(writes).toEqual([2 * 1024 * 1024]);
+  });
+
   it("combines fragments that arrive within the debounce window", () => {
     const writes: number[][] = [];
     const timers = createTimerScheduler();
