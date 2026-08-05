@@ -45,6 +45,8 @@ const zhCN: Record<string, string> = {
     "为配置指定专属颜色，避免把生产会话误认成本地会话。",
   "Use the global setting": "使用全局设置",
   "Accent color": "强调色",
+  Status: "状态",
+  "Exit status of the last command": "上一条命令的退出状态",
   "Shell behavior": "Shell 行为",
   "Report the working directory and command results": "上报工作目录与命令结果",
   "Adds prompt hooks so new tabs can open in the same directory. The hooks wrap your existing prompt; starship, oh-my-posh and powerlevel10k keep working.":

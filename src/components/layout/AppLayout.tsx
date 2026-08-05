@@ -1,6 +1,7 @@
 import { ProjectSidebar } from "@/components/projects/ProjectSidebar";
 import { ProjectFilePanel } from "@/components/files/ProjectFilePanel";
 import { TerminalWorkspace } from "@/components/terminal/TerminalWorkspace";
+import { StatusBar } from "@/components/layout/StatusBar";
 import { WindowTitleBar } from "@/components/layout/WindowTitleBar";
 import { useState } from "react";
 import { ChevronRight, LogOut, Minimize2, PowerOff } from "lucide-react";
@@ -53,6 +54,7 @@ export function AppLayout() {
           <ProjectFilePanel onClose={() => setFileSidebarCollapsed(true)} />
         ) : null}
       </div>
+      <StatusBar />
       <Dialog open={closePromptOpen} onOpenChange={setClosePromptOpen}>
         <DialogContent className="max-w-[420px] gap-0 overflow-hidden p-0">
           <DialogHeader className="space-y-0 border-b border-border bg-surface px-5 py-4 pr-12 text-left">
