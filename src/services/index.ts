@@ -439,6 +439,12 @@ export const terminalService = {
   restart: (sessionId: string): Promise<string> =>
     invokeOrThrow<string>("restart_terminal", { sessionId }),
   decodeBase64,
+  /**
+   * Open a link from terminal output in the user's browser. The backend
+   * re-validates the scheme; never navigate the WebView to it.
+   */
+  openExternalUrl: (url: string) =>
+    invokeOrThrow<void>("open_external_url", { url }),
 };
 
 export interface DetectedCondaEnvironment {

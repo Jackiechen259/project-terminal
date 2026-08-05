@@ -2,6 +2,7 @@
 
 pub mod clipboard;
 pub mod file_manager;
+pub mod opener;
 pub mod platform;
 pub mod profile;
 pub mod profile_template;

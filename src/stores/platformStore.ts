@@ -25,6 +25,9 @@ interface PlatformStoreState {
 
 const FALLBACK_INFO: PlatformInfo = {
   os: "windows",
+  // Unknown rather than guessed: xterm treats a wrong build as licence to
+  // reflow scrollback that ConPTY never marked as wrapped.
+  windowsBuild: null,
   wslSupported: true,
   availableProjectTypes: ["local", "wsl", "ssh"],
   availableLocalShells: ["powershell", "cmd", "git-bash", "wsl", "custom"],

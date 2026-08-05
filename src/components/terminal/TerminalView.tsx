@@ -1,4 +1,11 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ImageAddon } from "@xterm/addon-image";
@@ -16,13 +23,16 @@ import { TerminalOutputQueue } from "@/lib/terminalOutputQueue";
 import { TerminalResizeQueue } from "@/lib/terminalResizeQueue";
 import {
   getTerminalMinimumContrast,
+  getTerminalSearchDecorations,
   getTerminalTheme,
 } from "@/lib/terminalThemes";
+import { resolveWindowsPty } from "@/lib/terminalWindowsPty";
 import {
   isTerminalControlFrame,
   type TerminalSessionFrame,
 } from "@/lib/terminalFrames";
 import { terminalService } from "@/services";
+import { usePlatformStore } from "@/stores/platformStore";
 import {
   clampTerminalFontSize,
   useSettingsStore,
@@ -34,6 +44,29 @@ const MAX_LAGGED_RESYNCS = 3;
 
 /** Per-terminal budget for decoded inline images, in MB. */
 const TERMINAL_IMAGE_STORAGE_LIMIT_MB = 32;
+
+/** Width of the gutter that marks off-screen search matches, in pixels. */
+const OVERVIEW_RULER_WIDTH = 10;
+
+/**
+ * Open a link from terminal output.
+ *
+ * Both the OSC 8 handler and the plain-URL addon default to `window.open`,
+ * which in a Tauri WebView either does nothing or opens a chromeless window
+ * pointed at a URL that came out of program output. Neither is acceptable, so
+ * both are routed to the browser through a backend command that re-validates
+ * the scheme.
+ *
+ * Ctrl is required, matching Windows Terminal and VS Code: it keeps a link
+ * from firing while the user is dragging out a selection.
+ */
+function activateTerminalLink(event: MouseEvent, uri: string) {
+  if (!event.ctrlKey) return;
+  void terminalService.openExternalUrl(uri).catch(() => {
+    // A rejected link is not worth interrupting the session for; the backend
+    // refuses anything that is not plainly an http(s) URL.
+  });
+}
 
 /**
  * Single xterm.js view bound to a backend PTY session.
@@ -86,6 +119,7 @@ export const TerminalView = memo(function TerminalView({
   );
   const cursorBlink = useSettingsStore((state) => state.cursorBlink);
   const theme = useSettingsStore((state) => state.theme);
+  const platformInfo = usePlatformStore((state) => state.info);
 
   const copySelection = useCallback(async () => {
     const selection = termRef.current?.getSelection() ?? "";
@@ -180,25 +214,47 @@ export const TerminalView = memo(function TerminalView({
       });
   }, [focused, searchOpen]);
 
+  // Without `decorations` the addon highlights nothing - it only scrolls each
+  // match into view - and `clearDecorations()` has nothing to clear.
+  const searchOptions = useMemo(
+    () => ({
+      caseSensitive: false,
+      decorations: getTerminalSearchDecorations(theme),
+    }),
+    [theme],
+  );
+
   const findNext = useCallback(() => {
-    if (searchQuery) {
-      searchRef.current?.findNext(searchQuery, { caseSensitive: false });
-    }
-  }, [searchQuery]);
+    if (searchQuery) searchRef.current?.findNext(searchQuery, searchOptions);
+  }, [searchQuery, searchOptions]);
 
   const findPrevious = useCallback(() => {
     if (searchQuery) {
-      searchRef.current?.findPrevious(searchQuery, { caseSensitive: false });
+      searchRef.current?.findPrevious(searchQuery, searchOptions);
     }
-  }, [searchQuery]);
+  }, [searchQuery, searchOptions]);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    // Read the platform snapshot rather than subscribing: it is immutable once
+    // loaded, and making it a dependency would tear down and re-attach every
+    // terminal the moment app bootstrap resolves. A separate effect below
+    // applies it if it arrives after this terminal was built.
+    const windowsPty = resolveWindowsPty(usePlatformStore.getState().info);
+    const linkHandler = {
+      activate: activateTerminalLink,
+      // Leave false: xterm uses it to reject `file:` and `javascript:` URIs
+      // before `activate` is ever reached.
+      allowNonHttpProtocols: false,
+    };
     const term = new Terminal({
       allowProposedApi: true,
       cursorBlink,
       cursorStyle: "block",
+      // Split panes have no other focus affordance: the focused pane keeps a
+      // solid block, the rest fall back to an outline.
+      cursorInactiveStyle: "outline",
       scrollback: terminalScrollbackLines,
       fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, monospace',
       fontSize: terminalFontSize,
@@ -206,6 +262,17 @@ export const TerminalView = memo(function TerminalView({
       minimumContrastRatio: getTerminalMinimumContrast(theme),
       allowTransparency: false,
       convertEol: false,
+      // Bold is a weight, not a palette shift. The default remaps `\e[1;30m`
+      // to bright black, which modern prompts and `ls --color` do not expect.
+      drawBoldTextInBrightColors: false,
+      // Shrink glyphs whose font outline spills past the cell they occupy in
+      // the model - CJK punctuation and roman numerals in a Latin font.
+      rescaleOverlappingGlyphs: true,
+      // `clear`/`cls` should push the screen into scrollback rather than eat it.
+      scrollOnEraseInDisplay: true,
+      overviewRuler: { width: OVERVIEW_RULER_WIDTH },
+      windowsPty,
+      linkHandler,
       theme: getTerminalTheme(theme),
     });
     const fit = new FitAddon();
@@ -213,7 +280,9 @@ export const TerminalView = memo(function TerminalView({
     term.loadAddon(fit);
     term.loadAddon(search);
     term.loadAddon(new UnicodeGraphemesAddon());
-    term.loadAddon(new WebLinksAddon());
+    // The addon detects plain-text URLs, which is a separate code path from
+    // the OSC 8 handler above and needs the same treatment.
+    term.loadAddon(new WebLinksAddon(activateTerminalLink));
     // Sixel/IIP rendering. This one must be loaded before `open()`: the addon
     // wraps the core's `open` and `setRenderer`, and the latter is what keeps
     // images alive across the asynchronous WebGL upgrade below.
@@ -549,6 +618,17 @@ export const TerminalView = memo(function TerminalView({
     return () => cancelAnimationFrame(frame);
   }, [cursorBlink, terminalFontSize, terminalScrollbackLines, theme]);
 
+  // A terminal opened before app bootstrap resolved was built without a pty
+  // description. xterm reads it at resize time, so applying it late is enough
+  // and costs nothing - unlike rebuilding the terminal, which would detach the
+  // PTY and replay its scrollback.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term || !platformInfo) return;
+    const windowsPty = resolveWindowsPty(platformInfo);
+    if (windowsPty) term.options.windowsPty = windowsPty;
+  }, [platformInfo]);
+
   // When this view becomes visible again, re-fit so the terminal reports the
   // correct dimensions after being hidden.
   useEffect(() => {
@@ -590,7 +670,10 @@ export const TerminalView = memo(function TerminalView({
               const query = event.target.value;
               setSearchQuery(query);
               if (query) {
-                searchRef.current?.findNext(query, { incremental: true });
+                searchRef.current?.findNext(query, {
+                  ...searchOptions,
+                  incremental: true,
+                });
               } else {
                 searchRef.current?.clearDecorations();
               }

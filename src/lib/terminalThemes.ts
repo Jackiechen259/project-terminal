@@ -1,6 +1,13 @@
+import type { ISearchDecorationOptions } from "@xterm/addon-search";
 import type { ITheme } from "@xterm/xterm";
 
 import type { AppTheme } from "@/stores/settingsStore";
+
+// `selectionForeground` is deliberately left unset in every theme. Setting it
+// flattens selected text to a single colour, discarding the ANSI colours that
+// are the whole point of selecting terminal output. Readability of the
+// selection is instead handled by `minimumContrastRatio`, which xterm applies
+// against the selection background.
 
 const dark: ITheme = {
   background: "#09090b",
@@ -8,6 +15,7 @@ const dark: ITheme = {
   cursor: "#fafafa",
   cursorAccent: "#09090b",
   selectionBackground: "#3f3f46",
+  selectionInactiveBackground: "#27272a",
   black: "#18181b",
   red: "#ef4444",
   green: "#22c55e",
@@ -32,6 +40,7 @@ const eyeCare: ITheme = {
   cursor: "#655b47",
   cursorAccent: "#f5f1e5",
   selectionBackground: "#d8c9a9",
+  selectionInactiveBackground: "#e6dcc4",
   black: "#39342b",
   red: "#a33b32",
   green: "#4d713e",
@@ -56,6 +65,7 @@ const light: ITheme = {
   cursor: "#27272a",
   cursorAccent: "#ffffff",
   selectionBackground: "#cbd5e1",
+  selectionInactiveBackground: "#e2e8f0",
   black: "#18181b",
   red: "#b91c1c",
   green: "#15803d",
@@ -93,4 +103,47 @@ export function getTerminalTheme(theme: AppTheme | undefined): ITheme {
 /** Keep agent-generated ANSI and truecolor text readable on pale backgrounds. */
 export function getTerminalMinimumContrast(theme: AppTheme | undefined) {
   return TERMINAL_MINIMUM_CONTRAST[theme ?? "dark"] ?? 1;
+}
+
+/**
+ * Highlight colours for search matches, including the overview ruler marks
+ * that make an off-screen match visible in the scrollbar gutter.
+ *
+ * Search decorations are opt-in per query: without this object the addon
+ * renders no highlight at all, and the terminal only scrolls to each match.
+ */
+const TERMINAL_SEARCH_DECORATIONS: Record<AppTheme, ISearchDecorationOptions> = {
+  dark: {
+    matchBackground: "#3f3f46",
+    matchBorder: "#52525b",
+    matchOverviewRuler: "#a1a1aa",
+    activeMatchBackground: "#a16207",
+    activeMatchBorder: "#facc15",
+    activeMatchColorOverviewRuler: "#facc15",
+  },
+  "eye-care": {
+    matchBackground: "#e0d3b2",
+    matchBorder: "#b9a97f",
+    matchOverviewRuler: "#8a7b56",
+    activeMatchBackground: "#e8c46a",
+    activeMatchBorder: "#8a651d",
+    activeMatchColorOverviewRuler: "#8a651d",
+  },
+  light: {
+    matchBackground: "#dbeafe",
+    matchBorder: "#93c5fd",
+    matchOverviewRuler: "#60a5fa",
+    activeMatchBackground: "#fde68a",
+    activeMatchBorder: "#a16207",
+    activeMatchColorOverviewRuler: "#a16207",
+  },
+};
+
+export function getTerminalSearchDecorations(
+  theme: AppTheme | undefined,
+): ISearchDecorationOptions {
+  return (
+    TERMINAL_SEARCH_DECORATIONS[theme ?? "dark"] ??
+    TERMINAL_SEARCH_DECORATIONS.dark
+  );
 }

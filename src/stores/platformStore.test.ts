@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+﻿import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { usePlatformStore } from "@/stores/platformStore";
 import { platformService } from "@/services";
@@ -22,6 +22,7 @@ describe("platformStore", () => {
     it("stores the backend snapshot on success", async () => {
       const info: PlatformInfo = {
         os: "linux",
+        windowsBuild: null,
         wslSupported: false,
         availableProjectTypes: ["local", "ssh"],
         availableLocalShells: ["bash", "zsh", "custom"],
@@ -49,6 +50,7 @@ describe("platformStore", () => {
     it("coalesces concurrent callers onto a single backend request", async () => {
       const info: PlatformInfo = {
         os: "windows",
+        windowsBuild: 26100,
         wslSupported: true,
         availableProjectTypes: ["local", "wsl", "ssh"],
         availableLocalShells: [
@@ -73,6 +75,7 @@ describe("platformStore", () => {
     it("re-issues the request after a prior load settles", async () => {
       const first: PlatformInfo = {
         os: "windows",
+        windowsBuild: 26100,
         wslSupported: true,
         availableProjectTypes: ["local", "wsl", "ssh"],
         availableLocalShells: [
@@ -88,6 +91,7 @@ describe("platformStore", () => {
       await usePlatformStore.getState().load();
       const second: PlatformInfo = {
         os: "linux",
+        windowsBuild: null,
         wslSupported: false,
         availableProjectTypes: ["local", "ssh"],
         availableLocalShells: ["bash", "custom"],

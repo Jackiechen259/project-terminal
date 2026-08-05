@@ -149,6 +149,8 @@ pub fn run() {
                 commands::platform::get_platform_info,
                 // Clipboard (native read avoids a WebView paste permission prompt)
                 commands::clipboard::read_clipboard_text,
+                // Opening terminal links (scheme-validated; never the WebView)
+                commands::opener::open_external_url,
                 // Remote access gateway (shares the desktop terminal manager)
                 commands::remote::remote_access_info,
                 commands::remote::set_remote_lan_access,
