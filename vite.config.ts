@@ -1,12 +1,50 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 
+import { renderThemeTokensCss } from "./src/styles/tokens";
+
 const host = process.env.TAURI_DEV_HOST;
+
+/** Placeholder in `index.html` that the generated token block replaces. */
+const THEME_TOKENS_MARKER = "<!--THEME_TOKENS-->";
+
+/**
+ * Render the theme tokens from `src/styles/tokens.ts` into the document head.
+ *
+ * They belong there rather than in `src/index.css` because the startup screen
+ * needs them before any bundle has loaded. Emitting them from one module is
+ * what stops the app stylesheet and the startup screen drifting apart - which
+ * they had, leaving the splash accent stuck on the dark theme's blue in every
+ * theme.
+ *
+ * The block is deliberately unlayered, so it wins over anything Tailwind puts
+ * in `@layer base` and there is no ordering subtlety to remember.
+ */
+function themeTokensPlugin(): Plugin {
+  return {
+    name: "project-terminal:theme-tokens",
+    transformIndexHtml: {
+      order: "pre",
+      handler(html) {
+        if (!html.includes(THEME_TOKENS_MARKER)) {
+          throw new Error(
+            `index.html is missing the ${THEME_TOKENS_MARKER} placeholder; theme tokens have nowhere to go.`,
+          );
+        }
+        const css = renderThemeTokensCss("      ");
+        return html.replace(
+          THEME_TOKENS_MARKER,
+          `<style>\n${css}\n    </style>`,
+        );
+      },
+    },
+  };
+}
 
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
-  plugins: [react()],
+  plugins: [themeTokensPlugin(), react()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
