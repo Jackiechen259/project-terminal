@@ -1,4 +1,4 @@
-//! Reusable profile template. Unlike `TerminalProfile`, a template is not
+﻿//! Reusable profile template. Unlike `TerminalProfile`, a template is not
 //! bound to a project - it stores shell/environment/startup configuration
 //! that can be applied to any project. When the user picks a template from
 //! the quick-launch menu, the frontend creates a concrete `TerminalProfile`
@@ -69,6 +69,11 @@ pub struct ProfileTemplate {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_shell_command: Option<String>,
+
+    /// See [`crate::profile::TerminalProfile::force_utf8`]. Carried on the
+    /// template so a profile created from one starts with the same answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub force_utf8: Option<bool>,
 
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -171,6 +176,7 @@ mod tests {
             wsl_distribution: None,
             wsl_working_directory: None,
             remote_shell_command: None,
+            force_utf8: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

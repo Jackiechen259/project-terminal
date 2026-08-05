@@ -263,6 +263,9 @@ pub(crate) fn build_session_spawn(
         project.project_type,
         profile.shell_type,
     ));
+    if profile.shell_type == crate::profile::ShellType::GitBash {
+        env.extend(crate::terminal::git_bash_login_environment(&program));
+    }
     if let Some(vars) = &profile.environment_variables {
         for (k, v) in vars {
             env.push((k.clone(), v.clone()));
@@ -535,11 +538,40 @@ fn normalize_initialization_script(shell_type: crate::profile::ShellType, script
     script.replace("\r\n", "\r").replace('\n', "\r")
 }
 
+/// Configure the shell for UTF-8 output, before anything else runs in it.
+///
+/// It has to come first: environment activation and the user's startup
+/// commands both print, and a `conda activate` banner that arrives before the
+/// encoding is set is mojibake nobody can explain afterwards.
+fn apply_utf8_preamble(
+    manager: &TerminalManager,
+    profile: &crate::profile::TerminalProfile,
+    session_id: &str,
+) {
+    let wanted = profile
+        .force_utf8
+        .unwrap_or_else(|| crate::terminal::forces_utf8_by_default(profile.shell_type));
+    if !wanted {
+        return;
+    }
+    let Some(command) = crate::terminal::utf8_preamble(profile.shell_type) else {
+        return;
+    };
+    // Failure here is not worth losing the session over: the shell is usable,
+    // it just decodes non-ASCII the way the console code page says to.
+    let _ = manager.write(
+        session_id,
+        shell_command_line(profile.shell_type, command).as_bytes(),
+    );
+}
+
 fn execute_startup_commands(
     manager: &TerminalManager,
     profile: &crate::profile::TerminalProfile,
     session_id: &str,
 ) -> AppResult<()> {
+    apply_utf8_preamble(manager, profile, session_id);
+
     // Phase 3.6/3.7: Environment activation is evaluated and pushed first.
     // Plan Â§20.8 / Â§22: if activation generation fails, we MUST retain the
     // shell so the user can manually inspect or fix it.
@@ -720,8 +752,17 @@ pub fn resize_terminal(
     session_id: String,
     rows: u16,
     cols: u16,
+    // Grid size in pixels. Travels in the same `TIOCGWINSZ` structure as rows
+    // and columns; image tools read it to size their output. Optional, and `0`
+    // is the conventional "unknown" - the remote gateway never measures one.
+    pixel_width: Option<u16>,
+    pixel_height: Option<u16>,
 ) -> AppResult<()> {
-    terminal.manager.resize(&session_id, rows, cols)?;
+    let pixel_width = pixel_width.unwrap_or(0);
+    let pixel_height = pixel_height.unwrap_or(0);
+    terminal
+        .manager
+        .resize(&session_id, rows, cols, pixel_width, pixel_height)?;
     terminal.remember_size(&session_id, rows, cols);
     Ok(())
 }

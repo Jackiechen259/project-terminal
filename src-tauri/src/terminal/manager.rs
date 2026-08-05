@@ -138,9 +138,16 @@ impl TerminalManager {
         Ok(())
     }
 
-    pub fn resize(&self, session_id: &str, rows: u16, cols: u16) -> AppResult<()> {
+    pub fn resize(
+        &self,
+        session_id: &str,
+        rows: u16,
+        cols: u16,
+        pixel_width: u16,
+        pixel_height: u16,
+    ) -> AppResult<()> {
         let session = self.get(session_id)?;
-        session.resize(rows, cols)
+        session.resize(rows, cols, pixel_width, pixel_height)
     }
 
     /// Close a session and remove it from the map. Idempotent - closing an
@@ -236,7 +243,7 @@ mod tests {
     #[test]
     fn resize_unknown_session_errors() {
         let mgr = TerminalManager::new();
-        assert!(mgr.resize("nope", 24, 80).is_err());
+        assert!(mgr.resize("nope", 24, 80, 0, 0).is_err());
     }
 
     #[test]

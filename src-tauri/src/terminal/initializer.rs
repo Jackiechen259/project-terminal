@@ -1,4 +1,4 @@
-//! Environment initialization commands for PTY sessions.
+﻿//! Environment initialization commands for PTY sessions.
 //!
 //! Phase 3.6/3.7 covers Conda, venv, Poetry, uv, and custom initializations.
 //! The manager resolves the profile's environment type and returns a script
@@ -386,6 +386,7 @@ mod tests {
             wsl_distribution: None,
             wsl_working_directory: None,
             remote_shell_command: None,
+            force_utf8: None,
             is_default: false,
             show_in_context_menu: true,
             created_at: Utc::now(),

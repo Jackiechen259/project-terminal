@@ -312,7 +312,7 @@ describe("TerminalView session lifecycle", () => {
     );
 
     await waitFor(() =>
-      expect(mocks.resize).toHaveBeenCalledWith("session-one", 43, 132),
+      expect(mocks.resize).toHaveBeenCalledWith("session-one", 43, 132, 0, 0),
     );
   });
 

@@ -13,7 +13,8 @@ describe("TerminalResizeQueue", () => {
     await queue.whenIdle();
 
     expect(resize).toHaveBeenCalledTimes(1);
-    expect(resize).toHaveBeenCalledWith("session-1", 32, 120);
+    // Pixel extents default to 0, the conventional "unknown" in TIOCGWINSZ.
+    expect(resize).toHaveBeenCalledWith("session-1", 32, 120, 0, 0);
   });
 
   it("serializes writes and coalesces in-flight changes to the latest size", async () => {

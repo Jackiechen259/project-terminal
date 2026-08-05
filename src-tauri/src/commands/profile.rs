@@ -1,6 +1,6 @@
-//! Terminal Profile Tauri commands. CRUD over the profile JSON repository.
+﻿//! Terminal Profile Tauri commands. CRUD over the profile JSON repository.
 //!
-//! Per plan §12.2: `list_terminal_profiles`, `create_terminal_profile`,
+//! Per plan Â§12.2: `list_terminal_profiles`, `create_terminal_profile`,
 //! `update_terminal_profile`, `delete_terminal_profile`,
 //! `validate_terminal_profile`, `test_terminal_profile`.
 //!
@@ -58,6 +58,10 @@ pub struct ProfileInput {
     #[serde(default)]
     pub remote_shell_command: Option<String>,
 
+    /// Whether to configure the shell for UTF-8 output at startup.
+    /// `None` takes the per-shell default.
+    #[serde(default)]
+    pub force_utf8: Option<bool>,
     #[serde(default)]
     pub is_default: bool,
     #[serde(default = "default_true")]
@@ -87,6 +91,7 @@ fn build_profile_from_input(input: ProfileInput, id: String) -> AppResult<Termin
         wsl_distribution: input.wsl_distribution,
         wsl_working_directory: input.wsl_working_directory,
         remote_shell_command: input.remote_shell_command,
+        force_utf8: input.force_utf8,
         is_default: input.is_default,
         show_in_context_menu: input.show_in_context_menu,
         created_at: now,
@@ -148,6 +153,7 @@ pub fn update_terminal_profile_inner(
             wsl_distribution: input.wsl_distribution,
             wsl_working_directory: input.wsl_working_directory,
             remote_shell_command: input.remote_shell_command,
+            force_utf8: input.force_utf8,
             is_default: input.is_default,
             show_in_context_menu: input.show_in_context_menu,
             created_at: existing.created_at,
@@ -366,6 +372,7 @@ mod tests {
             wsl_distribution: None,
             wsl_working_directory: None,
             remote_shell_command: None,
+            force_utf8: None,
             is_default: false,
             show_in_context_menu: true,
         }

@@ -1,4 +1,4 @@
-//! Terminal profile domain model. Mirrors the frontend `TerminalProfile`
+﻿//! Terminal profile domain model. Mirrors the frontend `TerminalProfile`
 //! type. All structs use `#[serde(rename_all = "camelCase")]`.
 
 use chrono::{DateTime, Utc};
@@ -99,6 +99,18 @@ pub struct TerminalProfile {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_shell_command: Option<String>,
 
+    /// Whether to configure the shell for UTF-8 output at startup.
+    ///
+    /// `None` takes the per-shell default from
+    /// [`crate::terminal::forces_utf8_by_default`]. Present as an override
+    /// because the right answer is not the same for every shell: Windows
+    /// PowerShell 5.1 defaults `$OutputEncoding` to ASCII and mangles
+    /// non-ASCII the moment output is piped to a native executable, while
+    /// `chcp 65001` in CMD breaks `more`, some `for /f` loops, and any batch
+    /// script that prints through the OEM code page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub force_utf8: Option<bool>,
+
     pub is_default: bool,
     #[serde(default = "default_true")]
     pub show_in_context_menu: bool,
@@ -177,6 +189,7 @@ mod tests {
             wsl_distribution: None,
             wsl_working_directory: None,
             remote_shell_command: None,
+            force_utf8: None,
             is_default: true,
             show_in_context_menu: true,
             created_at: now(),

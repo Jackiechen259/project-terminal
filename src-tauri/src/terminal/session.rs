@@ -309,8 +309,13 @@ impl TerminalSession {
         // follow the child around and misidentify it. That is not cosmetic:
         // capability detection commonly treats TERM_PROGRAM as authoritative
         // and stops looking at TERM once it is present.
-        cmd.env_remove("TERM_PROGRAM");
-        cmd.env_remove("TERM_PROGRAM_VERSION");
+        //
+        // Identify ourselves rather than leaving it unset. A tool that special-
+        // cases known terminals sees a name it does not recognise and takes its
+        // generic path, which is correct; leaving the variable absent tells it
+        // nothing at all. Never impersonate a name we do not implement.
+        cmd.env("TERM_PROGRAM", "ProjectTerminal");
+        cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
         for key in &spawn.env_remove {
             cmd.env_remove(key);
         }
@@ -522,7 +527,18 @@ impl TerminalSession {
     }
 
     /// Resize the PTY. Clamps rows/cols to a sensible minimum.
-    pub fn resize(&self, rows: u16, cols: u16) -> AppResult<()> {
+    /// Resize the pty.
+    ///
+    /// `pixel_width`/`pixel_height` describe the grid in pixels and travel in
+    /// the same `TIOCGWINSZ` structure as rows and columns. Image tools read
+    /// them to size their output; `0` is the conventional "unknown".
+    pub fn resize(
+        &self,
+        rows: u16,
+        cols: u16,
+        pixel_width: u16,
+        pixel_height: u16,
+    ) -> AppResult<()> {
         let rows = rows.max(1);
         let cols = cols.max(1);
         let guard = self.inner.lock();
@@ -534,8 +550,8 @@ impl TerminalSession {
             .resize(PtySize {
                 rows,
                 cols,
-                pixel_width: 0,
-                pixel_height: 0,
+                pixel_width,
+                pixel_height,
             })
             .map_err(|e| AppError::PtyCreationFailed(format!("resize: {e}")))?;
         hub.scrollback.resize(rows, cols);
@@ -747,8 +763,8 @@ mod tests {
         // Â§37 Phase 3 acceptance: resize normal.
         let (session, _rx) = make_session("cmd.exe", &["/Q"]);
         // Resize up then down; both must succeed.
-        session.resize(30, 120).expect("resize up");
-        session.resize(10, 40).expect("resize down");
+        session.resize(30, 120, 960, 660).expect("resize up");
+        session.resize(10, 40, 320, 220).expect("resize down");
         let replay = session
             .attach("resize-history".into(), ScrollbackSnapshotFormat::Replay)
             .snapshot

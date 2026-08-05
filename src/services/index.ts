@@ -514,8 +514,20 @@ export const terminalService = {
       sessionId,
       data: Array.from(data),
     }),
-  resize: (sessionId: string, rows: number, cols: number) =>
-    invokeOrThrow<void>("resize_terminal", { sessionId, rows, cols }),
+  resize: (
+    sessionId: string,
+    rows: number,
+    cols: number,
+    pixelWidth = 0,
+    pixelHeight = 0,
+  ) =>
+    invokeOrThrow<void>("resize_terminal", {
+      sessionId,
+      rows,
+      cols,
+      pixelWidth,
+      pixelHeight,
+    }),
   close: (sessionId: string) =>
     invokeOrThrow<void>("close_terminal", { sessionId }),
   restart: (sessionId: string): Promise<string> =>

@@ -689,7 +689,8 @@ async fn resize_session(
     }
     match state
         .manager
-        .resize(&session_id, request.rows, request.cols)
+        // Remote clients do not report a pixel size; 0 means unknown.
+        .resize(&session_id, request.rows, request.cols, 0, 0)
     {
         Ok(()) => {
             audit(
@@ -971,7 +972,7 @@ fn handle_ws_message(
             if validate_lease(state, session_id, client_id, &lease_id, true).is_err() {
                 return serde_json::json!({ "type": "error", "message": "A control lease is required" });
             }
-            let ok = state.manager.resize(session_id, rows, cols).is_ok();
+            let ok = state.manager.resize(session_id, rows, cols, 0, 0).is_ok();
             serde_json::json!({ "type": "ack", "action": "resize", "ok": ok })
         }
         WsClientMessage::Interrupt { lease_id, confirm } => {

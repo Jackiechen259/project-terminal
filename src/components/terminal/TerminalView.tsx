@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -43,6 +43,28 @@ const TERMINAL_IMAGE_STORAGE_LIMIT_MB = 32;
 
 /** Width of the gutter that marks off-screen search matches, in pixels. */
 const OVERVIEW_RULER_WIDTH = 10;
+
+/**
+ * The grid's size in pixels, for `TIOCGWINSZ`.
+ *
+ * Image tools read it to decide how large a picture to draw; a pty that
+ * reports zero makes them fall back to a fixed guess or refuse. Measured from
+ * the rendered rows element rather than the container so it excludes padding
+ * and the scrollbar, and returns zeroes rather than a guess when the terminal
+ * has not been laid out yet - zero already means "unknown" over there.
+ */
+function measureGridPixels(container: HTMLElement, term: Terminal) {
+  const rows = container.querySelector<HTMLElement>(".xterm-rows");
+  if (!rows || !rows.clientWidth || !rows.clientHeight) {
+    return { width: 0, height: 0 };
+  }
+  const cellWidth = rows.clientWidth / Math.max(1, term.cols);
+  const cellHeight = rows.clientHeight / Math.max(1, term.rows);
+  return {
+    width: Math.round(cellWidth * term.cols),
+    height: Math.round(cellHeight * term.rows),
+  };
+}
 
 /**
  * Open a link from terminal output.
@@ -98,6 +120,15 @@ export const TerminalView = memo(function TerminalView({
   const searchRef = useRef<SearchAddon | null>(null);
   const resizeQueueRef = useRef<TerminalResizeQueue | null>(null);
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Report a resize from outside the terminal's own effect. */
+  const requestResize = useCallback((term: Terminal) => {
+    const container = containerRef.current;
+    const { width, height } = container
+      ? measureGridPixels(container, term)
+      : { width: 0, height: 0 };
+    resizeQueueRef.current?.request(term.rows, term.cols, width, height);
+  }, []);
+
   const reportedExitRef = useRef(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -424,7 +455,8 @@ export const TerminalView = memo(function TerminalView({
       }
       try {
         fit.fit();
-        resizeQueue.request(term.rows, term.cols);
+        const { width, height } = measureGridPixels(container, term);
+        resizeQueue.request(term.rows, term.cols, width, height);
       } catch {
         // Fitting can fail while a tab is being attached or hidden.
       }
@@ -654,7 +686,7 @@ export const TerminalView = memo(function TerminalView({
     const frame = requestAnimationFrame(() => {
       try {
         fitRef.current?.fit();
-        resizeQueueRef.current?.request(term.rows, term.cols);
+        requestResize(term);
       } catch {
         // The terminal may be hidden or closing while preferences update.
       }
@@ -665,6 +697,7 @@ export const TerminalView = memo(function TerminalView({
   }, [
     cursorBlink,
     palette,
+    requestResize,
     resolvedContrast,
     terminalFontFamily,
     terminalFontSize,
@@ -692,14 +725,14 @@ export const TerminalView = memo(function TerminalView({
         fitRef.current?.fit();
         const term = termRef.current;
         if (term) {
-          resizeQueueRef.current?.request(term.rows, term.cols);
+          requestResize(term);
         }
       } catch {
         // ignore
       }
     }, 50);
     return () => clearTimeout(timer);
-  }, [active]);
+  }, [active, requestResize]);
 
   return (
     <div

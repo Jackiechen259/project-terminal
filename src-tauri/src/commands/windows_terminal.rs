@@ -1,4 +1,4 @@
-//! Import visible profiles and colour schemes from the local Windows Terminal
+﻿//! Import visible profiles and colour schemes from the local Windows Terminal
 //! settings files.
 //!
 //! Windows Terminal stores JSON-with-comments and accepts trailing commas, so
@@ -443,6 +443,7 @@ fn import_windows_terminal_profiles_from_paths_inner(
                 wsl_distribution: draft.wsl_distribution,
                 wsl_working_directory: draft.wsl_working_directory,
                 remote_shell_command: None,
+                force_utf8: None,
                 is_default,
                 show_in_context_menu: true,
                 created_at: now,
@@ -529,6 +530,7 @@ fn import_windows_terminal_templates_from_paths_inner(
                 wsl_distribution: draft.wsl_distribution,
                 wsl_working_directory: draft.wsl_working_directory,
                 remote_shell_command: None,
+                force_utf8: None,
                 created_at: now,
                 updated_at: now,
             };

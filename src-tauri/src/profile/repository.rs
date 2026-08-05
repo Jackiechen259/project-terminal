@@ -1,4 +1,4 @@
-//! Terminal profile JSON repository. Profiles belong to projects.
+﻿//! Terminal profile JSON repository. Profiles belong to projects.
 
 use std::path::PathBuf;
 
@@ -134,6 +134,7 @@ pub fn default_powershell_profile(id: String, project_id: String) -> TerminalPro
         wsl_distribution: None,
         wsl_working_directory: None,
         remote_shell_command: None,
+        force_utf8: None,
         is_default: true,
         show_in_context_menu: true,
         created_at: now,
@@ -176,6 +177,7 @@ pub fn default_local_profile(id: String, project_id: String) -> TerminalProfile 
         wsl_distribution: None,
         wsl_working_directory: None,
         remote_shell_command: None,
+        force_utf8: None,
         is_default: true,
         show_in_context_menu: true,
         created_at: now,
@@ -203,6 +205,7 @@ pub fn default_remote_profile(id: String, project_id: String) -> TerminalProfile
         wsl_distribution: None,
         wsl_working_directory: None,
         remote_shell_command: None,
+        force_utf8: None,
         is_default: true,
         show_in_context_menu: true,
         created_at: now,
@@ -241,6 +244,7 @@ pub fn default_wsl_profile(
             .map(|wd| wd.trim().to_string())
             .filter(|wd| !wd.is_empty()),
         remote_shell_command: None,
+        force_utf8: None,
         is_default: true,
         show_in_context_menu: true,
         created_at: now,
@@ -277,6 +281,7 @@ mod tests {
             wsl_distribution: None,
             wsl_working_directory: None,
             remote_shell_command: None,
+            force_utf8: None,
             is_default: default,
             show_in_context_menu: true,
             created_at: chrono::Utc::now(),
