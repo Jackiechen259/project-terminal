@@ -54,6 +54,17 @@ pub struct CreateTerminalRequest {
 struct SessionMeta {
     project_id: String,
     profile_id: String,
+    /// The grid the session was last resized to.
+    ///
+    /// Restart has to reproduce it. Spawning at 80x24 and waiting for the
+    /// frontend's first resize is not just a flicker: the readiness handshake
+    /// and the profile's startup commands run in between, and a long generated
+    /// command wrapped at 80 columns is exactly what makes PSReadLine repaint
+    /// fragments into the terminal.
+    rows: u16,
+    cols: u16,
+    /// Attach-history budget the session was created with.
+    scrollback_megabytes: Option<u8>,
 }
 
 pub struct TerminalState {
@@ -92,14 +103,26 @@ impl TerminalState {
         }
     }
 
-    fn remember(&self, session_id: &str, project_id: &str, profile_id: &str) {
+    fn remember(&self, session_id: &str, request: &CreateTerminalRequest) {
         self.meta.lock().insert(
             session_id.to_string(),
             SessionMeta {
-                project_id: project_id.to_string(),
-                profile_id: profile_id.to_string(),
+                project_id: request.project_id.clone(),
+                profile_id: request.profile_id.clone(),
+                rows: request.rows.max(1),
+                cols: request.cols.max(1),
+                scrollback_megabytes: request.scrollback_megabytes,
             },
         );
+    }
+
+    /// Record the grid a live session was resized to, so a later restart can
+    /// spawn straight into it.
+    fn remember_size(&self, session_id: &str, rows: u16, cols: u16) {
+        if let Some(meta) = self.meta.lock().get_mut(session_id) {
+            meta.rows = rows.max(1);
+            meta.cols = cols.max(1);
+        }
     }
 
     fn forget(&self, session_id: &str) {
@@ -124,11 +147,18 @@ impl TerminalState {
     }
 
     #[allow(dead_code)]
-    fn meta_for(&self, session_id: &str) -> Option<(String, String)> {
+    /// The create request that would reproduce a session as it stands now.
+    fn meta_for(&self, session_id: &str) -> Option<CreateTerminalRequest> {
         self.meta
             .lock()
             .get(session_id)
-            .map(|m| (m.project_id.clone(), m.profile_id.clone()))
+            .map(|m| CreateTerminalRequest {
+                project_id: m.project_id.clone(),
+                profile_id: m.profile_id.clone(),
+                rows: m.rows,
+                cols: m.cols,
+                scrollback_megabytes: m.scrollback_megabytes,
+            })
     }
 }
 
@@ -654,7 +684,7 @@ pub async fn create_terminal_inner(
     })
     .await?;
 
-    terminal.remember(&id, &request.project_id, &request.profile_id);
+    terminal.remember(&id, &request);
     Ok(id)
 }
 
@@ -691,7 +721,9 @@ pub fn resize_terminal(
     rows: u16,
     cols: u16,
 ) -> AppResult<()> {
-    terminal.manager.resize(&session_id, rows, cols)
+    terminal.manager.resize(&session_id, rows, cols)?;
+    terminal.remember_size(&session_id, rows, cols);
+    Ok(())
 }
 
 #[tauri::command]
@@ -717,7 +749,9 @@ pub async fn restart_terminal_inner(
     terminal: &TerminalState,
     session_id: &str,
 ) -> AppResult<String> {
-    let (project_id, profile_id) = terminal
+    // Reuse the grid and history budget the session was actually running with,
+    // not a fixed 80x24 the frontend has to correct afterwards.
+    let request = terminal
         .meta_for(session_id)
         .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
     // Close the old session first so we kill its shell before starting a new
@@ -726,13 +760,6 @@ pub async fn restart_terminal_inner(
     terminal.forget(session_id);
 
     let new_id = new_id("session");
-    let request = CreateTerminalRequest {
-        project_id: project_id.clone(),
-        profile_id: profile_id.clone(),
-        rows: 24,
-        cols: 80,
-        scrollback_megabytes: Some(4),
-    };
     let (spawn, project_type, profile) = build_session_spawn(app, &request, &new_id)?;
     let manager = terminal.manager.clone_handle();
     let id = run_terminal_launch(terminal, move || {
@@ -740,7 +767,7 @@ pub async fn restart_terminal_inner(
     })
     .await?;
 
-    terminal.remember(&id, &project_id, &profile_id);
+    terminal.remember(&id, &request);
     Ok(id)
 }
 
@@ -1144,19 +1171,62 @@ mod tests {
         let terminal = TerminalState::new();
         terminal.manager.create(spawn("session-p1", "p1")).unwrap();
         terminal.manager.create(spawn("session-p2", "p2")).unwrap();
-        terminal.remember("session-p1", "p1", "profile-p1");
-        terminal.remember("session-p2", "p2", "profile-p2");
+        terminal.remember("session-p1", &create_request("p1", "profile-p1"));
+        terminal.remember("session-p2", &create_request("p2", "profile-p2"));
 
         terminal.close_project_sessions("p1");
 
         assert!(terminal.manager.get("session-p1").is_err());
         assert!(terminal.meta_for("session-p1").is_none());
         assert!(terminal.manager.get("session-p2").is_ok());
-        assert_eq!(
-            terminal.meta_for("session-p2"),
-            Some(("p2".into(), "profile-p2".into()))
-        );
+        let remaining = terminal.meta_for("session-p2").expect("meta for p2");
+        assert_eq!(remaining.project_id, "p2");
+        assert_eq!(remaining.profile_id, "profile-p2");
         terminal.manager.close_all();
+    }
+
+    fn create_request(project_id: &str, profile_id: &str) -> CreateTerminalRequest {
+        CreateTerminalRequest {
+            project_id: project_id.into(),
+            profile_id: profile_id.into(),
+            rows: 24,
+            cols: 80,
+            scrollback_megabytes: None,
+        }
+    }
+
+    #[test]
+    fn a_restart_reproduces_the_grid_the_session_was_running_at() {
+        // Spawning at 80x24 and waiting for the frontend to correct it puts
+        // the readiness handshake and the profile's startup commands through
+        // an 80-column PSReadLine, which repaints wrapped fragments into the
+        // terminal.
+        let terminal = TerminalState::new();
+        terminal.remember("session-1", &create_request("p1", "profile-1"));
+
+        terminal.remember_size("session-1", 50, 160);
+
+        let request = terminal.meta_for("session-1").expect("meta");
+        assert_eq!((request.rows, request.cols), (50, 160));
+        assert_eq!(request.project_id, "p1");
+        assert_eq!(request.profile_id, "profile-1");
+    }
+
+    #[test]
+    fn a_restart_keeps_the_scrollback_budget_the_session_was_created_with() {
+        let terminal = TerminalState::new();
+        terminal.remember(
+            "session-1",
+            &CreateTerminalRequest {
+                scrollback_megabytes: Some(16),
+                ..create_request("p1", "profile-1")
+            },
+        );
+
+        assert_eq!(
+            terminal.meta_for("session-1").unwrap().scrollback_megabytes,
+            Some(16)
+        );
     }
 
     fn test_state() -> AppState {
