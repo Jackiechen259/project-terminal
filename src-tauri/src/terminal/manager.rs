@@ -1,4 +1,4 @@
-//! Terminal manager: holds all live sessions keyed by session id.
+﻿//! Terminal manager: holds all live sessions keyed by session id.
 //!
 //! Phase 3 wires local shells. The manager is process-wide state shared via
 //! Tauri's `manage()`. Closing a session kills the child process so it does
@@ -179,6 +179,7 @@ mod tests {
             args: vec!["/Q".into()],
             cwd: None,
             env: vec![],
+            env_remove: Vec::new(),
             readiness_marker: None,
             rows: 24,
             cols: 80,

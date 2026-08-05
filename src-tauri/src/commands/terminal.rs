@@ -1,9 +1,9 @@
-//! Terminal Tauri commands.
+﻿//! Terminal Tauri commands.
 //!
-//! Per plan §12.3: `create_terminal`, `write_terminal`, `resize_terminal`,
+//! Per plan Â§12.3: `create_terminal`, `write_terminal`, `resize_terminal`,
 //! `close_terminal`, `restart_terminal`.
 //!
-//! Per plan §12 (security): the frontend only submits `projectId` and
+//! Per plan Â§12 (security): the frontend only submits `projectId` and
 //! `profileId` (plus dimensions). The backend resolves the project, profile,
 //! shell executable, cwd, env vars, and activation commands. The frontend
 //! never controls the executable path or arguments directly.
@@ -259,6 +259,10 @@ pub(crate) fn build_session_spawn(
             args,
             cwd,
             env,
+            env_remove: crate::terminal::resolve_term_env_remove(
+                project.project_type,
+                profile.shell_type,
+            ),
             // `wsl.exe` does not reliably round-trip an injected readiness
             // command through every Windows PTY implementation. Let WSL
             // stream its prompt directly instead of hiding all output while
@@ -328,11 +332,11 @@ fn escape_remote_cd_path(remote_path: &str) -> Option<String> {
     if after_tilde.is_empty() {
         return None; // bare "~", already handled above
     }
-    // ~/rest — keep the slash unquoted so tilde expansion fires.
+    // ~/rest â€” keep the slash unquoted so tilde expansion fires.
     if let Some(rest) = after_tilde.strip_prefix('/') {
         return Some(format!("~/{}", escape_remote_posix_argument(rest)));
     }
-    // ~user or ~user/rest — split at the first slash.
+    // ~user or ~user/rest â€” split at the first slash.
     match after_tilde.find('/') {
         Some(slash_pos) => {
             let user = &after_tilde[..slash_pos];
@@ -507,7 +511,7 @@ fn execute_startup_commands(
     session_id: &str,
 ) -> AppResult<()> {
     // Phase 3.6/3.7: Environment activation is evaluated and pushed first.
-    // Plan §20.8 / §22: if activation generation fails, we MUST retain the
+    // Plan Â§20.8 / Â§22: if activation generation fails, we MUST retain the
     // shell so the user can manually inspect or fix it.
     match crate::terminal::build_activation_script(profile) {
         Ok(activation) => {
@@ -544,7 +548,7 @@ fn execute_startup_commands(
         }
     }
 
-    // Per plan §22 (Wait until interactive shell is available): portable-pty
+    // Per plan Â§22 (Wait until interactive shell is available): portable-pty
     // buffers writes until the shell reads them. A true prompt-sync handshake
     // (waiting for the shell's PS1 or native ready marker) is a complex
     // feature that we defer out of MVP scope. We write the commands to the PTY
@@ -1129,6 +1133,7 @@ mod tests {
                 },
                 cwd: None,
                 env: Vec::new(),
+                env_remove: Vec::new(),
                 readiness_marker: None,
                 rows: 24,
                 cols: 80,
@@ -1596,7 +1601,7 @@ mod tests {
 
     #[test]
     fn escape_remote_cd_path_preserves_tilde_unquoted() {
-        // ~/subpath — tilde and slash unquoted so the shell expands ~.
+        // ~/subpath â€” tilde and slash unquoted so the shell expands ~.
         assert_eq!(
             escape_remote_cd_path("~/projects"),
             Some("~/projects".into())
@@ -1605,7 +1610,7 @@ mod tests {
             escape_remote_cd_path("~/my project"),
             Some("~/'my project'".into())
         );
-        // ~user/subpath — username and slash unquoted.
+        // ~user/subpath â€” username and slash unquoted.
         assert_eq!(
             escape_remote_cd_path("~deploy/app"),
             Some("~deploy/app".into())
@@ -1616,7 +1621,7 @@ mod tests {
         );
         // Bare ~user.
         assert_eq!(escape_remote_cd_path("~deploy"), Some("~deploy".into()));
-        // Normal absolute path — fully escaped as before.
+        // Normal absolute path â€” fully escaped as before.
         assert_eq!(escape_remote_cd_path("/srv/app"), Some("/srv/app".into()));
         assert_eq!(
             escape_remote_cd_path("/srv/my app"),
@@ -1628,7 +1633,7 @@ mod tests {
     fn remote_start_command_skips_cd_for_tilde() {
         let mut profile = default_powershell_profile("profile-1".into(), "p1".into());
         profile.shell_type = ShellType::RemoteBash;
-        // "~" means $HOME, where SSH already starts — no cd needed.
+        // "~" means $HOME, where SSH already starts â€” no cd needed.
         let command = remote_start_command(&profile, "~").unwrap().unwrap();
         assert!(command.starts_with("bash -lc "));
         assert!(!command.contains("cd --"));

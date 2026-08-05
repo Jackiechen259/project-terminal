@@ -1,4 +1,4 @@
-//! Terminal session: owns one PTY plus a reader thread, bounded scrollback,
+﻿//! Terminal session: owns one PTY plus a reader thread, bounded scrollback,
 //! and a broadcast event stream.
 //!
 //! Phase 3 supports local shells only. SSH (`ssh.exe`) sessions arrive in
@@ -108,6 +108,10 @@ pub struct SessionSpawn {
     pub args: Vec<String>,
     pub cwd: Option<String>,
     pub env: Vec<(String, String)>,
+    /// Variables to strip from the inherited environment before `env` is
+    /// applied. Setting one to the empty string is not equivalent: a shell or
+    /// library reading it sees a value, just a nonsensical one.
+    pub env_remove: Vec<String>,
     /// When present, hold startup output until this readiness marker arrives.
     pub readiness_marker: Option<String>,
     pub rows: u16,
@@ -307,6 +311,9 @@ impl TerminalSession {
         // and stops looking at TERM once it is present.
         cmd.env_remove("TERM_PROGRAM");
         cmd.env_remove("TERM_PROGRAM_VERSION");
+        for key in &spawn.env_remove {
+            cmd.env_remove(key);
+        }
         for (k, v) in &spawn.env {
             cmd.env(k, v);
         }
@@ -645,6 +652,7 @@ mod tests {
             args: args.iter().map(|s| s.to_string()).collect(),
             cwd: None,
             env: vec![],
+            env_remove: Vec::new(),
             readiness_marker: None,
             rows: 24,
             cols: 80,
@@ -660,7 +668,7 @@ mod tests {
 
     #[test]
     fn spawn_cmd_write_command_and_read_output() {
-        // §37 Phase 3 acceptance: input/output normal. Spawn cmd.exe, write
+        // Â§37 Phase 3 acceptance: input/output normal. Spawn cmd.exe, write
         // `echo PT_TEST_OK`, read the echo back through the reader thread.
         let (session, mut rx) = make_session("cmd.exe", &["/Q"]);
         // Drain the initial prompt.
@@ -706,7 +714,7 @@ mod tests {
 
     #[test]
     fn ctrl_c_interrupts_long_running_command() {
-        // §37 Phase 3 acceptance: Ctrl+C normal. Start `ping 127.0.0.1 -t`
+        // Â§37 Phase 3 acceptance: Ctrl+C normal. Start `ping 127.0.0.1 -t`
         // (infinite), then send Ctrl+C (\x03) and verify the session is
         // still alive (status Running) - we should be back at the prompt,
         // not exited.
@@ -736,7 +744,7 @@ mod tests {
 
     #[test]
     fn resize_does_not_error() {
-        // §37 Phase 3 acceptance: resize normal.
+        // Â§37 Phase 3 acceptance: resize normal.
         let (session, _rx) = make_session("cmd.exe", &["/Q"]);
         // Resize up then down; both must succeed.
         session.resize(30, 120).expect("resize up");
@@ -860,6 +868,7 @@ mod tests {
             args: vec!["/Q".to_string()],
             cwd: None,
             env: vec![],
+            env_remove: Vec::new(),
             readiness_marker: None,
             rows: 24,
             cols: 80,
@@ -913,6 +922,7 @@ mod tests {
                 "PROJECT_TERMINAL_READY".to_string(),
                 "__PROJECT_TERMINAL_READY_powershell__".to_string(),
             )],
+            env_remove: Vec::new(),
             readiness_marker: None,
             rows: 24,
             cols: 80,

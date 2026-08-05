@@ -95,6 +95,28 @@ pub fn resolve_term_env(project_type: ProjectType, shell_type: ShellType) -> Vec
     env
 }
 
+/// Terminfo variables that must not survive from the app's own environment
+/// into a session that does not want them.
+///
+/// `CommandBuilder` snapshots this process' environment, so launching the app
+/// from one of its own sixel-capable PowerShell tabs leaves `TERMINFO` set to
+/// an inline `hex:` entry. A Git Bash or WSL session started afterwards
+/// announces `TERM=xterm-256color` but inherits that value, and an ncurses
+/// older than 6.3 - which is what Git for Windows shipped for years - does not
+/// understand the inline form and reads it as a directory path. The result is
+/// the same `unknown terminal type` failure the inline entry exists to
+/// prevent, arriving by a different route.
+pub fn resolve_term_env_remove(
+    project_type: ProjectType,
+    shell_type: ShellType,
+) -> Vec<String> {
+    if resolve_term(project_type, shell_type) == TERM_SIXEL {
+        // This session sets its own TERMINFO; nothing to strip.
+        return Vec::new();
+    }
+    vec!["TERMINFO".to_string(), "TERMINFO_DIRS".to_string()]
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DetectedShell {
@@ -488,6 +510,33 @@ mod tests {
             let env = resolve_term_env(project_type, shell);
             assert_eq!(env[0], ("TERM".to_string(), TERM_PORTABLE.to_string()));
             assert_eq!(terminfo(&env), None);
+        }
+    }
+
+    #[test]
+    fn an_inherited_terminfo_does_not_follow_a_portable_term() {
+        // Launching the app from one of its own sixel PowerShell tabs leaves
+        // an inline `hex:` TERMINFO in this process' environment. A Git Bash
+        // session announces `xterm-256color`, so that value describes the
+        // wrong terminal - and an ncurses older than 6.3 reads the inline form
+        // as a directory path and fails to resolve anything at all.
+        for (project_type, shell) in [
+            (ProjectType::Local, ShellType::GitBash),
+            (ProjectType::Local, ShellType::Wsl),
+            (ProjectType::Ssh, ShellType::RemoteBash),
+            (ProjectType::Wsl, ShellType::Wsl),
+        ] {
+            let removed = resolve_term_env_remove(project_type, shell);
+            assert!(
+                removed.iter().any(|name| name == "TERMINFO"),
+                "{project_type:?}/{shell:?} should strip TERMINFO"
+            );
+            assert!(removed.iter().any(|name| name == "TERMINFO_DIRS"));
+        }
+
+        // A sixel session sets its own; stripping it would undo the fix.
+        for shell in [ShellType::Powershell, ShellType::Cmd] {
+            assert!(resolve_term_env_remove(ProjectType::Local, shell).is_empty());
         }
     }
 

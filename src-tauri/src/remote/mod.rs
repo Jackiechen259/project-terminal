@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+﻿use std::collections::{HashMap, VecDeque};
 use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
@@ -1493,6 +1493,7 @@ mod tests {
                 },
                 cwd: None,
                 env: Vec::new(),
+                env_remove: Vec::new(),
                 readiness_marker: None,
                 rows: 24,
                 cols: 80,
