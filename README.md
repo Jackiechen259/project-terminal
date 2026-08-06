@@ -180,7 +180,7 @@ Hiding the window keeps that process running; fully quitting stops all PTYs.
 
 Terminals render inline images sent through the Sixel and iTerm (IIP) protocols, both in the desktop app and on the mobile remote page.
 
-Command-line tools decide whether they may emit images from the `TERM` value alone, so PowerShell and CMD sessions are started with `TERM=xterm-sixel`. Git Bash, WSL, and SSH sessions keep `TERM=xterm-256color`, because `xterm-sixel` has no terminfo entry and an unknown terminal type would break `vim`, `less`, and similar tools on the other side. Running `wsl` or `ssh` by hand from inside a PowerShell tab carries the sixel value across; set `TERM` in the profile's environment variables to override it.
+Command-line tools decide whether they may emit images from the `TERM` value alone, so PowerShell and CMD sessions are started with `TERM=xterm-sixel`. No stock terminfo database defines that name, so those sessions also carry the compiled entry for it in `TERMINFO`; ncurses 6.3 and newer read a description straight out of that variable, which is what keeps ncurses-linked tools launched from the shell working — without it, Git for Windows' `less` fails with `'xterm-sixel': unknown terminal type.` and takes `git branch`, `git log`, and `git diff` down with it. Git Bash, WSL, and SSH sessions keep `TERM=xterm-256color`, because the entry cannot follow `TERM` onto another host. Running `wsl` or `ssh` by hand from inside a PowerShell tab carries the sixel value across; set `TERM` in the profile's environment variables to override it.
 
 ### Project tab groups
 
@@ -189,6 +189,8 @@ Tabs are grouped by project. Switching projects changes which group is visible, 
 ### Terminal profiles
 
 Profiles are stored as first-class project resources. The Rust backend resolves the executable, arguments, working directory, environment activation, startup commands, and environment variables from saved configuration.
+
+Profile templates are project-independent presets. To use one, add it to a project from Settings › Terminal profiles › Add from template, which copies the template into a profile the project owns. Templates are not launched directly from the + menu, so a project's profile list always reflects exactly what it can run.
 
 On Windows, the profile settings page can import visible profiles from installed Stable, Preview, Canary, or unpackaged Windows Terminal settings. The import lists what it found and imports only the entries you tick; anything whose launch configuration is already present in the selected local project is marked as imported and cannot be selected again. The profile templates page offers the same picker, creating project-independent templates instead.
 
@@ -369,3 +371,11 @@ The repository must contain the Actions secret `TAURI_SIGNING_PRIVATE_KEY`. The 
 ## License
 
 Licensed under the [Apache License 2.0](./LICENSE).
+
+### Bundled fonts
+
+The terminal ships with Microsoft's **Cascadia Mono NF**, used unmodified under
+the [SIL Open Font License 1.1](./src/assets/fonts/OFL.txt). It is bundled
+because Cascadia is not installed on a stock Windows, and the Consolas fallback
+has no glyphs in the Nerd Fonts ranges that starship and oh-my-posh prompts are
+drawn from. See [`src/assets/fonts/README.md`](./src/assets/fonts/README.md).

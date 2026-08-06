@@ -1,4 +1,4 @@
-//! Profile template Tauri commands. CRUD over the template JSON repository.
+﻿//! Profile template Tauri commands. CRUD over the template JSON repository.
 //! Templates are project-independent; the frontend creates a concrete
 //! `TerminalProfile` from a template when the user quick-launches it.
 
@@ -53,6 +53,19 @@ pub struct TemplateInput {
 
     #[serde(default)]
     pub remote_shell_command: Option<String>,
+    /// Whether to configure the shell for UTF-8 output at startup.
+    /// `None` takes the per-shell default.
+    #[serde(default)]
+    pub force_utf8: Option<bool>,
+    /// Whether to inject the shell-integration hooks. `None` means off.
+    #[serde(default)]
+    pub shell_integration: Option<bool>,
+    /// Terminal colour scheme id overriding the global selection.
+    #[serde(default)]
+    pub color_scheme_id: Option<String>,
+    /// Tab and focused-pane accent, `#rrggbb`.
+    #[serde(default)]
+    pub accent_color: Option<String>,
 }
 
 fn build_template_from_input(input: TemplateInput, id: String) -> AppResult<ProfileTemplate> {
@@ -74,6 +87,10 @@ fn build_template_from_input(input: TemplateInput, id: String) -> AppResult<Prof
         wsl_distribution: input.wsl_distribution,
         wsl_working_directory: input.wsl_working_directory,
         remote_shell_command: input.remote_shell_command,
+        force_utf8: input.force_utf8,
+        shell_integration: input.shell_integration,
+        color_scheme_id: input.color_scheme_id,
+        accent_color: input.accent_color,
         created_at: now,
         updated_at: now,
     };
@@ -123,6 +140,10 @@ pub fn update_profile_template_inner(
             wsl_distribution: input.wsl_distribution,
             wsl_working_directory: input.wsl_working_directory,
             remote_shell_command: input.remote_shell_command,
+            force_utf8: input.force_utf8,
+            shell_integration: input.shell_integration,
+            color_scheme_id: input.color_scheme_id,
+            accent_color: input.accent_color,
             created_at: existing.created_at,
             updated_at: now,
         };
@@ -189,6 +210,10 @@ pub fn create_profile_from_template_inner(
             wsl_distribution: template.wsl_distribution,
             wsl_working_directory: template.wsl_working_directory,
             remote_shell_command: template.remote_shell_command,
+            force_utf8: template.force_utf8,
+            shell_integration: template.shell_integration,
+            color_scheme_id: template.color_scheme_id,
+            accent_color: template.accent_color,
             is_default: false,
             show_in_context_menu: true,
             created_at: now,
@@ -243,6 +268,10 @@ mod tests {
             wsl_distribution: None,
             wsl_working_directory: None,
             remote_shell_command: None,
+            force_utf8: None,
+            shell_integration: None,
+            color_scheme_id: None,
+            accent_color: None,
         }
     }
 

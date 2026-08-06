@@ -52,6 +52,11 @@ impl ConfigDirs {
     pub fn templates_path(&self) -> PathBuf {
         self.root.join("profile-templates.json")
     }
+    /// Imported terminal colour schemes. Built-in schemes are code and live
+    /// in the frontend; this file holds only what the user brought with them.
+    pub fn color_schemes_path(&self) -> PathBuf {
+        self.root.join("color-schemes.json")
+    }
     pub fn ssh_connections_path(&self) -> PathBuf {
         self.root.join("ssh-connections.json")
     }

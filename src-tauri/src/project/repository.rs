@@ -30,6 +30,12 @@ impl ProjectRepository {
         }
     }
 
+    /// Where this repository's file lives. Lets sibling config files be
+    /// placed in the same directory without resolving it a second time.
+    pub fn path(&self) -> &std::path::Path {
+        self.store.path()
+    }
+
     pub fn load(&self) -> AppResult<ProjectCollection> {
         self.store.load(ProjectCollection::default)
     }

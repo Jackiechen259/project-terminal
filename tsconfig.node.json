@@ -6,8 +6,13 @@
     "moduleResolution": "bundler",
     "skipLibCheck": true,
     "composite": true,
+    // Composite projects must emit. Send it somewhere temporary rather than
+    // dropping a .js/.d.ts pair beside every source file it covers.
+    "outDir": "./node_modules/.tmp/tsconfig-node",
     "strict": true,
     "types": ["node"]
   },
-  "include": ["vite.config.ts"]
+  // `src/styles/tokens.ts` is shared: the app imports it, and so does the
+  // Vite plugin that renders the tokens into index.html.
+  "include": ["vite.config.ts", "src/styles/tokens.ts"]
 }

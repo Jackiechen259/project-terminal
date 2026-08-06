@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
+use crate::appearance::ColorSchemeRepository;
 use crate::config_dirs::ConfigDirs;
 use crate::error::AppResult;
 use crate::profile::{ProfileRepository, TemplateRepository};
@@ -19,6 +20,7 @@ pub struct AppState {
     pub profiles: Arc<ProfileRepository>,
     pub templates: Arc<TemplateRepository>,
     pub ssh: Arc<SshConnectionRepository>,
+    pub color_schemes: Arc<ColorSchemeRepository>,
     config_write_lock: Arc<Mutex<()>>,
 }
 
@@ -34,7 +36,8 @@ impl AppState {
             ProfileRepository::new(dirs.profiles_path()),
             TemplateRepository::new(dirs.templates_path()),
             SshConnectionRepository::new(dirs.ssh_connections_path()),
-        );
+        )
+        .with_color_schemes(ColorSchemeRepository::new(dirs.color_schemes_path()));
         Ok((state, dirs))
     }
 
@@ -44,13 +47,26 @@ impl AppState {
         templates: TemplateRepository,
         ssh: SshConnectionRepository,
     ) -> Self {
+        // Colour schemes default to a file beside the others. They are given
+        // separately rather than as a fifth argument because most callers -
+        // every test helper - have no interest in them, and threading an
+        // unused path through all of them would obscure the ones that do.
+        let color_schemes = ColorSchemeRepository::new(
+            projects.path().with_file_name("color-schemes.json"),
+        );
         Self {
             projects: Arc::new(projects),
             profiles: Arc::new(profiles),
             templates: Arc::new(templates),
             ssh: Arc::new(ssh),
+            color_schemes: Arc::new(color_schemes),
             config_write_lock: Arc::new(Mutex::new(())),
         }
+    }
+
+    fn with_color_schemes(mut self, repository: ColorSchemeRepository) -> Self {
+        self.color_schemes = Arc::new(repository);
+        self
     }
 
     /// Serialize a complete configuration mutation, including validation reads

@@ -116,6 +116,55 @@ describe("TerminalPane", () => {
     expect(terminalViewRender).not.toHaveBeenCalled();
   });
 
+  it("marks the focused pane and dims the others, but only in a split", () => {
+    const { container, rerender } = render(
+      <>
+        <TerminalPane
+          tabId="one"
+          visible
+          focused
+          splitActive
+          panePosition=""
+          onSelect={vi.fn()}
+          onRestart={vi.fn()}
+        />
+        <TerminalPane
+          tabId="two"
+          visible
+          focused={false}
+          splitActive
+          panePosition=""
+          onSelect={vi.fn()}
+          onRestart={vi.fn()}
+        />
+      </>,
+    );
+
+    const [first, second] = [...container.children] as HTMLElement[];
+    // The ring reads a profile accent when one is set, falling back to the
+    // theme's primary, so match the utility rather than the resolved colour.
+    expect(first.className).toContain("ring-1");
+    expect(first.className).toContain("--profile-accent");
+    expect(first.querySelector("[aria-hidden]")).toBeNull();
+    expect(second.className).not.toContain("--profile-accent");
+    expect(second.querySelector("[aria-hidden]")).not.toBeNull();
+
+    // A lone terminal is unambiguous; nothing should be ringed or dimmed.
+    rerender(
+      <TerminalPane
+        tabId="one"
+        visible
+        focused
+        panePosition="inset-0"
+        onSelect={vi.fn()}
+        onRestart={vi.fn()}
+      />,
+    );
+    const only = container.firstElementChild as HTMLElement;
+    expect(only.className).not.toContain("--profile-accent");
+    expect(only.querySelector("[aria-hidden]")).toBeNull();
+  });
+
   it("offers an in-place retry when startup fails", () => {
     const onRestart = vi.fn();
     useTerminalStore.getState().updateTab("one", {

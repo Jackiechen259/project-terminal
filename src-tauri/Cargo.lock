@@ -2595,7 +2595,7 @@ dependencies = [
 
 [[package]]
 name = "project-terminal"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -2619,6 +2619,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "windows-sys 0.59.0",
+ "windows-version",
 ]
 
 [[package]]

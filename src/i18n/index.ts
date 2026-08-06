@@ -41,6 +41,85 @@ const zhCN: Record<string, string> = {
   "Ask before closing a terminal that is starting or still running.":
     "关闭正在启动或运行中的终端前进行确认。",
   "Confirm before closing a running terminal": "关闭运行中的终端前确认",
+  "Give a profile its own colors so a production session is never mistaken for a local one.":
+    "为配置指定专属颜色，避免把生产会话误认成本地会话。",
+  "Use the global setting": "使用全局设置",
+  "Accent color": "强调色",
+  Status: "状态",
+  "Exit status of the last command": "上一条命令的退出状态",
+  "Shell behavior": "Shell 行为",
+  "Report the working directory and command results": "上报工作目录与命令结果",
+  "Adds prompt hooks so new tabs can open in the same directory. The hooks wrap your existing prompt; starship, oh-my-posh and powerlevel10k keep working.":
+    "添加提示符钩子，使新标签页可以在同一目录中打开。钩子会包裹你现有的提示符，starship、oh-my-posh 和 powerlevel10k 仍可正常工作。",
+  "Configure the shell for UTF-8 output": "将 shell 配置为 UTF-8 输出",
+  "Prevents mojibake when a tool prints non-ASCII text.":
+    "避免工具输出非 ASCII 文本时出现乱码。",
+  "Runs `chcp 65001`, which can break `more` and batch scripts that print through the OEM code page.":
+    "会执行 `chcp 65001`，可能导致 `more` 以及通过 OEM 代码页输出的批处理脚本失效。",
+  "Hardware rendering is unavailable; using software rendering.":
+    "硬件渲染不可用，正在使用软件渲染。",
+  Renderer: "渲染器",
+  "Terminal renderer": "终端渲染器",
+  "Automatic (hardware when available)": "自动（可用时使用硬件）",
+  "Hardware (WebGL)": "硬件（WebGL）",
+  "Software (DOM)": "软件（DOM）",
+  "Switch to software rendering if the terminal flickers or leaves artifacts.":
+    "如果终端闪烁或出现残影，可切换为软件渲染。",
+  "Paste shortcut": "粘贴快捷键",
+  "Terminal paste shortcut": "终端粘贴快捷键",
+  "Ctrl+Shift+V leaves Ctrl+V to programs such as vim and emacs.":
+    "使用 Ctrl+Shift+V 可将 Ctrl+V 留给 vim、emacs 等程序。",
+  "Text weight": "文字字重",
+  "Terminal text weight": "终端文字字重",
+  "Bold weight": "粗体字重",
+  "Terminal bold weight": "终端粗体字重",
+  "Line height": "行高",
+  "Terminal line height": "终端行高",
+  "Letter spacing": "字间距",
+  "Terminal letter spacing": "终端字间距",
+  Padding: "内边距",
+  "Terminal padding": "终端内边距",
+  Cursor: "光标",
+  "Terminal cursor style": "终端光标样式",
+  Block: "方块",
+  Bar: "竖线",
+  Underline: "下划线",
+  Outline: "空心框",
+  Hidden: "隐藏",
+  "Unfocused cursor": "未聚焦光标",
+  "Terminal unfocused cursor style": "终端未聚焦光标样式",
+  "How the cursor draws in a split pane you are not typing in.":
+    "在你未输入的分屏窗格中，光标的绘制方式。",
+  "Minimum contrast": "最小对比度",
+  "Terminal minimum contrast": "终端最小对比度",
+  "Raise this when a tool prints dim colors that are hard to read.":
+    "当某些工具输出的暗色难以辨认时，可调高此项。",
+  "Match the color scheme": "跟随配色方案",
+  Off: "关闭",
+  "Readable (4.5:1)": "可读（4.5:1）",
+  "High (7:1)": "高（7:1）",
+  "Interface theme": "界面主题",
+  "Applies to the window, sidebars, and dialogs.":
+    "应用于窗口、侧边栏和对话框。",
+  "Terminal colors": "终端配色",
+  "Terminal color scheme": "终端配色方案",
+  "Follow interface theme": "跟随界面主题",
+  "Import from file": "从文件导入",
+  "Color scheme": "配色方案",
+  "Imported {count} color scheme(s).": "已导入 {count} 个配色方案。",
+  "No new Windows Terminal color schemes to import.":
+    "没有可导入的新 Windows Terminal 配色方案。",
+  "Could not import color schemes.": "无法导入配色方案。",
+  "{scheme} by {author}": "{scheme}，作者 {author}",
+  "Delete {scheme}": "删除 {scheme}",
+  "Terminal font": "终端字体",
+  "Applied immediately to every open terminal. Only monospaced fonts installed on this machine are listed.":
+    "立即应用到所有已打开的终端。仅列出本机已安装的等宽字体。",
+  "{font} (bundled)": "{font}（内置）",
+  "Prompt icons available — starship and oh-my-posh will render.":
+    "提示符图标可用——starship 与 oh-my-posh 能正常显示。",
+  "This font has no prompt icons. The third line above will show boxes in starship and oh-my-posh.":
+    "该字体没有提示符图标。在 starship 与 oh-my-posh 中，上方第三行会显示为方块。",
   "Font size": "字体大小",
   "Applied immediately to every open terminal.": "立即应用到所有已打开的终端。",
   "Terminal font size": "终端字体大小",
@@ -104,8 +183,19 @@ const zhCN: Record<string, string> = {
   "No profiles yet.": "暂无配置。",
   "Add a project to create profiles.": "添加项目后即可创建配置。",
   "New profile": "新建配置",
+  "Add from template": "从模板添加",
+  'Choose which profile templates to add to "{project}".':
+    "选择要添加到「{project}」的配置模板。",
+  "Loading templates…": "正在加载模板…",
+  "No profile templates yet. Create one on the Profile templates page first.":
+    "还没有配置模板，请先在「配置模板」页面创建。",
+  "Already added": "已添加",
+  "Add selected": "添加所选",
+  "Adding…": "正在添加…",
+  "Added {count} profile(s) from templates.": "已从模板添加 {count} 个配置。",
+  "Could not add profiles from templates.": "无法从模板添加配置。",
   "Import from Windows Terminal": "从 Windows Terminal 导入",
-  "Importing": "正在导入",
+  Importing: "正在导入",
   "Imported {count} Windows Terminal profile(s).":
     "已导入 {count} 个 Windows Terminal 配置。",
   "No new Windows Terminal profiles to import.":
@@ -316,7 +406,6 @@ const zhCNWorkspace: Record<string, string> = {
   "Session ended — click to restart": "会话已结束——点击重新启动",
   "Failed to start terminal": "启动终端失败",
   "Failed to launch preset terminal": "启动预设终端失败",
-  "Failed to launch from template": "从模板启动终端失败",
   "Failed to load terminal profiles": "加载终端配置失败",
   "Failed to refresh terminal profiles": "刷新终端配置失败",
   "Profile name": "配置名称",
@@ -345,6 +434,8 @@ const zhCNWorkspace: Record<string, string> = {
   "Command to run after opening the shell": "打开 Shell 后运行的命令",
   "Environment variables": "环境变量",
   "One NAME=value pair per line": "每行一个 NAME=value",
+  "One NAME=value pair per line. These are set by the command sent to the host, so they are visible in its process list - do not put secrets here.":
+    "每行一个 NAME=value。它们由发送到主机的命令设置，因此在该主机的进程列表中可见——请勿在此填写密钥。",
   "Show this profile in the + button context menu":
     "在 + 按钮右键菜单中显示此配置",
   "Use this as the default profile for new terminals":

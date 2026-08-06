@@ -66,12 +66,33 @@ impl HostOs {
     }
 }
 
+/// The Windows build number, or `None` off Windows.
+///
+/// xterm.js needs it to model ConPTY correctly: growing the window must push
+/// blank lines rather than pull rows out of scrollback, and scrollback reflow
+/// is only sound once ConPTY started marking wrapped lines (build 21376).
+/// Without a build number xterm cannot tell those two eras apart.
+fn windows_build() -> Option<u32> {
+    #[cfg(windows)]
+    {
+        Some(windows_version::OsVersion::current().build)
+    }
+
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
 /// Serializable capability snapshot consumed by the frontend. Field names are
 /// camelCase to match the TypeScript `PlatformInfo` type.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlatformInfo {
     pub os: HostOs,
+    /// Windows build number, `None` elsewhere. Drives the xterm `windowsPty`
+    /// option; see [`windows_build`].
+    pub windows_build: Option<u32>,
     pub wsl_supported: bool,
     pub available_project_types: Vec<ProjectType>,
     pub available_local_shells: Vec<ShellType>,
@@ -111,6 +132,7 @@ impl PlatformInfo {
         };
         Self {
             os,
+            windows_build: windows_build(),
             wsl_supported,
             available_project_types,
             available_local_shells,
@@ -127,6 +149,16 @@ mod tests {
     fn wsl_supported_only_on_windows() {
         let info = PlatformInfo::current();
         assert_eq!(info.wsl_supported, cfg!(target_os = "windows"));
+    }
+
+    #[test]
+    fn windows_build_is_reported_only_on_windows() {
+        let info = PlatformInfo::current();
+        assert_eq!(info.windows_build.is_some(), cfg!(target_os = "windows"));
+        // A plausible build rules out a zeroed struct being reported as real.
+        if let Some(build) = info.windows_build {
+            assert!(build >= 10_000, "unexpected Windows build {build}");
+        }
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! Terminal session: owns one PTY plus a reader thread, bounded scrollback,
+﻿//! Terminal session: owns one PTY plus a reader thread, bounded scrollback,
 //! and a broadcast event stream.
 //!
 //! Phase 3 supports local shells only. SSH (`ssh.exe`) sessions arrive in
@@ -108,6 +108,10 @@ pub struct SessionSpawn {
     pub args: Vec<String>,
     pub cwd: Option<String>,
     pub env: Vec<(String, String)>,
+    /// Variables to strip from the inherited environment before `env` is
+    /// applied. Setting one to the empty string is not equivalent: a shell or
+    /// library reading it sees a value, just a nonsensical one.
+    pub env_remove: Vec<String>,
     /// When present, hold startup output until this readiness marker arrives.
     pub readiness_marker: Option<String>,
     pub rows: u16,
@@ -143,6 +147,40 @@ struct SessionInner {
     exit_code: Option<i32>,
     status: SessionStatus,
     closing: bool,
+}
+
+/// Backlog, in broadcast events, above which the reader slows down.
+///
+/// Two thirds of the channel. Below it a client is merely behind and will
+/// catch up; above it, it is losing ground and the next overflow drops output.
+const BACKPRESSURE_HIGH_WATER_EVENTS: usize = LIVE_OUTPUT_BUFFER_EVENTS * 2 / 3;
+
+/// How long the reader pauses per read once past the high-water mark.
+const BACKPRESSURE_PAUSE: Duration = Duration::from_millis(1);
+
+/// Should the reader pause before its next read, given `backlog`?
+///
+/// Pure so the policy can be tested without a pty.
+pub(crate) fn should_throttle(backlog: usize) -> bool {
+    backlog > BACKPRESSURE_HIGH_WATER_EVENTS
+}
+
+/// Slow the reader when subscribers are falling behind.
+///
+/// This is real flow control, not a heuristic. The ConPTY pipe has a finite
+/// buffer, so a reader that stops reading blocks the child in `WriteFile` -
+/// exactly what a tty does, and without a protocol change. The alternative
+/// people reach for, sending XOFF, does not work here: ConPTY has no line
+/// discipline, so `^S` goes into the child's *input* and most TUIs read it as
+/// a keystroke.
+///
+/// Deliberately a pause rather than a block. Waiting on a subscriber would let
+/// one stalled tab wedge the shell; a pause only costs throughput, and the
+/// existing lag-and-resync path still catches a client that never recovers.
+fn throttle_for_backlog(backlog: usize) {
+    if should_throttle(backlog) {
+        thread::sleep(BACKPRESSURE_PAUSE);
+    }
 }
 
 fn find_ready_marker(output: &[u8], marker: &[u8]) -> Option<usize> {
@@ -305,8 +343,16 @@ impl TerminalSession {
         // follow the child around and misidentify it. That is not cosmetic:
         // capability detection commonly treats TERM_PROGRAM as authoritative
         // and stops looking at TERM once it is present.
-        cmd.env_remove("TERM_PROGRAM");
-        cmd.env_remove("TERM_PROGRAM_VERSION");
+        //
+        // Identify ourselves rather than leaving it unset. A tool that special-
+        // cases known terminals sees a name it does not recognise and takes its
+        // generic path, which is correct; leaving the variable absent tells it
+        // nothing at all. Never impersonate a name we do not implement.
+        cmd.env("TERM_PROGRAM", "ProjectTerminal");
+        cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+        for key in &spawn.env_remove {
+            cmd.env_remove(key);
+        }
         for (k, v) in &spawn.env {
             cmd.env(k, v);
         }
@@ -377,12 +423,16 @@ impl TerminalSession {
                             Processed::Filtered(filtered) => Bytes::from(filtered),
                         };
                         if !output.is_empty() {
-                            let mut hub = hub_for_reader.lock();
-                            hub.scrollback.push(output.clone());
-                            let _ = hub.sender.send(TerminalEvent::output(
-                                Arc::clone(&sid_for_reader),
-                                output,
-                            ));
+                            let backlog = {
+                                let mut hub = hub_for_reader.lock();
+                                hub.scrollback.push(output.clone());
+                                let _ = hub.sender.send(TerminalEvent::output(
+                                    Arc::clone(&sid_for_reader),
+                                    output,
+                                ));
+                                hub.sender.len()
+                            };
+                            throttle_for_backlog(backlog);
                         }
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -515,7 +565,18 @@ impl TerminalSession {
     }
 
     /// Resize the PTY. Clamps rows/cols to a sensible minimum.
-    pub fn resize(&self, rows: u16, cols: u16) -> AppResult<()> {
+    /// Resize the pty.
+    ///
+    /// `pixel_width`/`pixel_height` describe the grid in pixels and travel in
+    /// the same `TIOCGWINSZ` structure as rows and columns. Image tools read
+    /// them to size their output; `0` is the conventional "unknown".
+    pub fn resize(
+        &self,
+        rows: u16,
+        cols: u16,
+        pixel_width: u16,
+        pixel_height: u16,
+    ) -> AppResult<()> {
         let rows = rows.max(1);
         let cols = cols.max(1);
         let guard = self.inner.lock();
@@ -527,8 +588,8 @@ impl TerminalSession {
             .resize(PtySize {
                 rows,
                 cols,
-                pixel_width: 0,
-                pixel_height: 0,
+                pixel_width,
+                pixel_height,
             })
             .map_err(|e| AppError::PtyCreationFailed(format!("resize: {e}")))?;
         hub.scrollback.resize(rows, cols);
@@ -645,6 +706,7 @@ mod tests {
             args: args.iter().map(|s| s.to_string()).collect(),
             cwd: None,
             env: vec![],
+            env_remove: Vec::new(),
             readiness_marker: None,
             rows: 24,
             cols: 80,
@@ -660,7 +722,7 @@ mod tests {
 
     #[test]
     fn spawn_cmd_write_command_and_read_output() {
-        // §37 Phase 3 acceptance: input/output normal. Spawn cmd.exe, write
+        // Â§37 Phase 3 acceptance: input/output normal. Spawn cmd.exe, write
         // `echo PT_TEST_OK`, read the echo back through the reader thread.
         let (session, mut rx) = make_session("cmd.exe", &["/Q"]);
         // Drain the initial prompt.
@@ -706,7 +768,7 @@ mod tests {
 
     #[test]
     fn ctrl_c_interrupts_long_running_command() {
-        // §37 Phase 3 acceptance: Ctrl+C normal. Start `ping 127.0.0.1 -t`
+        // Â§37 Phase 3 acceptance: Ctrl+C normal. Start `ping 127.0.0.1 -t`
         // (infinite), then send Ctrl+C (\x03) and verify the session is
         // still alive (status Running) - we should be back at the prompt,
         // not exited.
@@ -736,11 +798,11 @@ mod tests {
 
     #[test]
     fn resize_does_not_error() {
-        // §37 Phase 3 acceptance: resize normal.
+        // Â§37 Phase 3 acceptance: resize normal.
         let (session, _rx) = make_session("cmd.exe", &["/Q"]);
         // Resize up then down; both must succeed.
-        session.resize(30, 120).expect("resize up");
-        session.resize(10, 40).expect("resize down");
+        session.resize(30, 120, 960, 660).expect("resize up");
+        session.resize(10, 40, 320, 220).expect("resize down");
         let replay = session
             .attach("resize-history".into(), ScrollbackSnapshotFormat::Replay)
             .snapshot
@@ -860,6 +922,7 @@ mod tests {
             args: vec!["/Q".to_string()],
             cwd: None,
             env: vec![],
+            env_remove: Vec::new(),
             readiness_marker: None,
             rows: 24,
             cols: 80,
@@ -901,6 +964,22 @@ mod tests {
         session.close();
     }
     #[test]
+    fn throttles_only_once_subscribers_are_losing_ground() {
+        // `broadcast::Sender::len` counts events no subscriber has taken yet,
+        // and it is 0 when nobody is attached - a background build must never
+        // be slowed by a tab that is not being watched.
+        assert!(!should_throttle(0));
+        assert!(!should_throttle(1));
+        assert!(!should_throttle(BACKPRESSURE_HIGH_WATER_EVENTS));
+        // Past the mark the next overflow drops output, so trading throughput
+        // for not dropping is the right way round.
+        assert!(should_throttle(BACKPRESSURE_HIGH_WATER_EVENTS + 1));
+        assert!(should_throttle(LIVE_OUTPUT_BUFFER_EVENTS));
+        // And it leaves headroom rather than waiting for the channel to fill.
+        assert!(BACKPRESSURE_HIGH_WATER_EVENTS < LIVE_OUTPUT_BUFFER_EVENTS);
+    }
+
+    #[test]
     fn powershell_ready_handshake_filters_marker_and_marks_session_running() {
         let session = TerminalSession::spawn(SessionSpawn {
             session_id: "powershell-ready-session".to_string(),
@@ -913,6 +992,7 @@ mod tests {
                 "PROJECT_TERMINAL_READY".to_string(),
                 "__PROJECT_TERMINAL_READY_powershell__".to_string(),
             )],
+            env_remove: Vec::new(),
             readiness_marker: None,
             rows: 24,
             cols: 80,

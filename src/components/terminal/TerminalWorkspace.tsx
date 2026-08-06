@@ -55,7 +55,6 @@ import { getProfileTemplateIcon } from "@/lib/profileTemplateIcons";
 import {
   environmentService,
   profileService,
-  templateService,
   terminalService,
   type ProfileInput,
 } from "@/services";
@@ -65,7 +64,6 @@ import { useTemplateStore } from "@/stores/templateStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { cn } from "@/lib/utils";
 import type {
-  ProfileTemplate,
   Project,
   TerminalProfile,
   TerminalSplitDirection,
@@ -516,53 +514,6 @@ export function TerminalWorkspace() {
     [activeProjectId, profiles, projects, registerTab, t],
   );
 
-  // Quick-launch from a saved template. Reuse a same-name project profile so
-  // repeated launches do not accumulate duplicate profiles.
-  const handleLaunchFromTemplate = useCallback(
-    async (template: ProfileTemplate): Promise<string | null> => {
-      if (!activeProjectId) return null;
-      setError(null);
-      try {
-        const existing = findProfileByName(profiles, template.name);
-        const profile =
-          existing ??
-          (await templateService.createFromTemplate(
-            template.id,
-            activeProjectId,
-            template.name,
-          ));
-        if (!existing) setProfiles((prev) => [...prev, profile]);
-        const sessionId = await terminalService.create({
-          projectId: activeProjectId,
-          profileId: profile.id,
-          rows: 24,
-          cols: 80,
-          scrollbackMegabytes:
-            useSettingsStore.getState().terminalScrollbackMegabytes,
-        });
-        const tab: TerminalTab = {
-          id: crypto.randomUUID(),
-          sessionId,
-          projectId: activeProjectId,
-          profileId: profile.id,
-          defaultTitle: profile.name,
-          title: profile.name,
-          cwd: "",
-          status: "running",
-          createdAt: Date.now(),
-          lastActivatedAt: Date.now(),
-        };
-        registerTab(tab);
-        return tab.id;
-      } catch (e) {
-        const err = e as { message?: string };
-        setError(err.message ?? t("Failed to launch from template"));
-        return null;
-      }
-    },
-    [activeProjectId, profiles, registerTab, t],
-  );
-
   async function handleRestart(tabId: string) {
     const oldTab = tabsById[tabId];
     if (!oldTab) return;
@@ -849,11 +800,21 @@ export function TerminalWorkspace() {
   const renderTerminalTab = (id: string) => {
     const tab = tabsById[id];
     if (!tab) return null;
+    // Set once here; the underline below and the focused-pane ring in
+    // TerminalPane both read it, so neither needs to know about profiles.
+    const accent = profiles.find(
+      (profile) => profile.id === tab.profileId,
+    )?.accentColor;
     return (
       <button
         key={id}
         type="button"
         role="tab"
+        style={
+          accent
+            ? ({ "--profile-accent": accent } as React.CSSProperties)
+            : undefined
+        }
         data-terminal-tab-id={id}
         aria-selected={id === activeTabId}
         data-active={id === activeTabId}
@@ -872,7 +833,9 @@ export function TerminalWorkspace() {
         className={cn(
           "group relative flex shrink-0 cursor-default items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground data-[dragging=true]:opacity-50",
           id === activeTabId &&
-            "bg-accent text-accent-foreground after:pointer-events-none after:absolute after:inset-x-1.5 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary",
+            // The underline takes the profile's accent when it has one, so a
+            // production tab is identifiable without reading its label.
+            "bg-accent text-accent-foreground after:pointer-events-none after:absolute after:inset-x-1.5 after:bottom-0 after:h-0.5 after:rounded-full after:bg-[color:var(--profile-accent,hsl(var(--primary)))]",
         )}
         onContextMenu={(event) => {
           event.preventDefault();
@@ -971,9 +934,9 @@ export function TerminalWorkspace() {
     );
 
     // Quick-launch sources are ordered by priority and claimed by normalized
-    // name. A materialized profile wins over templates, built-ins and Conda;
-    // saved templates then win over same-name built-ins so customizations
-    // apply.
+    // name. A materialized profile wins over built-ins and Conda. Saved
+    // templates are deliberately absent: they are added to a project from
+    // Settings › Terminal profiles, not launched implicitly from here.
     const claimedQuickLaunchNames = new Set(
       profiles.map((profile) => normalizedProfileName(profile.name)),
     );
@@ -985,13 +948,6 @@ export function TerminalWorkspace() {
       quickLaunchItems.push(item);
     };
 
-    for (const template of templateList) {
-      addQuickLaunchItem(template.name, {
-        label: template.name,
-        icon: getProfileTemplateIcon(template.icon),
-        onSelect: () => void handleLaunchFromTemplate(template),
-      });
-    }
     for (const preset of BUILT_IN_PROFILE_PRESETS) {
       addQuickLaunchItem(preset.name, {
         label: preset.name,
@@ -1036,7 +992,6 @@ export function TerminalWorkspace() {
     activeProjectId,
     condaEnvs,
     contextMenuProfiles,
-    handleLaunchFromTemplate,
     handleNewTerminal,
     handleQuickLaunch,
     profiles,
@@ -1238,6 +1193,9 @@ export function TerminalWorkspace() {
                       ? focusedSplitPane?.paneId === pane?.paneId
                       : tab.id === activeTabId
                   }
+                  // Only a split shows more than one terminal at a time, so
+                  // only a split needs to say which one has the keyboard.
+                  splitActive={isSplitPane}
                   panePosition={pane ? "" : "inset-0"}
                   style={pane?.style}
                   onSelect={selectTerminalPane}
@@ -1265,7 +1223,10 @@ export function TerminalWorkspace() {
                   aria-orientation={horizontal ? "vertical" : "horizontal"}
                   aria-valuenow={Math.round(split.ratio * 100)}
                   className={cn(
-                    "absolute z-20 bg-border/80 transition-colors hover:bg-primary",
+                    // A 1px line is hard to grab, so the hit area is widened
+                    // with a transparent pseudo-element rather than by drawing
+                    // a thicker separator.
+                    "absolute z-20 bg-border/80 transition-colors duration-100 hover:bg-primary/70",
                     horizontal
                       ? "-ml-0.5 w-1 cursor-col-resize"
                       : "-mt-0.5 h-1 cursor-row-resize",

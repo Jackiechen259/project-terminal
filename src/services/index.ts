@@ -99,6 +99,12 @@ export interface ProfileInput {
   wslDistribution?: string;
   wslWorkingDirectory?: string;
   remoteShellCommand?: string;
+  forceUtf8?: boolean;
+  shellIntegration?: boolean;
+  /** Terminal colour scheme for this profile, overriding the global choice. */
+  colorSchemeId?: string;
+  /** Tab and focused-pane accent, `#rrggbb`. */
+  accentColor?: string;
   isDefault: boolean;
   showInContextMenu: boolean;
 }
@@ -137,6 +143,62 @@ export interface WindowsTerminalScanResult {
   sourceFiles: string[];
 }
 
+/**
+ * A colour scheme the user imported, as stored by the backend.
+ *
+ * Flat rather than an xterm `ITheme` because that is the shape both Windows
+ * Terminal and the on-disk file use; `toTerminalColorScheme` reshapes it.
+ */
+export interface StoredColorScheme {
+  id: string;
+  name: string;
+  background: string;
+  foreground: string;
+  cursor: string;
+  cursorAccent?: string;
+  selectionBackground?: string;
+  black: string;
+  red: string;
+  green: string;
+  yellow: string;
+  blue: string;
+  magenta: string;
+  cyan: string;
+  white: string;
+  brightBlack: string;
+  brightRed: string;
+  brightGreen: string;
+  brightYellow: string;
+  brightBlue: string;
+  brightMagenta: string;
+  brightCyan: string;
+  brightWhite: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WindowsTerminalSchemeCandidate {
+  key: string;
+  name: string;
+  background: string;
+  foreground: string;
+  /** The sixteen ANSI colours in order, for the picker's swatch strip. */
+  ansi: string[];
+  alreadyExists: boolean;
+}
+
+export interface WindowsTerminalSchemeScanResult {
+  candidates: WindowsTerminalSchemeCandidate[];
+  skippedCount: number;
+  sourceFiles: string[];
+}
+
+export interface WindowsTerminalSchemeImportResult {
+  imported: StoredColorScheme[];
+  skippedCount: number;
+  sourceFiles: string[];
+}
+
 export interface TemplateInput {
   id?: string;
   name: string;
@@ -154,6 +216,12 @@ export interface TemplateInput {
   wslDistribution?: string;
   wslWorkingDirectory?: string;
   remoteShellCommand?: string;
+  forceUtf8?: boolean;
+  shellIntegration?: boolean;
+  /** Terminal colour scheme for this profile, overriding the global choice. */
+  colorSchemeId?: string;
+  /** Tab and focused-pane accent, `#rrggbb`. */
+  accentColor?: string;
 }
 
 export interface SshConnectionInput {
@@ -328,6 +396,32 @@ export interface DetectedPythonEnvironment {
   kind: "venv";
 }
 
+/**
+ * Colour schemes the user imported. Built-in schemes are frontend code
+ * (`@/lib/terminalColorSchemes`) and never cross this boundary.
+ */
+export const colorSchemeService = {
+  list: () =>
+    invokeOrThrow<ListResponse<StoredColorScheme>>("list_color_schemes").then(
+      (r) => r.items,
+    ),
+  delete: (id: string) => invokeOrThrow<void>("delete_color_scheme", { id }),
+  importFromFile: (path: string) =>
+    invokeOrThrow<ListResponse<StoredColorScheme>>(
+      "import_color_schemes_from_file",
+      { path },
+    ).then((r) => r.items),
+  scanWindowsTerminal: () =>
+    invokeOrThrow<WindowsTerminalSchemeScanResult>(
+      "scan_windows_terminal_color_schemes",
+    ),
+  importWindowsTerminal: (keys: string[]) =>
+    invokeOrThrow<WindowsTerminalSchemeImportResult>(
+      "import_windows_terminal_color_schemes",
+      { keys },
+    ),
+};
+
 export const templateService = {
   list: () =>
     invokeOrThrow<ListResponse<ProfileTemplate>>(TEMPLATE_CMD.list).then(
@@ -426,13 +520,37 @@ export const terminalService = {
     invokeOrThrow<SessionInfo>("session_get", { sessionId }),
   write: (sessionId: string, data: string) =>
     invokeOrThrow<void>("write_terminal", { sessionId, data }),
-  resize: (sessionId: string, rows: number, cols: number) =>
-    invokeOrThrow<void>("resize_terminal", { sessionId, rows, cols }),
+  // xterm's `onBinary` payload is not text; it must not be UTF-8 encoded.
+  writeBinary: (sessionId: string, data: Uint8Array) =>
+    invokeOrThrow<void>("write_terminal_binary", {
+      sessionId,
+      data: Array.from(data),
+    }),
+  resize: (
+    sessionId: string,
+    rows: number,
+    cols: number,
+    pixelWidth = 0,
+    pixelHeight = 0,
+  ) =>
+    invokeOrThrow<void>("resize_terminal", {
+      sessionId,
+      rows,
+      cols,
+      pixelWidth,
+      pixelHeight,
+    }),
   close: (sessionId: string) =>
     invokeOrThrow<void>("close_terminal", { sessionId }),
   restart: (sessionId: string): Promise<string> =>
     invokeOrThrow<string>("restart_terminal", { sessionId }),
   decodeBase64,
+  /**
+   * Open a link from terminal output in the user's browser. The backend
+   * re-validates the scheme; never navigate the WebView to it.
+   */
+  openExternalUrl: (url: string) =>
+    invokeOrThrow<void>("open_external_url", { url }),
 };
 
 export interface DetectedCondaEnvironment {

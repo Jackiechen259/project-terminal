@@ -177,7 +177,7 @@ Rust 应用后端
 
 桌面端与手机远程网页终端都能渲染通过 Sixel 与 iTerm (IIP) 协议输出的内嵌图片。
 
-命令行工具仅凭 `TERM` 的取值来判断自己能否输出图片，因此 PowerShell 与 CMD 会话使用 `TERM=xterm-sixel` 启动。Git Bash、WSL 与 SSH 会话保持 `TERM=xterm-256color`：`xterm-sixel` 没有对应的 terminfo 条目，未知终端类型会让对端的 `vim`、`less` 等工具报错。若在 PowerShell 标签页里手动执行 `wsl` 或 `ssh`，sixel 取值会一并传过去；在配置 (Profile) 的环境变量中设置 `TERM` 即可覆盖。
+命令行工具仅凭 `TERM` 的取值来判断自己能否输出图片，因此 PowerShell 与 CMD 会话使用 `TERM=xterm-sixel` 启动。任何现成的 terminfo 数据库都不包含这个名字，所以这类会话同时通过 `TERMINFO` 携带它的已编译条目：ncurses 6.3 及以上会直接从该变量读取终端描述，从而让 shell 中启动的、链接 ncurses 的工具正常工作——否则 Git for Windows 的 `less` 会报 `'xterm-sixel': unknown terminal type.`，并连带让 `git branch`、`git log`、`git diff` 失败。Git Bash、WSL 与 SSH 会话保持 `TERM=xterm-256color`：这个条目无法随 `TERM` 一起送到另一台主机上。若在 PowerShell 标签页里手动执行 `wsl` 或 `ssh`，sixel 取值会一并传过去；在配置 (Profile) 的环境变量中设置 `TERM` 即可覆盖。
 
 ### 项目标签页组 (Project Tab Groups)
 
@@ -186,6 +186,8 @@ Rust 应用后端
 ### 终端配置 (Profiles)
 
 Profile 作为项目的一等资源进行存储。Rust 后端会根据已保存的配置自动解析可执行文件、命令行参数、工作目录、开发环境激活脚本、启动命令以及环境变量。
+
+配置模板是与项目无关的预设。使用时在「设置 › 终端配置 › 从模板添加」中把模板添加到项目，模板内容会复制成该项目自己的终端配置。模板不会直接出现在 + 号菜单中，因此项目的配置列表始终就是它能启动的全部内容。
 
 在 Windows 上，可以从终端配置页面导入 Stable、Preview、Canary 或非商店版 Windows Terminal 中的可见配置。导入时会先列出扫描到的配置，只导入你勾选的项；所选本地项目中已存在相同启动配置的条目会标记为已导入且无法再次勾选。配置模板页面提供同样的选择界面，导入后生成与项目无关的配置模板。
 

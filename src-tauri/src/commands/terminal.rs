@@ -1,9 +1,9 @@
-//! Terminal Tauri commands.
+﻿//! Terminal Tauri commands.
 //!
-//! Per plan §12.3: `create_terminal`, `write_terminal`, `resize_terminal`,
+//! Per plan Â§12.3: `create_terminal`, `write_terminal`, `resize_terminal`,
 //! `close_terminal`, `restart_terminal`.
 //!
-//! Per plan §12 (security): the frontend only submits `projectId` and
+//! Per plan Â§12 (security): the frontend only submits `projectId` and
 //! `profileId` (plus dimensions). The backend resolves the project, profile,
 //! shell executable, cwd, env vars, and activation commands. The frontend
 //! never controls the executable path or arguments directly.
@@ -54,6 +54,17 @@ pub struct CreateTerminalRequest {
 struct SessionMeta {
     project_id: String,
     profile_id: String,
+    /// The grid the session was last resized to.
+    ///
+    /// Restart has to reproduce it. Spawning at 80x24 and waiting for the
+    /// frontend's first resize is not just a flicker: the readiness handshake
+    /// and the profile's startup commands run in between, and a long generated
+    /// command wrapped at 80 columns is exactly what makes PSReadLine repaint
+    /// fragments into the terminal.
+    rows: u16,
+    cols: u16,
+    /// Attach-history budget the session was created with.
+    scrollback_megabytes: Option<u8>,
 }
 
 pub struct TerminalState {
@@ -92,14 +103,26 @@ impl TerminalState {
         }
     }
 
-    fn remember(&self, session_id: &str, project_id: &str, profile_id: &str) {
+    fn remember(&self, session_id: &str, request: &CreateTerminalRequest) {
         self.meta.lock().insert(
             session_id.to_string(),
             SessionMeta {
-                project_id: project_id.to_string(),
-                profile_id: profile_id.to_string(),
+                project_id: request.project_id.clone(),
+                profile_id: request.profile_id.clone(),
+                rows: request.rows.max(1),
+                cols: request.cols.max(1),
+                scrollback_megabytes: request.scrollback_megabytes,
             },
         );
+    }
+
+    /// Record the grid a live session was resized to, so a later restart can
+    /// spawn straight into it.
+    fn remember_size(&self, session_id: &str, rows: u16, cols: u16) {
+        if let Some(meta) = self.meta.lock().get_mut(session_id) {
+            meta.rows = rows.max(1);
+            meta.cols = cols.max(1);
+        }
     }
 
     fn forget(&self, session_id: &str) {
@@ -124,11 +147,18 @@ impl TerminalState {
     }
 
     #[allow(dead_code)]
-    fn meta_for(&self, session_id: &str) -> Option<(String, String)> {
+    /// The create request that would reproduce a session as it stands now.
+    fn meta_for(&self, session_id: &str) -> Option<CreateTerminalRequest> {
         self.meta
             .lock()
             .get(session_id)
-            .map(|m| (m.project_id.clone(), m.profile_id.clone()))
+            .map(|m| CreateTerminalRequest {
+                project_id: m.project_id.clone(),
+                profile_id: m.profile_id.clone(),
+                rows: m.rows,
+                cols: m.cols,
+                scrollback_megabytes: m.scrollback_megabytes,
+            })
     }
 }
 
@@ -229,16 +259,26 @@ pub(crate) fn build_session_spawn(
     // Env vars from the profile, plus internal markers. TERM goes first so a
     // profile that pins its own value overrides the resolved one.
     let mut env: Vec<(String, String)> = Vec::new();
-    env.push((
-        "TERM".into(),
-        crate::terminal::resolve_term(project.project_type, profile.shell_type).into(),
+    env.extend(crate::terminal::resolve_term_env(
+        project.project_type,
+        profile.shell_type,
     ));
-    if project.project_type == crate::project::ProjectType::Local {
-        if let Some(vars) = &profile.environment_variables {
-            for (k, v) in vars {
-                env.push((k.clone(), v.clone()));
-            }
+    if profile.shell_type == crate::profile::ShellType::GitBash {
+        env.extend(crate::terminal::git_bash_login_environment(&program));
+    }
+    if let Some(vars) = &profile.environment_variables {
+        for (k, v) in vars {
+            env.push((k.clone(), v.clone()));
         }
+    }
+    if let Some(path) = shell_integration_script_path(&profile)? {
+        env.push((
+            crate::terminal::shell_integration::SCRIPT_PATH_ENV.to_string(),
+            path,
+        ));
+    }
+    if let Some(wslenv) = wslenv_for_session(project.project_type, &env) {
+        env.push(("WSLENV".into(), wslenv));
     }
     env.push(("PROJECT_TERMINAL_PROJECT_ID".into(), project.id.clone()));
     env.push(("PROJECT_TERMINAL_PROFILE_ID".into(), profile.id.clone()));
@@ -258,6 +298,10 @@ pub(crate) fn build_session_spawn(
             args,
             cwd,
             env,
+            env_remove: crate::terminal::resolve_term_env_remove(
+                project.project_type,
+                profile.shell_type,
+            ),
             // `wsl.exe` does not reliably round-trip an injected readiness
             // command through every Windows PTY implementation. Let WSL
             // stream its prompt directly instead of hiding all output while
@@ -273,6 +317,68 @@ pub(crate) fn build_session_spawn(
         project_type,
         profile,
     ))
+}
+
+/// Write this profile's shell-integration script to disk and return its path.
+///
+/// A file rather than typed input: the scripts define multi-line functions,
+/// and typing one at an interactive prompt makes PSReadLine repaint wrapped
+/// fragments into the terminal. The shell sources it with a single short line
+/// that the readiness handshake then swallows.
+///
+/// Returns `None` when the profile has not opted in, or when the shell has no
+/// prompt hook to attach to.
+fn shell_integration_script_path(
+    profile: &crate::profile::TerminalProfile,
+) -> AppResult<Option<String>> {
+    use std::io::Write;
+
+    if profile.shell_integration != Some(true) {
+        return Ok(None);
+    }
+    let Some(script) = crate::terminal::shell_integration::integration_script(profile.shell_type)
+    else {
+        return Ok(None);
+    };
+
+    // Kept out of the session directory and named per profile so repeated
+    // launches reuse one file rather than filling the temp directory.
+    let path = std::env::temp_dir().join(format!("project-terminal-si-{}", profile.id));
+    let mut file = std::fs::File::create(&path)?;
+    file.write_all(script.as_bytes())?;
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
+/// Decide which of the variables we are about to set should follow a
+/// `wsl.exe` child into its distribution.
+///
+/// Two cases need it, and neither works without `WSLENV`:
+///
+/// - A WSL project's shell is `wsl.exe`, so a profile's environment variables
+///   never reach the user's shell at all without being named here.
+/// - A local PowerShell session announces `TERM=xterm-sixel` together with the
+///   compiled entry that defines it. Typing `wsl` in that tab carries `TERM`
+///   across on its own; carrying `TERMINFO` too is what stops the Linux side
+///   failing with `'xterm-sixel': unknown terminal type`.
+///
+/// Internal markers are deliberately left out - nothing inside the
+/// distribution reads them.
+fn wslenv_for_session(
+    project_type: crate::project::ProjectType,
+    env: &[(String, String)],
+) -> Option<String> {
+    use crate::project::ProjectType;
+
+    if !matches!(project_type, ProjectType::Local | ProjectType::Wsl) {
+        return None;
+    }
+    let names: Vec<&str> = env
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .filter(|name| !name.starts_with("PROJECT_TERMINAL"))
+        .filter(|name| !name.eq_ignore_ascii_case("WSLENV"))
+        .collect();
+    crate::terminal::wsl::merge_wslenv(std::env::var("WSLENV").ok().as_deref(), names)
 }
 
 /// Escape a remote working-directory path for use inside `cd --`, preserving
@@ -295,11 +401,11 @@ fn escape_remote_cd_path(remote_path: &str) -> Option<String> {
     if after_tilde.is_empty() {
         return None; // bare "~", already handled above
     }
-    // ~/rest — keep the slash unquoted so tilde expansion fires.
+    // ~/rest â€” keep the slash unquoted so tilde expansion fires.
     if let Some(rest) = after_tilde.strip_prefix('/') {
         return Some(format!("~/{}", escape_remote_posix_argument(rest)));
     }
-    // ~user or ~user/rest — split at the first slash.
+    // ~user or ~user/rest â€” split at the first slash.
     match after_tilde.find('/') {
         Some(slash_pos) => {
             let user = &after_tilde[..slash_pos];
@@ -364,32 +470,48 @@ fn remote_start_command(
     )))
 }
 
-fn wait_for_interactive_shell(
-    manager: &TerminalManager,
+/// The command whose output proves the shell is interactive.
+///
+/// Pure, so what the shell is actually told can be asserted without a PTY.
+fn readiness_command(
     profile: &crate::profile::TerminalProfile,
     session_id: &str,
-) -> AppResult<()> {
+) -> AppResult<String> {
     let marker = format!("__PROJECT_TERMINAL_READY_{session_id}__");
+    // Configuring the encoding rides along with the handshake rather than
+    // running after it. Both are typed into the PTY and both echo, and the
+    // readiness watcher discards every byte up to the marker's own line - so
+    // anything folded in here is invisible, and anything sent afterwards is
+    // not. Sent afterwards, this appeared at the top of every new terminal.
+    let utf8 = utf8_preamble_for(profile);
     let command = match profile.shell_type {
-        // Keep this command short. A long, generated command makes
-        // PSReadLine repaint wrapped fragments into the terminal before the
-        // handshake can filter them.
         crate::profile::ShellType::Powershell => {
             // Clear the bootstrap prompt after the marker is emitted. Some
             // PSReadLine versions paint that prompt before the PTY watcher is
             // armed; clearing here guarantees a new terminal opens with only
             // the final interactive prompt.
-            shell_command_line(
-                profile.shell_type,
-                "echo \"[$env:PROJECT_TERMINAL_READY]\"; Clear-Host",
-            )
+            //
+            // Length is not a constraint the way it looks: PSReadLine does
+            // repaint wrapped fragments, but they arrive before the marker
+            // and the watcher drops them with everything else.
+            let mut parts = Vec::new();
+            parts.extend(utf8);
+            parts.push("echo \"[$env:PROJECT_TERMINAL_READY]\"");
+            parts.push("Clear-Host");
+            shell_command_line(profile.shell_type, &parts.join("; "))
         }
         crate::profile::ShellType::Cmd => {
             let encoded_marker = marker
                 .chars()
                 .map(|character| format!("^{character}"))
                 .collect::<String>();
-            format!("echo [{encoded_marker}]\r\n")
+            // `^`-escaping keeps the raw marker out of the command echo, so
+            // the watcher matches the output rather than the echo.
+            let echo = format!("echo [{encoded_marker}]");
+            match utf8 {
+                Some(preamble) => format!("{preamble} & {echo}\r\n"),
+                None => format!("{echo}\r\n"),
+            }
         }
         crate::profile::ShellType::GitBash
         | crate::profile::ShellType::Wsl
@@ -414,6 +536,16 @@ fn wait_for_interactive_shell(
             )))
         }
     };
+    Ok(command)
+}
+
+fn wait_for_interactive_shell(
+    manager: &TerminalManager,
+    profile: &crate::profile::TerminalProfile,
+    session_id: &str,
+) -> AppResult<()> {
+    let marker = format!("__PROJECT_TERMINAL_READY_{session_id}__");
+    let command = readiness_command(profile, session_id)?;
 
     manager.wait_for_ready(
         session_id,
@@ -468,13 +600,57 @@ fn normalize_initialization_script(shell_type: crate::profile::ShellType, script
     script.replace("\r\n", "\r").replace('\n', "\r")
 }
 
+/// The command that configures this profile's shell for UTF-8 output, if it
+/// wants one.
+///
+/// Folded into the readiness handshake by [`wait_for_interactive_shell`]
+/// rather than written after it, so its echo is discarded along with the rest
+/// of the handshake. It also has to precede environment activation: a
+/// `conda activate` banner printed before the encoding is set is mojibake
+/// nobody can explain afterwards.
+fn utf8_preamble_for(profile: &crate::profile::TerminalProfile) -> Option<&'static str> {
+    let wanted = profile
+        .force_utf8
+        .unwrap_or_else(|| crate::terminal::forces_utf8_by_default(profile.shell_type));
+    wanted
+        .then(|| crate::terminal::utf8_preamble(profile.shell_type))
+        .flatten()
+}
+
+/// Source the shell-integration script, if the profile asked for it.
+///
+/// Runs after the shell is interactive, which is what makes the wrapping work:
+/// the user's `$PROFILE`, `.bashrc` or `config.fish` has already installed
+/// starship or oh-my-posh, so these hooks wrap that prompt rather than being
+/// wrapped by it.
+fn apply_shell_integration(
+    manager: &TerminalManager,
+    profile: &crate::profile::TerminalProfile,
+    session_id: &str,
+) {
+    if profile.shell_integration != Some(true) {
+        return;
+    }
+    let Some(command) = crate::terminal::shell_integration::source_command(profile.shell_type)
+    else {
+        return;
+    };
+    // A shell that cannot source it still works; it just does not report.
+    let _ = manager.write(
+        session_id,
+        shell_command_line(profile.shell_type, command).as_bytes(),
+    );
+}
+
 fn execute_startup_commands(
     manager: &TerminalManager,
     profile: &crate::profile::TerminalProfile,
     session_id: &str,
 ) -> AppResult<()> {
+    apply_shell_integration(manager, profile, session_id);
+
     // Phase 3.6/3.7: Environment activation is evaluated and pushed first.
-    // Plan §20.8 / §22: if activation generation fails, we MUST retain the
+    // Plan Â§20.8 / Â§22: if activation generation fails, we MUST retain the
     // shell so the user can manually inspect or fix it.
     match crate::terminal::build_activation_script(profile) {
         Ok(activation) => {
@@ -511,7 +687,7 @@ fn execute_startup_commands(
         }
     }
 
-    // Per plan §22 (Wait until interactive shell is available): portable-pty
+    // Per plan Â§22 (Wait until interactive shell is available): portable-pty
     // buffers writes until the shell reads them. A true prompt-sync handshake
     // (waiting for the shell's PS1 or native ready marker) is a complex
     // feature that we defer out of MVP scope. We write the commands to the PTY
@@ -617,7 +793,7 @@ pub async fn create_terminal_inner(
     })
     .await?;
 
-    terminal.remember(&id, &request.project_id, &request.profile_id);
+    terminal.remember(&id, &request);
     Ok(id)
 }
 
@@ -632,14 +808,40 @@ pub fn write_terminal(
     terminal.manager.write(&session_id, data.as_bytes())
 }
 
+/// Byte-transparent counterpart of [`write_terminal`].
+///
+/// xterm.js splits terminal input across two events: `onData` carries UTF-8
+/// text, while `onBinary` carries bytes that are not text at all - most
+/// visibly the mouse reports of the default (non-SGR) encoding, whose
+/// coordinates are raw byte values that UTF-8 encoding would corrupt.
+#[tauri::command]
+pub fn write_terminal_binary(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+    data: Vec<u8>,
+) -> AppResult<()> {
+    terminal.manager.write(&session_id, &data)
+}
+
 #[tauri::command]
 pub fn resize_terminal(
     terminal: State<'_, TerminalState>,
     session_id: String,
     rows: u16,
     cols: u16,
+    // Grid size in pixels. Travels in the same `TIOCGWINSZ` structure as rows
+    // and columns; image tools read it to size their output. Optional, and `0`
+    // is the conventional "unknown" - the remote gateway never measures one.
+    pixel_width: Option<u16>,
+    pixel_height: Option<u16>,
 ) -> AppResult<()> {
-    terminal.manager.resize(&session_id, rows, cols)
+    let pixel_width = pixel_width.unwrap_or(0);
+    let pixel_height = pixel_height.unwrap_or(0);
+    terminal
+        .manager
+        .resize(&session_id, rows, cols, pixel_width, pixel_height)?;
+    terminal.remember_size(&session_id, rows, cols);
+    Ok(())
 }
 
 #[tauri::command]
@@ -665,7 +867,9 @@ pub async fn restart_terminal_inner(
     terminal: &TerminalState,
     session_id: &str,
 ) -> AppResult<String> {
-    let (project_id, profile_id) = terminal
+    // Reuse the grid and history budget the session was actually running with,
+    // not a fixed 80x24 the frontend has to correct afterwards.
+    let request = terminal
         .meta_for(session_id)
         .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
     // Close the old session first so we kill its shell before starting a new
@@ -674,13 +878,6 @@ pub async fn restart_terminal_inner(
     terminal.forget(session_id);
 
     let new_id = new_id("session");
-    let request = CreateTerminalRequest {
-        project_id: project_id.clone(),
-        profile_id: profile_id.clone(),
-        rows: 24,
-        cols: 80,
-        scrollback_megabytes: Some(4),
-    };
     let (spawn, project_type, profile) = build_session_spawn(app, &request, &new_id)?;
     let manager = terminal.manager.clone_handle();
     let id = run_terminal_launch(terminal, move || {
@@ -688,7 +885,7 @@ pub async fn restart_terminal_inner(
     })
     .await?;
 
-    terminal.remember(&id, &project_id, &profile_id);
+    terminal.remember(&id, &request);
     Ok(id)
 }
 
@@ -1081,6 +1278,7 @@ mod tests {
                 },
                 cwd: None,
                 env: Vec::new(),
+                env_remove: Vec::new(),
                 readiness_marker: None,
                 rows: 24,
                 cols: 80,
@@ -1091,19 +1289,110 @@ mod tests {
         let terminal = TerminalState::new();
         terminal.manager.create(spawn("session-p1", "p1")).unwrap();
         terminal.manager.create(spawn("session-p2", "p2")).unwrap();
-        terminal.remember("session-p1", "p1", "profile-p1");
-        terminal.remember("session-p2", "p2", "profile-p2");
+        terminal.remember("session-p1", &create_request("p1", "profile-p1"));
+        terminal.remember("session-p2", &create_request("p2", "profile-p2"));
 
         terminal.close_project_sessions("p1");
 
         assert!(terminal.manager.get("session-p1").is_err());
         assert!(terminal.meta_for("session-p1").is_none());
         assert!(terminal.manager.get("session-p2").is_ok());
-        assert_eq!(
-            terminal.meta_for("session-p2"),
-            Some(("p2".into(), "profile-p2".into()))
-        );
+        let remaining = terminal.meta_for("session-p2").expect("meta for p2");
+        assert_eq!(remaining.project_id, "p2");
+        assert_eq!(remaining.profile_id, "profile-p2");
         terminal.manager.close_all();
+    }
+
+    fn create_request(project_id: &str, profile_id: &str) -> CreateTerminalRequest {
+        CreateTerminalRequest {
+            project_id: project_id.into(),
+            profile_id: profile_id.into(),
+            rows: 24,
+            cols: 80,
+            scrollback_megabytes: None,
+        }
+    }
+
+    #[test]
+    fn the_utf8_preamble_rides_the_handshake_so_it_never_shows() {
+        // Written after the handshake it echoed at the top of every new
+        // terminal. The readiness watcher discards every byte up to the
+        // marker's own line, so folding it in is what makes it invisible.
+        let powershell = default_powershell_profile("p".into(), "proj".into());
+        let preamble = utf8_preamble_for(&powershell).expect("PowerShell preamble");
+        assert!(preamble.contains("OutputEncoding"));
+
+        let command = readiness_command(&powershell, "session-1").unwrap();
+        assert!(command.starts_with(preamble), "{command}");
+        // Still ahead of the marker, which is what the watcher keys on.
+        assert!(
+            command.find(preamble).unwrap() < command.find("PROJECT_TERMINAL_READY").unwrap(),
+            "{command}"
+        );
+        // And the raw marker never appears in the echoed command itself, or
+        // the watcher would match the echo instead of the output.
+        assert!(!command.contains("__PROJECT_TERMINAL_READY_session-1__"));
+    }
+
+    #[test]
+    fn a_profile_that_declines_utf8_gets_the_bare_handshake() {
+        let mut powershell = default_powershell_profile("p".into(), "proj".into());
+        powershell.force_utf8 = Some(false);
+        assert_eq!(utf8_preamble_for(&powershell), None);
+
+        let command = readiness_command(&powershell, "session-1").unwrap();
+        assert!(command.starts_with("echo"), "{command}");
+        assert!(!command.contains("OutputEncoding"));
+    }
+
+    #[test]
+    fn cmd_opts_in_to_chcp_and_keeps_it_inside_the_handshake() {
+        // `chcp 65001` breaks `more` and OEM batch scripts, so it is off
+        // unless asked for - and when asked for it must not echo either.
+        let mut cmd = crate::profile::TerminalProfile {
+            shell_type: ShellType::Cmd,
+            ..default_powershell_profile("p".into(), "proj".into())
+        };
+        assert_eq!(utf8_preamble_for(&cmd), None);
+
+        cmd.force_utf8 = Some(true);
+        let command = readiness_command(&cmd, "session-1").unwrap();
+        assert!(command.starts_with("chcp 65001>nul & echo "), "{command}");
+        assert!(!command.contains("__PROJECT_TERMINAL_READY_session-1__"));
+    }
+
+    #[test]
+    fn a_restart_reproduces_the_grid_the_session_was_running_at() {
+        // Spawning at 80x24 and waiting for the frontend to correct it puts
+        // the readiness handshake and the profile's startup commands through
+        // an 80-column PSReadLine, which repaints wrapped fragments into the
+        // terminal.
+        let terminal = TerminalState::new();
+        terminal.remember("session-1", &create_request("p1", "profile-1"));
+
+        terminal.remember_size("session-1", 50, 160);
+
+        let request = terminal.meta_for("session-1").expect("meta");
+        assert_eq!((request.rows, request.cols), (50, 160));
+        assert_eq!(request.project_id, "p1");
+        assert_eq!(request.profile_id, "profile-1");
+    }
+
+    #[test]
+    fn a_restart_keeps_the_scrollback_budget_the_session_was_created_with() {
+        let terminal = TerminalState::new();
+        terminal.remember(
+            "session-1",
+            &CreateTerminalRequest {
+                scrollback_megabytes: Some(16),
+                ..create_request("p1", "profile-1")
+            },
+        );
+
+        assert_eq!(
+            terminal.meta_for("session-1").unwrap().scrollback_megabytes,
+            Some(16)
+        );
     }
 
     fn test_state() -> AppState {
@@ -1199,6 +1488,12 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(term(&spawn), crate::terminal::TERM_SIXEL);
+        // The name it announces is defined for the session, so terminfo
+        // consumers started from the shell can still resolve it.
+        assert!(spawn
+            .env
+            .iter()
+            .any(|(k, v)| k == "TERMINFO" && v == crate::terminal::terminfo_sixel_entry()));
 
         // ...and an explicit profile variable takes it back.
         profile.environment_variables = Some(
@@ -1270,6 +1565,201 @@ mod tests {
         assert_eq!(project_type, ProjectType::Wsl);
         assert_eq!(spawn.program, "wsl.exe");
         assert!(spawn.readiness_marker.is_none());
+    }
+
+    /// Insert a WSL project whose profile carries `vars`, and build its spawn.
+    fn wsl_spawn_with_environment(
+        vars: &[(&str, &str)],
+    ) -> crate::terminal::SessionSpawn {
+        let app = test_state();
+        app.projects
+            .upsert(Project {
+                id: "wsl-project".into(),
+                name: "Ubuntu".into(),
+                project_type: ProjectType::Wsl,
+                local: None,
+                ssh: None,
+                wsl: Some(WslProjectConfig {
+                    distribution: "Ubuntu".into(),
+                    working_directory: None,
+                }),
+                default_profile_id: Some("wsl-profile".into()),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            })
+            .unwrap();
+        let mut profile = default_wsl_profile(
+            "wsl-profile".into(),
+            "wsl-project".into(),
+            "Ubuntu".into(),
+            None,
+        );
+        profile.environment_variables = Some(
+            vars.iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        );
+        app.profiles.upsert(profile).unwrap();
+
+        let request = CreateTerminalRequest {
+            project_id: "wsl-project".into(),
+            profile_id: "wsl-profile".into(),
+            rows: 24,
+            cols: 80,
+            scrollback_megabytes: None,
+        };
+        build_session_spawn(&app, &request, "session-1").unwrap().0
+    }
+
+    #[test]
+    fn wsl_profile_environment_variables_reach_the_distribution() {
+        let spawn = wsl_spawn_with_environment(&[("FOO", "bar")]);
+
+        // Setting the variable is only half of it: `wsl.exe` forwards nothing
+        // that `WSLENV` does not name.
+        assert!(spawn.env.iter().any(|(k, v)| k == "FOO" && v == "bar"));
+        let wslenv = spawn
+            .env
+            .iter()
+            .find(|(k, _)| k == "WSLENV")
+            .map(|(_, v)| v.as_str())
+            .expect("WSLENV should be set for a WSL session");
+        assert!(
+            wslenv.split(':').any(|entry| entry == "FOO"),
+            "WSLENV {wslenv} should carry FOO"
+        );
+        // Internal markers are of no use inside the distribution.
+        assert!(!wslenv.contains("PROJECT_TERMINAL"));
+    }
+
+    #[test]
+    fn local_sixel_session_carries_its_terminfo_entry_into_wsl() {
+        let app = test_state();
+        let _dir = seed_project(&app, "p1");
+        app.profiles
+            .upsert(default_powershell_profile(
+                "profile-1".into(),
+                "p1".into(),
+            ))
+            .unwrap();
+
+        let request = CreateTerminalRequest {
+            project_id: "p1".into(),
+            profile_id: "profile-1".into(),
+            rows: 24,
+            cols: 80,
+            scrollback_megabytes: None,
+        };
+        let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
+
+        // Typing `wsl` in a PowerShell tab hands `TERM=xterm-sixel` to a host
+        // that has never heard of it. Forwarding the entry that defines it is
+        // what keeps `less` and `vim` alive over there.
+        let wslenv = spawn
+            .env
+            .iter()
+            .find(|(k, _)| k == "WSLENV")
+            .map(|(_, v)| v.as_str())
+            .expect("WSLENV should be set for a local session");
+        let entries: Vec<&str> = wslenv.split(':').collect();
+        assert!(entries.contains(&"TERM"), "WSLENV {wslenv} should carry TERM");
+        assert!(
+            entries.contains(&"TERMINFO"),
+            "WSLENV {wslenv} should carry TERMINFO"
+        );
+    }
+
+    #[test]
+    fn ssh_profile_environment_variables_travel_in_the_remote_command() {
+        // Variables set on the local `ssh.exe` process do not cross the wire -
+        // OpenSSH forwards only what `SendEnv` names, and Windows OpenSSH
+        // ships no `SendEnv`. The remote command is the route that works.
+        let mut profile = crate::profile::TerminalProfile {
+            shell_type: ShellType::RemoteBash,
+            ..default_powershell_profile("p".into(), "proj".into())
+        };
+        profile.environment_variables = Some(
+            [("FOO".to_string(), "it's quoted".to_string())]
+                .into_iter()
+                .collect(),
+        );
+
+        let command = remote_start_command(&profile, "/srv/app")
+            .unwrap()
+            .expect("remote command");
+
+        assert!(command.contains("export FOO="), "{command}");
+        assert!(command.contains("cd --"), "{command}");
+    }
+
+    #[test]
+    fn remote_fish_profiles_get_fish_syntax() {
+        let mut profile = crate::profile::TerminalProfile {
+            shell_type: ShellType::RemoteFish,
+            ..default_powershell_profile("p".into(), "proj".into())
+        };
+        profile.environment_variables = Some(
+            [("FOO".to_string(), "bar".to_string())]
+                .into_iter()
+                .collect(),
+        );
+
+        let command = remote_start_command(&profile, "/srv/app")
+            .unwrap()
+            .expect("remote command");
+
+        // `export` is not a fish builtin; emitting it produced a syntax error
+        // before the user's shell ever opened.
+        assert!(command.contains("set -gx FOO"), "{command}");
+        assert!(!command.contains("export FOO"), "{command}");
+    }
+
+    #[test]
+    fn ssh_askpass_environment_wins_over_a_colliding_profile_variable() {
+        // `askpass_environment` is appended last precisely so a profile cannot
+        // redirect the password prompt. `CommandBuilder` is last-write-wins.
+        let app = test_state();
+        let _dir = seed_project(&app, "p1");
+        let mut profile = default_powershell_profile("profile-1".into(), "p1".into());
+        profile.environment_variables = Some(
+            [("SSH_ASKPASS".to_string(), "hijacked".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        app.profiles.upsert(profile).unwrap();
+
+        let request = CreateTerminalRequest {
+            project_id: "p1".into(),
+            profile_id: "profile-1".into(),
+            rows: 24,
+            cols: 80,
+            scrollback_megabytes: None,
+        };
+        let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
+
+        let last_askpass = spawn
+            .env
+            .iter()
+            .filter(|(k, _)| k == "SSH_ASKPASS")
+            .next_back();
+        // No SSH connection here, so the profile value is the only one; the
+        // ordering guarantee is what the assertion below pins.
+        assert_eq!(
+            last_askpass.map(|(_, v)| v.as_str()),
+            Some("hijacked"),
+            "profile variables must be present before the askpass block"
+        );
+        let askpass_index = spawn
+            .env
+            .iter()
+            .position(|(k, _)| k == "SSH_ASKPASS")
+            .unwrap();
+        let marker_index = spawn
+            .env
+            .iter()
+            .position(|(k, _)| k == "PROJECT_TERMINAL_READY")
+            .unwrap();
+        assert!(askpass_index < marker_index);
     }
 
     #[test]
@@ -1347,7 +1837,7 @@ mod tests {
 
     #[test]
     fn escape_remote_cd_path_preserves_tilde_unquoted() {
-        // ~/subpath — tilde and slash unquoted so the shell expands ~.
+        // ~/subpath â€” tilde and slash unquoted so the shell expands ~.
         assert_eq!(
             escape_remote_cd_path("~/projects"),
             Some("~/projects".into())
@@ -1356,7 +1846,7 @@ mod tests {
             escape_remote_cd_path("~/my project"),
             Some("~/'my project'".into())
         );
-        // ~user/subpath — username and slash unquoted.
+        // ~user/subpath â€” username and slash unquoted.
         assert_eq!(
             escape_remote_cd_path("~deploy/app"),
             Some("~deploy/app".into())
@@ -1367,7 +1857,7 @@ mod tests {
         );
         // Bare ~user.
         assert_eq!(escape_remote_cd_path("~deploy"), Some("~deploy".into()));
-        // Normal absolute path — fully escaped as before.
+        // Normal absolute path â€” fully escaped as before.
         assert_eq!(escape_remote_cd_path("/srv/app"), Some("/srv/app".into()));
         assert_eq!(
             escape_remote_cd_path("/srv/my app"),
@@ -1379,7 +1869,7 @@ mod tests {
     fn remote_start_command_skips_cd_for_tilde() {
         let mut profile = default_powershell_profile("profile-1".into(), "p1".into());
         profile.shell_type = ShellType::RemoteBash;
-        // "~" means $HOME, where SSH already starts — no cd needed.
+        // "~" means $HOME, where SSH already starts â€” no cd needed.
         let command = remote_start_command(&profile, "~").unwrap().unwrap();
         assert!(command.starts_with("bash -lc "));
         assert!(!command.contains("cd --"));
@@ -1581,5 +2071,84 @@ mod tests {
             output_str
         );
         let _ = dir;
+    }
+}
+
+#[cfg(test)]
+mod handshake_probe {
+    use super::*;
+    use crate::profile::repository::default_powershell_profile;
+
+    /// Spawn a real PowerShell through the same path a session uses and
+    /// assert the encoding command never reaches the terminal.
+    #[test]
+    fn a_real_powershell_session_shows_no_encoding_command() {
+        if !cfg!(windows) {
+            return;
+        }
+        let manager = TerminalManager::new();
+        let profile = default_powershell_profile("p".into(), "proj".into());
+        let (program, args) = crate::terminal::resolve_local_shell(&profile).unwrap();
+        let session_id = "handshake-probe";
+        let marker = format!("__PROJECT_TERMINAL_READY_{session_id}__");
+        manager
+            .create(crate::terminal::SessionSpawn {
+                session_id: session_id.into(),
+                project_id: "proj".into(),
+                profile_id: "p".into(),
+                program,
+                args,
+                cwd: None,
+                env: vec![("PROJECT_TERMINAL_READY".into(), marker.clone())],
+                env_remove: Vec::new(),
+                readiness_marker: Some(marker.clone()),
+                rows: 24,
+                cols: 80,
+                scrollback_bytes: 1024 * 1024,
+            })
+            .unwrap();
+
+        let visible_now = || {
+            std::thread::sleep(std::time::Duration::from_millis(1200));
+            let (_, subscription) = manager
+                .attach(
+                    session_id,
+                    format!("probe-{}", uuid::Uuid::new_v4()),
+                    crate::terminal::scrollback::ScrollbackSnapshotFormat::Flat,
+                )
+                .unwrap();
+            String::from_utf8_lossy(&subscription.snapshot.bytes).to_string()
+        };
+
+        wait_for_interactive_shell(&manager, &profile, session_id).unwrap();
+        let after_handshake = visible_now();
+
+        // What the fix is worth: sending the same command a moment later -
+        // which is what `execute_startup_commands` used to do - puts it on
+        // screen. Asserting both directions stops this passing for the
+        // trivial reason that PowerShell echoed nothing at all.
+        let preamble = utf8_preamble_for(&profile).unwrap();
+        manager
+            .write(
+                session_id,
+                shell_command_line(profile.shell_type, preamble).as_bytes(),
+            )
+            .unwrap();
+        let after_startup_commands = visible_now();
+        manager.close_all();
+
+        assert!(
+            !after_handshake.contains("OutputEncoding"),
+            "folded into the handshake it still reached the terminal:\n{after_handshake}"
+        );
+        assert!(
+            !after_handshake.contains(&marker),
+            "the readiness marker reached the terminal:\n{after_handshake}"
+        );
+        assert!(
+            after_startup_commands.contains("OutputEncoding"),
+            "sent after the handshake it should be visible, so this test is \
+             actually measuring the handshake:\n{after_startup_commands}"
+        );
     }
 }

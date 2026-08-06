@@ -108,6 +108,14 @@ export interface TerminalProfile {
   wslWorkingDirectory?: string;
 
   remoteShellCommand?: string;
+  /** Configure the shell for UTF-8 output at startup. Undefined = per-shell default. */
+  forceUtf8?: boolean;
+  /** Inject the OSC 7 / OSC 133 prompt hooks. Undefined = off. */
+  shellIntegration?: boolean;
+  /** Terminal colour scheme for this profile, overriding the global choice. */
+  colorSchemeId?: string;
+  /** Tab and focused-pane accent, `#rrggbb`. */
+  accentColor?: string;
 
   isDefault: boolean;
   showInContextMenu: boolean;
@@ -143,6 +151,14 @@ export interface ProfileTemplate {
   wslWorkingDirectory?: string;
 
   remoteShellCommand?: string;
+  /** Configure the shell for UTF-8 output at startup. Undefined = per-shell default. */
+  forceUtf8?: boolean;
+  /** Inject the OSC 7 / OSC 133 prompt hooks. Undefined = off. */
+  shellIntegration?: boolean;
+  /** Terminal colour scheme for this profile, overriding the global choice. */
+  colorSchemeId?: string;
+  /** Tab and focused-pane accent, `#rrggbb`. */
+  accentColor?: string;
 
   createdAt: string;
   updatedAt: string;
@@ -201,10 +217,19 @@ export interface TerminalTab {
   /** Stable profile label used when a program emits a transient window title. */
   defaultTitle: string;
   title: string;
+  /**
+   * Where the shell reported it is, via OSC 7.
+   *
+   * Empty until shell integration is enabled on the profile and the shell
+   * reports - nothing else can know this, because the shell's directory is
+   * not the PTY's.
+   */
   cwd: string;
 
   status: TerminalStatus;
   exitCode?: number;
+  /** Exit status of the last command, via OSC 133 D. Needs integration on. */
+  lastCommandExitCode?: number;
 
   createdAt: number;
   lastActivatedAt: number;
@@ -249,6 +274,11 @@ export type HostOs = "windows" | "linux" | "macos" | "other";
 
 export interface PlatformInfo {
   os: HostOs;
+  /**
+   * Windows build number, `null` elsewhere. xterm needs it to model ConPTY's
+   * resize behaviour; see `resolveWindowsPty`.
+   */
+  windowsBuild: number | null;
   /** True only on Windows. Gates the WSL project type, shell, and picker. */
   wslSupported: boolean;
   /** Project types the picker should offer. WSL is omitted on non-Windows. */

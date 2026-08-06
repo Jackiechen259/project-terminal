@@ -37,6 +37,20 @@ export class TerminalOutputQueue {
   private static readonly DEBOUNCE_MS = 4;
   /** Maximum delay (ms) from the first fragment before a forced flush. */
   private static readonly MAX_WAIT_MS = 16;
+  /**
+   * Buffered bytes that force a flush regardless of the timers.
+   *
+   * Neither timer bounds memory. A process writing faster than the WebView
+   * can schedule a callback - `cat` on a large binary, a build printing at
+   * full tilt - keeps arriving inside the debounce window, and the max-wait
+   * timer only fires when the event loop gets a turn. Without a cap the array
+   * grows for as long as that lasts.
+   *
+   * Sized generously: a full redraw of a large grid is well under this, so a
+   * normal TUI never trips it and never loses the coalescing this class
+   * exists for.
+   */
+  private static readonly MAX_BUFFERED_BYTES = 2 * 1024 * 1024;
 
   constructor(
     private readonly write: TerminalOutputWriter,
@@ -51,6 +65,14 @@ export class TerminalOutputQueue {
     this.chunks.push(data);
     this.byteLength += data.byteLength;
     this.lastSendAt = this.now();
+
+    if (this.byteLength >= TerminalOutputQueue.MAX_BUFFERED_BYTES) {
+      // Hand it to xterm now rather than hold it. Coalescing exists to avoid
+      // rendering intermediate cursor positions; there is no cursor artifact
+      // worth two megabytes of buffered output.
+      this.flush();
+      return;
+    }
 
     // Start the max-wait timer on the first fragment of a new batch.
     if (this.maxWaitHandle === null) {
