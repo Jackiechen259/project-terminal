@@ -38,25 +38,23 @@ export function StatusBar() {
       ?.name;
   }, [profilesByProject, tab]);
 
-  if (!tab) return null;
-
-  const exitCode = tab.lastCommandExitCode;
+  const exitCode = tab?.lastCommandExitCode;
   return (
     <footer
       className="flex h-[22px] shrink-0 items-center gap-3 border-t border-border bg-surface px-3 text-[11px] text-muted-foreground"
       aria-label={t("Status")}
     >
-      {profileName ? (
+      {tab && profileName ? (
         <span className="shrink-0 truncate">{profileName}</span>
       ) : null}
-      {tab.cwd ? (
+      {tab?.cwd ? (
         // Only ever set by OSC 7, so its presence already means the profile
         // opted into shell integration.
         <span className="min-w-0 truncate" title={tab.cwd}>
           {workingDirectoryLabel(tab.cwd)}
         </span>
       ) : null}
-      <span className="ml-auto shrink-0" />
+      {tab ? <span className="ml-auto shrink-0" /> : null}
       {exitCode !== undefined ? (
         <span
           className={cn("shrink-0", exitCode === 0 ? "text-ok" : "text-danger")}
