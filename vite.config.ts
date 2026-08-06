@@ -22,21 +22,40 @@ const THEME_TOKENS_MARKER = "<!--THEME_TOKENS-->";
  * in `@layer base` and there is no ordering subtlety to remember.
  */
 function themeTokensPlugin(): Plugin {
+  let isBuild = false;
   return {
     name: "project-terminal:theme-tokens",
+    configResolved(config) {
+      isBuild = config.command === "build";
+    },
     transformIndexHtml: {
       order: "pre",
       handler(html) {
-        if (!html.includes(THEME_TOKENS_MARKER)) {
+        const block = `<style>\n${renderThemeTokensCss("      ")}\n    </style>`;
+        if (html.includes(THEME_TOKENS_MARKER)) {
+          return html.replace(THEME_TOKENS_MARKER, block);
+        }
+        // Failing the build is right: a bundle whose entry HTML carries no
+        // palette renders as an unstyled black window, and that is not
+        // something to ship.
+        if (isBuild) {
           throw new Error(
             `index.html is missing the ${THEME_TOKENS_MARKER} placeholder; theme tokens have nowhere to go.`,
           );
         }
-        const css = renderThemeTokensCss("      ");
-        return html.replace(
-          THEME_TOKENS_MARKER,
-          `<style>\n${css}\n    </style>`,
+        // In dev it is not. Throwing here makes the dev server serve an error
+        // for the entry document, and a Tauri window with no document is a
+        // black rectangle with no clue in it. Warn and inject anyway.
+        //
+        // `console.warn` rather than the plugin context's `this.warn`: the
+        // object form of `transformIndexHtml` does not bind one, so reaching
+        // for it throws - which is the failure this branch exists to avoid.
+        console.warn(
+          `[theme-tokens] index.html is missing ${THEME_TOKENS_MARKER}; injecting at the end of <head>.`,
         );
+        return html.includes("</head>")
+          ? html.replace("</head>", `${block}\n  </head>`)
+          : block + html;
       },
     },
   };
