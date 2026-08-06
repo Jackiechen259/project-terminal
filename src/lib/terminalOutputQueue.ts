@@ -140,7 +140,7 @@ export class TerminalOutputQueue {
     private readonly now: TerminalOutputClock = () => performance.now(),
   ) {}
 
-  /** Apply a preference, loading or unloading WebGL as needed. */
+  /** Buffer a fragment and let the scanner update the safe cut point. */
   send(data: Uint8Array) {
     if (this.disposed || data.byteLength === 0) return;
 
