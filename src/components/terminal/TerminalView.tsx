@@ -54,17 +54,23 @@ const OVERVIEW_RULER_WIDTH = 10;
  *
  * Image tools read it to decide how large a picture to draw; a pty that
  * reports zero makes them fall back to a fixed guess or refuse. Measured from
- * the rendered rows element rather than the container so it excludes padding
+ * the xterm screen element rather than the container so it excludes padding
  * and the scrollbar, and returns zeroes rather than a guess when the terminal
  * has not been laid out yet - zero already means "unknown" over there.
+ *
+ * Measured from `.xterm-screen`, not `.xterm-rows`: the rows element belongs
+ * to the DOM renderer only, and every terminal here starts on DOM and then
+ * upgrades to WebGL asynchronously, whose renderer disposes the DOM row
+ * container. `.xterm-screen` is created by the core and both renderers keep
+ * it sized, so it stays measurable no matter which renderer is drawing.
  */
-function measureGridPixels(container: HTMLElement, term: Terminal) {
-  const rows = container.querySelector<HTMLElement>(".xterm-rows");
-  if (!rows || !rows.clientWidth || !rows.clientHeight) {
+export function measureGridPixels(container: HTMLElement, term: Terminal) {
+  const screen = container.querySelector<HTMLElement>(".xterm-screen");
+  if (!screen || !screen.clientWidth || !screen.clientHeight) {
     return { width: 0, height: 0 };
   }
-  const cellWidth = rows.clientWidth / Math.max(1, term.cols);
-  const cellHeight = rows.clientHeight / Math.max(1, term.rows);
+  const cellWidth = screen.clientWidth / Math.max(1, term.cols);
+  const cellHeight = screen.clientHeight / Math.max(1, term.rows);
   return {
     width: Math.round(cellWidth * term.cols),
     height: Math.round(cellHeight * term.rows),
@@ -370,7 +376,11 @@ export const TerminalView = memo(function TerminalView({
       // Shrink glyphs whose font outline spills past the cell they occupy in
       // the model - CJK punctuation and roman numerals in a Latin font.
       rescaleOverlappingGlyphs: true,
-      // `clear`/`cls` should push the screen into scrollback rather than eat it.
+      // `clear`/`cls` should push the screen into scrollback rather than eat
+      // it. This only applies to the normal screen buffer: xterm applies the
+      // option unconditionally to whichever buffer is active, but scrolling
+      // the viewport on `ESC[2J` is not what the alternate screen's clear
+      // sequences mean. `onBufferChange` below flips it back off there.
       scrollOnEraseInDisplay: true,
       overviewRuler: { width: OVERVIEW_RULER_WIDTH },
       windowsPty,
@@ -397,6 +407,13 @@ export const TerminalView = memo(function TerminalView({
       }),
     );
     term.open(container);
+    // xterm applies `scrollOnEraseInDisplay` to whichever buffer is active,
+    // with no buffer-type check; scrolling the viewport on the alternate
+    // screen's `ESC[2J` is not what that clear sequence means. Flip the
+    // option off while a full-screen TUI is showing.
+    const scrollOnEraseDisposable = term.buffer.onBufferChange((buffer) => {
+      term.options.scrollOnEraseInDisplay = buffer.type === "normal";
+    });
     // DOM rendering can display the first prompt immediately. The renderer
     // upgrades to WebGL once its separate chunk arrives, and gets it back
     // after the GPU takes the context away.
@@ -698,6 +715,7 @@ export const TerminalView = memo(function TerminalView({
       disposable.dispose();
       binaryDisposable.dispose();
       titleDisposable.dispose();
+      scrollOnEraseDisposable.dispose();
       ro.disconnect();
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
       if (viewportSyncFrame !== null) {
