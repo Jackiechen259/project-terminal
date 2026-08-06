@@ -107,6 +107,12 @@ impl<T: Clone + DeserializeOwned + Serialize> CachedJsonFile<T> {
         }
     }
 
+    /// The file this store is backed by. Used to place a sibling config file
+    /// in the same directory without re-resolving it.
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
     /// Return the parsed contents, reading from disk only when the file has
     /// changed since it was last cached.
     pub fn load(&self, default: impl FnOnce() -> T) -> AppResult<T> {

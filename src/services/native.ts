@@ -34,6 +34,18 @@ export const nativeDialogService = {
     if (typeof selected === "string") return [selected];
     return Array.isArray(selected) ? selected : [];
   },
+  /** One file, filtered to a named extension set. Null if cancelled. */
+  selectFile: async (
+    name: string,
+    extensions: string[],
+  ): Promise<string | null> => {
+    const selected = await open({
+      directory: false,
+      multiple: false,
+      filters: [{ name, extensions }],
+    });
+    return typeof selected === "string" ? selected : null;
+  },
 };
 
 export const nativeDragDropService = {

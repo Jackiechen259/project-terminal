@@ -2,116 +2,38 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * The terminal font ships with the application.
+ *
+ * Cascadia Mono is not installed on a stock Windows - it arrives with Windows
+ * Terminal or Visual Studio - so the previous stack landed most users on
+ * Consolas, which has no glyphs in the Nerd Fonts private-use ranges. That is
+ * what turns a starship or oh-my-posh prompt into a row of boxes.
+ *
+ * "Mono" here means the variant without ligatures, which is the right default
+ * for a terminal: ligatures break column alignment in `git log --graph`,
+ * `less` and diff output. "NF" is Microsoft's own Nerd Fonts build.
+ *
+ * SIL Open Font License 1.1; the licence text ships beside the file.
+ *
+ * `font-display: block` rather than `swap`: xterm measures its character cell
+ * once at construction and caches the result, so a face swapped in afterwards
+ * would leave the grid sized for the fallback for the rest of the session.
+ */
+@font-face {
+  font-family: "Cascadia Mono NF";
+  src: url("./assets/fonts/CascadiaMonoNF.woff2") format("woff2");
+  font-weight: 200 700;
+  font-style: normal;
+  font-display: block;
+}
+
+/* Theme tokens are NOT declared here. `src/styles/tokens.ts` is their single
+   source of truth, and the Vite plugin in `vite.config.ts` renders them into
+   the document head - which is what also makes them available to the startup
+   screen in `index.html` before any bundle has loaded. */
+
 @layer base {
-  :root,
-  :root[data-theme="dark"] {
-    color-scheme: dark;
-    /* shadcn/ui standard tokens (zinc base, dark theme by default). */
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
-
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
-
-    /* Flat design: a single vivid blue accent instead of the neutral
-       zinc primary. Focus rings share the accent hue. */
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
-
-    --destructive: 0 72% 51%;
-    --destructive-foreground: 0 0% 98%;
-
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 217.2 91.2% 59.8%;
-
-    --radius: 0.375rem;
-
-    /* App-chrome tokens - shared surface tones. */
-    --bg: 240 10% 3.9%;
-    --surface: 240 6% 10%;
-    --surface-2: 240 5% 14%;
-    --warn: 47.9 95.8% 53.1%;
-    --ok: 142.1 70.6% 45.3%;
-    --scrollbar: 240 5% 31%;
-    --scrollbar-hover: 240 5% 45%;
-    --frame-edge: 240 5% 20%;
-  }
-
-  :root[data-theme="eye-care"] {
-    color-scheme: light;
-    --background: 43 45% 93%;
-    --foreground: 35 18% 18%;
-    --card: 42 42% 96%;
-    --card-foreground: 35 18% 18%;
-    --popover: 42 42% 97%;
-    --popover-foreground: 35 18% 18%;
-    --primary: 33 25% 26%;
-    --primary-foreground: 45 50% 97%;
-    --secondary: 40 30% 87%;
-    --secondary-foreground: 35 20% 22%;
-    --muted: 40 25% 88%;
-    --muted-foreground: 35 12% 42%;
-    --accent: 38 30% 84%;
-    --accent-foreground: 35 22% 20%;
-    --destructive: 2 63% 43%;
-    --destructive-foreground: 0 0% 100%;
-    --border: 38 22% 78%;
-    --input: 38 22% 78%;
-    --ring: 33 34% 45%;
-    --bg: 43 45% 93%;
-    --surface: 42 36% 90%;
-    --surface-2: 40 28% 85%;
-    --warn: 40 85% 38%;
-    --ok: 140 45% 34%;
-    --scrollbar: 36 16% 58%;
-    --scrollbar-hover: 34 18% 44%;
-    --frame-edge: 38 22% 72%;
-  }
-
-  :root[data-theme="light"] {
-    color-scheme: light;
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-    --primary: 221.2 83.2% 53.3%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 72.2% 50.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 221.2 83.2% 53.3%;
-    --bg: 0 0% 100%;
-    --surface: 240 20% 98%;
-    --surface-2: 240 4.8% 95.9%;
-    --warn: 38 92% 36%;
-    --ok: 142 56% 32%;
-    --scrollbar: 240 5% 65%;
-    --scrollbar-hover: 240 4% 46%;
-    --frame-edge: 240 6% 85%;
-  }
-
   html,
   body,
   #root {
@@ -129,6 +51,23 @@
   * {
     box-sizing: border-box;
     border-color: hsl(var(--border));
+  }
+
+  /*
+   * The startup screen has honoured this since it was written; the
+   * application never did. Transitions are not cut to zero, which some
+   * screen readers and focus managers depend on firing, but to a duration
+   * short enough not to read as motion.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 
   /* A restrained scrollbar treatment for app chrome and xterm's viewport. */

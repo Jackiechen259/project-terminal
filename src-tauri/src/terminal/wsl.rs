@@ -1,10 +1,60 @@
-//! WSL distribution discovery.
+//! WSL distribution discovery and the environment bridge into a distribution.
 //!
 //! `wsl.exe --list --quiet` enumerates installed distributions. On Windows the
 //! CLI emits UTF-16LE bytes (with or without a BOM depending on the build);
 //! on non-Windows hosts `wsl.exe` is unavailable and detection returns an
 //! empty list rather than an error, so the frontend can render an empty
 //! dropdown without surfacing a failure to the user.
+
+/// Build the `WSLENV` value that carries `names` into a WSL distribution.
+///
+/// Setting a variable on the Windows side is not enough: `wsl.exe` forwards
+/// only what `WSLENV` names, so a profile's environment variables are
+/// otherwise invisible inside the distribution, as is the `TERMINFO` entry
+/// that teaches a session's `TERM` to ncurses.
+///
+/// Entries may carry a translation flag after a slash - `/p` converts a single
+/// Windows path to a Linux one, `/l` a path list, `/u` and `/w` restrict the
+/// direction. A bare name is passed through byte for byte, which is what
+/// everything here wants: a `TERMINFO` value is a compiled terminfo entry, not
+/// a path, and translating it would corrupt it.
+///
+/// `inherited` is preserved as-is, flags included: the user, or a tool that
+/// launched this app, may already depend on those entries.
+pub fn merge_wslenv<'a>(
+    inherited: Option<&str>,
+    names: impl IntoIterator<Item = &'a str>,
+) -> Option<String> {
+    let mut entries: Vec<String> = Vec::new();
+    // Windows environment variable names are case-insensitive, so compare
+    // that way; the entry keeps whatever case it was written with.
+    let mut seen: Vec<String> = Vec::new();
+    let push = |entry: &str, seen: &mut Vec<String>, entries: &mut Vec<String>| {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            return;
+        }
+        let name = entry.split('/').next().unwrap_or(entry);
+        if name.is_empty() {
+            return;
+        }
+        let key = name.to_ascii_uppercase();
+        if seen.contains(&key) {
+            return;
+        }
+        seen.push(key);
+        entries.push(entry.to_string());
+    };
+
+    for entry in inherited.unwrap_or_default().split(':') {
+        push(entry, &mut seen, &mut entries);
+    }
+    for name in names {
+        push(name, &mut seen, &mut entries);
+    }
+
+    (!entries.is_empty()).then(|| entries.join(":"))
+}
 
 /// A detected WSL distribution. Only the name is exposed today; the field is
 /// kept as a struct so future metadata (default flag, version) can be added
@@ -13,6 +63,46 @@
 #[serde(rename_all = "camelCase")]
 pub struct DetectedWslDistribution {
     pub name: String,
+}
+
+#[cfg(test)]
+mod wslenv_tests {
+    use super::merge_wslenv;
+
+    #[test]
+    fn names_are_joined_and_deduplicated() {
+        assert_eq!(
+            merge_wslenv(None, ["TERM", "TERMINFO", "TERM"]),
+            Some("TERM:TERMINFO".to_string())
+        );
+    }
+
+    #[test]
+    fn inherited_entries_are_preserved_with_their_flags() {
+        // A tool that launched this app may already depend on these, including
+        // the path-translation flag.
+        assert_eq!(
+            merge_wslenv(Some("MY_PATH/p:OTHER"), ["TERM"]),
+            Some("MY_PATH/p:OTHER:TERM".to_string())
+        );
+    }
+
+    #[test]
+    fn an_inherited_entry_is_not_duplicated_or_stripped_of_its_flag() {
+        // Windows env names are case-insensitive, so `term` and `TERM` are the
+        // same variable, and the inherited spelling wins.
+        assert_eq!(
+            merge_wslenv(Some("term/p"), ["TERM", "TERMINFO"]),
+            Some("term/p:TERMINFO".to_string())
+        );
+    }
+
+    #[test]
+    fn empty_input_produces_no_variable() {
+        assert_eq!(merge_wslenv(None, []), None);
+        assert_eq!(merge_wslenv(Some(""), []), None);
+        assert_eq!(merge_wslenv(Some("::"), []), None);
+    }
 }
 
 /// Run `wsl.exe --list --quiet` and return the parsed distribution names.

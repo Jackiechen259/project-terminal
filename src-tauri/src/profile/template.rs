@@ -1,4 +1,4 @@
-//! Reusable profile template. Unlike `TerminalProfile`, a template is not
+﻿//! Reusable profile template. Unlike `TerminalProfile`, a template is not
 //! bound to a project - it stores shell/environment/startup configuration
 //! that can be applied to any project. When the user picks a template from
 //! the quick-launch menu, the frontend creates a concrete `TerminalProfile`
@@ -69,6 +69,33 @@ pub struct ProfileTemplate {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_shell_command: Option<String>,
+
+    /// See [`crate::profile::TerminalProfile::force_utf8`]. Carried on the
+    /// template so a profile created from one starts with the same answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub force_utf8: Option<bool>,
+
+    /// See [`crate::profile::TerminalProfile::shell_integration`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell_integration: Option<bool>,
+
+    /// Terminal colour scheme id for this profile, overriding the global
+    /// selection.
+    ///
+    /// The point is not decoration. A terminal organised by project, where the
+    /// SSH-to-production profile is unmistakably red and local development is
+    /// calm blue, is a safety mechanism - the same reasoning behind the
+    /// PS1-turns-red-on-prod convention people hand-roll badly.
+    ///
+    /// Colour only, deliberately. Per-profile typography would make a split
+    /// with two profiles in it look broken.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_scheme_id: Option<String>,
+
+    /// Accent for this profile's tab and focused-pane ring. `#rrggbb`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accent_color: Option<String>,
+
 
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -171,6 +198,10 @@ mod tests {
             wsl_distribution: None,
             wsl_working_directory: None,
             remote_shell_command: None,
+            force_utf8: None,
+            shell_integration: None,
+            color_scheme_id: None,
+            accent_color: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

@@ -43,6 +43,9 @@ export function GeneralSettingsPanel() {
   const openFileSidebarByDefault = useSettingsStore(
     (state) => state.openFileSidebarByDefault,
   );
+  const terminalFontFamily = useSettingsStore(
+    (state) => state.terminalFontFamily,
+  );
   const terminalFontSize = useSettingsStore((state) => state.terminalFontSize);
   const terminalScrollbackLines = useSettingsStore(
     (state) => state.terminalScrollbackLines,
@@ -100,6 +103,7 @@ export function GeneralSettingsPanel() {
     showTerminalCount === DEFAULT_GENERAL_SETTINGS.showTerminalCount &&
     openFileSidebarByDefault ===
       DEFAULT_GENERAL_SETTINGS.openFileSidebarByDefault &&
+    terminalFontFamily === DEFAULT_GENERAL_SETTINGS.terminalFontFamily &&
     terminalFontSize === DEFAULT_GENERAL_SETTINGS.terminalFontSize &&
     terminalScrollbackLines ===
       DEFAULT_GENERAL_SETTINGS.terminalScrollbackLines &&
@@ -137,31 +141,6 @@ export function GeneralSettingsPanel() {
           >
             <option value="en">{t("English")}</option>
             <option value="zh-CN">简体中文</option>
-          </select>
-        </SettingRow>
-      </SettingsGroup>
-
-      <SettingsGroup
-        title={t("Appearance")}
-        description={t("Choose the colors used by the interface and terminal.")}
-      >
-        <SettingRow
-          title={t("Theme")}
-          description={t("Changes apply immediately.")}
-        >
-          <select
-            aria-label={t("Theme")}
-            className="h-9 w-36 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring"
-            value={theme ?? "dark"}
-            onChange={(event) =>
-              update({
-                theme: event.target.value as "dark" | "eye-care" | "light",
-              })
-            }
-          >
-            <option value="dark">{t("Dark")}</option>
-            <option value="eye-care">{t("Warm eye care")}</option>
-            <option value="light">{t("White")}</option>
           </select>
         </SettingRow>
       </SettingsGroup>

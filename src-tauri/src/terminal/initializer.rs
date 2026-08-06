@@ -1,4 +1,4 @@
-//! Environment initialization commands for PTY sessions.
+﻿//! Environment initialization commands for PTY sessions.
 //!
 //! Phase 3.6/3.7 covers Conda, venv, Poetry, uv, and custom initializations.
 //! The manager resolves the profile's environment type and returns a script
@@ -60,6 +60,11 @@ pub fn build_remote_initialization_commands(profile: &TerminalProfile) -> AppRes
         ));
     }
 
+    // `fish` is not a POSIX shell. It has no `export`, no `.` for sourcing and
+    // no `if ! ( ... ); then` - the commands below are run by the remote shell
+    // itself, so they have to be written in its language.
+    let fish = matches!(profile.shell_type, ShellType::RemoteFish);
+
     let mut commands = Vec::new();
     if let Some(vars) = &profile.environment_variables {
         for (name, value) in vars {
@@ -68,8 +73,29 @@ pub fn build_remote_initialization_commands(profile: &TerminalProfile) -> AppRes
                     "Invalid remote environment variable name: {name}"
                 )));
             }
-            commands.push(format!("export {name}={}", escape_bash_argument(value)));
+            let value = escape_bash_argument(value);
+            commands.push(if fish {
+                format!("set -gx {name} {value}")
+            } else {
+                format!("export {name}={value}")
+            });
         }
+    }
+
+    if fish
+        && !matches!(
+            profile.environment_type,
+            EnvironmentType::None | EnvironmentType::Custom
+        )
+    {
+        // Conda, venv, Poetry and uv all activate by sourcing a POSIX script.
+        // Reporting that up front beats handing fish a script it cannot parse
+        // and leaving the user to decode the resulting syntax errors.
+        return Err(AppError::Configuration(
+            "Remote fish shells support only Custom environment activation; \
+             use a Custom activation command written for fish"
+                .into(),
+        ));
     }
 
     let activation = match profile.environment_type {
@@ -84,9 +110,15 @@ pub fn build_remote_initialization_commands(profile: &TerminalProfile) -> AppRes
             .filter(|command| !command.trim().is_empty()),
     };
     if let Some(activation) = activation {
-        commands.push(format!(
-            "if ! ( {activation} ); then printf '%s\\n' 'Project Terminal: environment initialization failed; remote shell remains available' >&2; fi"
-        ));
+        const WARNING: &str =
+            "Project Terminal: environment initialization failed; remote shell remains available";
+        commands.push(if fish {
+            format!("begin; {activation}; end; or printf '%s\\n' '{WARNING}' >&2")
+        } else {
+            format!(
+                "if ! ( {activation} ); then printf '%s\\n' '{WARNING}' >&2; fi"
+            )
+        });
     }
     commands.extend(
         profile
@@ -354,6 +386,10 @@ mod tests {
             wsl_distribution: None,
             wsl_working_directory: None,
             remote_shell_command: None,
+            force_utf8: None,
+            shell_integration: None,
+            color_scheme_id: None,
+            accent_color: None,
             is_default: false,
             show_in_context_menu: true,
             created_at: Utc::now(),

@@ -3,6 +3,7 @@ import { LoaderCircle, RotateCcw } from "lucide-react";
 
 import { useTranslation } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { useProfileStore } from "@/stores/profileStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 
 import { loadTerminalView } from "./terminalViewLoader";
@@ -15,6 +16,8 @@ interface TerminalPaneProps {
   tabId: string;
   visible: boolean;
   focused: boolean;
+  /** True while this pane shares the workspace with other visible panes. */
+  splitActive?: boolean;
   panePosition: string;
   style?: CSSProperties;
   onSelect: (tabId: string) => void;
@@ -30,6 +33,7 @@ export const TerminalPane = memo(function TerminalPane({
   tabId,
   visible,
   focused,
+  splitActive = false,
   panePosition,
   style,
   onSelect,
@@ -37,6 +41,14 @@ export const TerminalPane = memo(function TerminalPane({
 }: TerminalPaneProps) {
   const tab = useTerminalStore((state) => state.tabsById[tabId]);
   const updateTab = useTerminalStore((state) => state.updateTab);
+  // A profile may carry its own palette and accent. The point is not
+  // decoration: an SSH-to-production tab that is unmistakably a different
+  // colour from a local one is a safety mechanism.
+  const profile = useProfileStore((state) =>
+    tab
+      ? state.byProjectId[tab.projectId]?.find((p) => p.id === tab.profileId)
+      : undefined,
+  );
   const { t } = useTranslation();
   const select = useCallback(() => {
     if (visible) onSelect(tabId);
@@ -51,6 +63,17 @@ export const TerminalPane = memo(function TerminalPane({
     (title: string) => updateTab(tabId, { title }),
     [tabId, updateTab],
   );
+  // Only arrives when the profile opted into shell integration. Until now
+  // `cwd` was written as "" at creation and never updated.
+  const handleCwdChange = useCallback(
+    (cwd: string) => updateTab(tabId, { cwd }),
+    [tabId, updateTab],
+  );
+  const handleCommandFinished = useCallback(
+    (exitCode: number | null) =>
+      updateTab(tabId, { lastCommandExitCode: exitCode ?? undefined }),
+    [tabId, updateTab],
+  );
 
   if (!tab) return null;
 
@@ -59,8 +82,21 @@ export const TerminalPane = memo(function TerminalPane({
       className={cn(
         "absolute min-h-0 min-w-0",
         visible ? panePosition : "hidden",
+        // Ring the pane the keyboard is talking to. `cursorInactiveStyle`
+        // already outlines the cursor in the others; this reads at a glance
+        // from across the window, which a cursor does not.
+        splitActive &&
+          focused &&
+          "ring-1 ring-inset ring-[color:var(--profile-accent,hsl(var(--primary)/0.4))]",
       )}
-      style={style}
+      style={{
+        ...style,
+        // One variable, consumed by the focus ring here and by the tab in the
+        // strip, so neither has to know about profiles.
+        ...(profile?.accentColor
+          ? ({ "--profile-accent": profile.accentColor } as React.CSSProperties)
+          : {}),
+      }}
       onMouseDown={select}
     >
       {tab.sessionId ? (
@@ -79,6 +115,9 @@ export const TerminalPane = memo(function TerminalPane({
             onFocus={select}
             onExit={handleExit}
             onTitleChange={handleTitleChange}
+            onCwdChange={handleCwdChange}
+            onCommandFinished={handleCommandFinished}
+            colorSchemeId={profile?.colorSchemeId}
           />
         </Suspense>
       ) : ["starting", "connecting", "initializing"].includes(tab.status) ? (
@@ -105,6 +144,16 @@ export const TerminalPane = memo(function TerminalPane({
           </button>
         </div>
       )}
+      {splitActive && !focused ? (
+        // A scrim rather than `opacity` on the pane itself: opacity promotes
+        // the xterm canvas into its own compositing layer, which can cost the
+        // WebGL fast path. Not focusable and click-through, so selecting this
+        // pane still works.
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 bg-background/20"
+        />
+      ) : null}
     </div>
   );
 });

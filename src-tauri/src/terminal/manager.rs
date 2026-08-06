@@ -1,4 +1,4 @@
-//! Terminal manager: holds all live sessions keyed by session id.
+﻿//! Terminal manager: holds all live sessions keyed by session id.
 //!
 //! Phase 3 wires local shells. The manager is process-wide state shared via
 //! Tauri's `manage()`. Closing a session kills the child process so it does
@@ -138,9 +138,16 @@ impl TerminalManager {
         Ok(())
     }
 
-    pub fn resize(&self, session_id: &str, rows: u16, cols: u16) -> AppResult<()> {
+    pub fn resize(
+        &self,
+        session_id: &str,
+        rows: u16,
+        cols: u16,
+        pixel_width: u16,
+        pixel_height: u16,
+    ) -> AppResult<()> {
         let session = self.get(session_id)?;
-        session.resize(rows, cols)
+        session.resize(rows, cols, pixel_width, pixel_height)
     }
 
     /// Close a session and remove it from the map. Idempotent - closing an
@@ -179,6 +186,7 @@ mod tests {
             args: vec!["/Q".into()],
             cwd: None,
             env: vec![],
+            env_remove: Vec::new(),
             readiness_marker: None,
             rows: 24,
             cols: 80,
@@ -235,7 +243,7 @@ mod tests {
     #[test]
     fn resize_unknown_session_errors() {
         let mgr = TerminalManager::new();
-        assert!(mgr.resize("nope", 24, 80).is_err());
+        assert!(mgr.resize("nope", 24, 80, 0, 0).is_err());
     }
 
     #[test]

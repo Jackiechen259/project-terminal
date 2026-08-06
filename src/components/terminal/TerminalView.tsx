@@ -1,28 +1,39 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+﻿import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
 import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import type { WebglAddon } from "@xterm/addon-webgl";
-import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Search, TriangleAlert, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 
 import { useTranslation } from "@/i18n";
 import { listenForAppCommands } from "@/lib/appCommands";
 import { TerminalInputQueue } from "@/lib/terminalInputQueue";
+import { resolveExtraKeySequence } from "@/lib/terminalKeys";
+import {
+  parsePromptMark,
+  parseWorkingDirectory,
+} from "@/lib/terminalShellIntegration";
 import { TerminalOutputQueue } from "@/lib/terminalOutputQueue";
 import { TerminalResizeQueue } from "@/lib/terminalResizeQueue";
+import { buildTerminalFontStack } from "@/lib/terminalFonts";
 import {
-  getTerminalMinimumContrast,
-  getTerminalTheme,
-} from "@/lib/terminalThemes";
+  minimumContrastFor,
+  resolveColorScheme,
+} from "@/lib/terminalColorSchemes";
+import { getTerminalSearchDecorations } from "@/lib/terminalThemes";
+import { TerminalRenderer, type RendererState } from "@/lib/terminalRenderer";
+import { resolveWindowsPty } from "@/lib/terminalWindowsPty";
 import {
   isTerminalControlFrame,
   type TerminalSessionFrame,
 } from "@/lib/terminalFrames";
 import { terminalService } from "@/services";
+import { useColorSchemeStore } from "@/stores/colorSchemeStore";
+import { usePlatformStore } from "@/stores/platformStore";
 import {
   clampTerminalFontSize,
   useSettingsStore,
@@ -34,6 +45,51 @@ const MAX_LAGGED_RESYNCS = 3;
 
 /** Per-terminal budget for decoded inline images, in MB. */
 const TERMINAL_IMAGE_STORAGE_LIMIT_MB = 32;
+
+/** Width of the gutter that marks off-screen search matches, in pixels. */
+const OVERVIEW_RULER_WIDTH = 10;
+
+/**
+ * The grid's size in pixels, for `TIOCGWINSZ`.
+ *
+ * Image tools read it to decide how large a picture to draw; a pty that
+ * reports zero makes them fall back to a fixed guess or refuse. Measured from
+ * the rendered rows element rather than the container so it excludes padding
+ * and the scrollbar, and returns zeroes rather than a guess when the terminal
+ * has not been laid out yet - zero already means "unknown" over there.
+ */
+function measureGridPixels(container: HTMLElement, term: Terminal) {
+  const rows = container.querySelector<HTMLElement>(".xterm-rows");
+  if (!rows || !rows.clientWidth || !rows.clientHeight) {
+    return { width: 0, height: 0 };
+  }
+  const cellWidth = rows.clientWidth / Math.max(1, term.cols);
+  const cellHeight = rows.clientHeight / Math.max(1, term.rows);
+  return {
+    width: Math.round(cellWidth * term.cols),
+    height: Math.round(cellHeight * term.rows),
+  };
+}
+
+/**
+ * Open a link from terminal output.
+ *
+ * Both the OSC 8 handler and the plain-URL addon default to `window.open`,
+ * which in a Tauri WebView either does nothing or opens a chromeless window
+ * pointed at a URL that came out of program output. Neither is acceptable, so
+ * both are routed to the browser through a backend command that re-validates
+ * the scheme.
+ *
+ * Ctrl is required, matching Windows Terminal and VS Code: it keeps a link
+ * from firing while the user is dragging out a selection.
+ */
+function activateTerminalLink(event: MouseEvent, uri: string) {
+  if (!event.ctrlKey) return;
+  void terminalService.openExternalUrl(uri).catch(() => {
+    // A rejected link is not worth interrupting the session for; the backend
+    // refuses anything that is not plainly an http(s) URL.
+  });
+}
 
 /**
  * Single xterm.js view bound to a backend PTY session.
@@ -49,6 +105,9 @@ export const TerminalView = memo(function TerminalView({
   defaultTitle,
   onExit,
   onTitleChange,
+  onCwdChange,
+  onCommandFinished,
+  colorSchemeId,
   onFocus,
 }: {
   sessionId: string;
@@ -60,6 +119,12 @@ export const TerminalView = memo(function TerminalView({
   onExit?: (code: number | null, status?: "exited" | "error") => void;
   /** Called when the terminal emits OSC 0/2 to update its window title. */
   onTitleChange?: (title: string) => void;
+  /** Called when shell integration reports the working directory (OSC 7). */
+  onCwdChange?: (cwd: string) => void;
+  /** Called when shell integration reports a command finishing (OSC 133 D). */
+  onCommandFinished?: (exitCode: number | null) => void;
+  /** Palette from this terminal's profile, overriding the global choice. */
+  colorSchemeId?: string;
   /** Marks this terminal as the focused split pane. */
   onFocus?: () => void;
 }) {
@@ -68,7 +133,18 @@ export const TerminalView = memo(function TerminalView({
   const fitRef = useRef<FitAddon | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
   const resizeQueueRef = useRef<TerminalResizeQueue | null>(null);
+  const rendererRef = useRef<TerminalRenderer | null>(null);
+  const [rendererState, setRendererState] = useState<RendererState>("dom");
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Report a resize from outside the terminal's own effect. */
+  const requestResize = useCallback((term: Terminal) => {
+    const container = containerRef.current;
+    const { width, height } = container
+      ? measureGridPixels(container, term)
+      : { width: 0, height: 0 };
+    resizeQueueRef.current?.request(term.rows, term.cols, width, height);
+  }, []);
+
   const reportedExitRef = useRef(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -77,15 +153,65 @@ export const TerminalView = memo(function TerminalView({
   const resyncAttemptsRef = useRef(0);
   const onTitleChangeRef = useRef(onTitleChange);
   const onExitRef = useRef(onExit);
+  const onCwdChangeRef = useRef(onCwdChange);
+  onCwdChangeRef.current = onCwdChange;
+  const onCommandFinishedRef = useRef(onCommandFinished);
+  onCommandFinishedRef.current = onCommandFinished;
   const { t } = useTranslation();
   const tRef = useRef(t);
   tRef.current = t;
+  const terminalFontFamily = useSettingsStore(
+    (state) => state.terminalFontFamily,
+  );
   const terminalFontSize = useSettingsStore((state) => state.terminalFontSize);
+  const typography = useSettingsStore(
+    useShallow((state) => ({
+      fontWeight: state.terminalFontWeight,
+      fontWeightBold: state.terminalFontWeightBold,
+      lineHeight: state.terminalLineHeight,
+      letterSpacing: state.terminalLetterSpacing,
+      cursorStyle: state.terminalCursorStyle,
+      cursorInactiveStyle: state.terminalCursorInactiveStyle,
+      padding: state.terminalPadding,
+      minimumContrast: state.terminalMinimumContrast,
+    })),
+  );
   const terminalScrollbackLines = useSettingsStore(
     (state) => state.terminalScrollbackLines,
   );
   const cursorBlink = useSettingsStore((state) => state.cursorBlink);
+  const terminalRenderer = useSettingsStore((state) => state.terminalRenderer);
   const theme = useSettingsStore((state) => state.theme);
+  const terminalColorScheme = useSettingsStore(
+    (state) => state.terminalColorScheme,
+  );
+  const importedSchemes = useColorSchemeStore((state) => state.schemes);
+  const loadColorSchemes = useColorSchemeStore((state) => state.load);
+  const platformInfo = usePlatformStore((state) => state.info);
+
+  // Only needed once a selection names something that is not built in. The
+  // store coalesces the calls every open terminal makes here.
+  useEffect(() => {
+    void loadColorSchemes();
+  }, [loadColorSchemes]);
+
+  const palette = useMemo(
+    () =>
+      // The profile wins when it names one. Resolution falls back to the
+      // global choice for an id that no longer exists, so deleting a scheme
+      // does not leave a profile without colours.
+      resolveColorScheme(
+        colorSchemeId || terminalColorScheme,
+        theme,
+        importedSchemes,
+      ).theme,
+    [colorSchemeId, terminalColorScheme, theme, importedSchemes],
+  );
+  // `0` means derive it from the scheme, which is right almost always; the
+  // override is for agent output that uses dim truecolor the palette's own
+  // contrast cannot rescue.
+  const resolvedContrast =
+    typography.minimumContrast || minimumContrastFor(palette);
 
   const copySelection = useCallback(async () => {
     const selection = termRef.current?.getSelection() ?? "";
@@ -99,7 +225,14 @@ export const TerminalView = memo(function TerminalView({
     const text = await terminalService.readClipboardText();
     if (!text) return;
     const lineCount = text.split(/\r\n|\r|\n/).length;
-    const requiresConfirmation = text.length >= 10_000 || lineCount > 20;
+    // Newlines are only dangerous when the shell will execute them. With
+    // bracketed paste on - which is every modern shell's line editor - a
+    // multi-line paste lands in the editor and cannot run, so warning about
+    // it is pure noise. Size stays unconditional: a multi-megabyte paste is
+    // a hang risk either way.
+    const bracketed = term.modes.bracketedPasteMode;
+    const requiresConfirmation =
+      text.length >= 10_000 || (!bracketed && lineCount > 20);
     if (
       requiresConfirmation &&
       !window.confirm(
@@ -180,40 +313,78 @@ export const TerminalView = memo(function TerminalView({
       });
   }, [focused, searchOpen]);
 
+  // Without `decorations` the addon highlights nothing - it only scrolls each
+  // match into view - and `clearDecorations()` has nothing to clear.
+  const searchOptions = useMemo(
+    () => ({
+      caseSensitive: false,
+      decorations: getTerminalSearchDecorations(theme),
+    }),
+    [theme],
+  );
+
   const findNext = useCallback(() => {
-    if (searchQuery) {
-      searchRef.current?.findNext(searchQuery, { caseSensitive: false });
-    }
-  }, [searchQuery]);
+    if (searchQuery) searchRef.current?.findNext(searchQuery, searchOptions);
+  }, [searchQuery, searchOptions]);
 
   const findPrevious = useCallback(() => {
     if (searchQuery) {
-      searchRef.current?.findPrevious(searchQuery, { caseSensitive: false });
+      searchRef.current?.findPrevious(searchQuery, searchOptions);
     }
-  }, [searchQuery]);
+  }, [searchQuery, searchOptions]);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    // Read the platform snapshot rather than subscribing: it is immutable once
+    // loaded, and making it a dependency would tear down and re-attach every
+    // terminal the moment app bootstrap resolves. A separate effect below
+    // applies it if it arrives after this terminal was built.
+    const windowsPty = resolveWindowsPty(usePlatformStore.getState().info);
+    const linkHandler = {
+      activate: activateTerminalLink,
+      // Leave false: xterm uses it to reject `file:` and `javascript:` URIs
+      // before `activate` is ever reached.
+      allowNonHttpProtocols: false,
+    };
     const term = new Terminal({
       allowProposedApi: true,
       cursorBlink,
-      cursorStyle: "block",
+      cursorStyle: typography.cursorStyle,
+      // Split panes have no other focus affordance: the focused pane keeps a
+      // solid cursor, the rest fall back to an outline.
+      cursorInactiveStyle: typography.cursorInactiveStyle,
       scrollback: terminalScrollbackLines,
-      fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, monospace',
+      fontFamily: buildTerminalFontStack(terminalFontFamily),
       fontSize: terminalFontSize,
-      lineHeight: 1.2,
-      minimumContrastRatio: getTerminalMinimumContrast(theme),
+      fontWeight: typography.fontWeight,
+      fontWeightBold: typography.fontWeightBold,
+      lineHeight: typography.lineHeight,
+      letterSpacing: typography.letterSpacing,
+      minimumContrastRatio: resolvedContrast,
       allowTransparency: false,
       convertEol: false,
-      theme: getTerminalTheme(theme),
+      // Bold is a weight, not a palette shift. The default remaps `\e[1;30m`
+      // to bright black, which modern prompts and `ls --color` do not expect.
+      drawBoldTextInBrightColors: false,
+      // Shrink glyphs whose font outline spills past the cell they occupy in
+      // the model - CJK punctuation and roman numerals in a Latin font.
+      rescaleOverlappingGlyphs: true,
+      // `clear`/`cls` should push the screen into scrollback rather than eat it.
+      scrollOnEraseInDisplay: true,
+      overviewRuler: { width: OVERVIEW_RULER_WIDTH },
+      windowsPty,
+      linkHandler,
+      theme: palette,
     });
     const fit = new FitAddon();
     const search = new SearchAddon();
     term.loadAddon(fit);
     term.loadAddon(search);
     term.loadAddon(new UnicodeGraphemesAddon());
-    term.loadAddon(new WebLinksAddon());
+    // The addon detects plain-text URLs, which is a separate code path from
+    // the OSC 8 handler above and needs the same treatment.
+    term.loadAddon(new WebLinksAddon(activateTerminalLink));
     // Sixel/IIP rendering. This one must be loaded before `open()`: the addon
     // wraps the core's `open` and `setRenderer`, and the latter is what keeps
     // images alive across the asynchronous WebGL upgrade below.
@@ -226,29 +397,16 @@ export const TerminalView = memo(function TerminalView({
       }),
     );
     term.open(container);
-    let webgl: WebglAddon | null = null;
-    let disposed = false;
-    // DOM rendering can display the first prompt immediately. Upgrade to the
-    // heavier WebGL renderer asynchronously once its separate chunk arrives.
-    void import("@xterm/addon-webgl")
-      .then(({ WebglAddon }) => {
-        if (disposed) return;
-        try {
-          webgl = new WebglAddon();
-          webgl.onContextLoss(() => {
-            webgl?.dispose();
-            webgl = null;
-          });
-          term.loadAddon(webgl);
-        } catch {
-          webgl?.dispose();
-          webgl = null;
-        }
-      })
-      .catch(() => {
-        // The DOM renderer remains fully functional if the optional chunk
-        // cannot be loaded.
-      });
+    // DOM rendering can display the first prompt immediately. The renderer
+    // upgrades to WebGL once its separate chunk arrives, and gets it back
+    // after the GPU takes the context away.
+    const renderer = new TerminalRenderer(term, {
+      loadAddon: () =>
+        import("@xterm/addon-webgl").then(({ WebglAddon }) => WebglAddon),
+      onStateChange: setRendererState,
+    });
+    rendererRef.current = renderer;
+    renderer.start(useSettingsStore.getState().terminalRenderer);
     termRef.current = term;
     fitRef.current = fit;
     searchRef.current = search;
@@ -320,28 +478,71 @@ export const TerminalView = memo(function TerminalView({
       }
       try {
         fit.fit();
-        resizeQueue.request(term.rows, term.cols);
+        const { width, height } = measureGridPixels(container, term);
+        resizeQueue.request(term.rows, term.cols, width, height);
       } catch {
         // Fitting can fail while a tab is being attached or hidden.
       }
     };
 
-    const inputQueue = new TerminalInputQueue(terminalService.write);
+    const inputQueue = new TerminalInputQueue(
+      terminalService.write,
+      terminalService.writeBinary,
+    );
     const outputQueue = new TerminalOutputQueue(
       (data) => term.write(data),
       (callback, delay) => window.setTimeout(callback, delay),
       (handle) => window.clearTimeout(handle),
     );
     const disposable = term.onData((data) => inputQueue.send(data));
+    // Mouse reports use this event instead of `onData` whenever the program
+    // selected the default encoding rather than SGR - `vim` with
+    // `ttymouse=xterm2`, `mc`, `w3m`. Without it their clicks are discarded.
+    const binaryDisposable = term.onBinary((data) =>
+      inputQueue.sendBinary(data),
+    );
     term.attachCustomKeyEventHandler((event) => {
-      if (
-        event.type === "keydown" &&
-        event.ctrlKey &&
-        !event.altKey &&
-        event.key.toLowerCase() === "v"
-      ) {
+      if (event.type !== "keydown") return true;
+      // AltGr arrives as ctrl+alt on Windows layouts. xterm has its own
+      // AltGraph guard; excluding altKey here keeps this handler from
+      // swallowing the composed character before that guard runs.
+      if (event.altKey) return true;
+
+      const { terminalPasteShortcut } = useSettingsStore.getState();
+      const pasteChord =
+        terminalPasteShortcut === "ctrl-shift-v"
+          ? event.ctrlKey && event.shiftKey
+          : event.ctrlKey && !event.shiftKey;
+      if (pasteChord && event.key.toLowerCase() === "v") {
         void pasteClipboard();
         return false;
+      }
+
+      const sequence = resolveExtraKeySequence(event);
+      if (sequence !== null) {
+        inputQueue.send(sequence);
+        return false;
+      }
+      return true;
+    });
+    // OSC 7: the shell reporting where it is. Only present when the profile
+    // opted into shell integration; xterm silently swallows the sequence
+    // otherwise, so there is nothing to clean up when it is off.
+    term.parser.registerOscHandler(7, (payload) => {
+      const cwd = parseWorkingDirectory(payload);
+      // The value came out of the PTY, so it is a claim rather than a fact.
+      // It is used for display, and re-validated by the backend before
+      // anything acts on it.
+      if (cwd) onCwdChangeRef.current?.(cwd);
+      // Consume it either way: a malformed report is not something to print.
+      return true;
+    });
+    // OSC 133: command boundaries. Recorded so the exit status of the last
+    // command is available without parsing output.
+    term.parser.registerOscHandler(133, (payload) => {
+      const mark = parsePromptMark(payload);
+      if (mark?.kind === "command-finished") {
+        onCommandFinishedRef.current?.(mark.exitCode);
       }
       return true;
     });
@@ -490,12 +691,12 @@ export const TerminalView = memo(function TerminalView({
       });
 
     return () => {
-      disposed = true;
       cancelled = true;
       inputQueue.dispose();
       outputQueue.dispose();
       resizeQueue.dispose();
       disposable.dispose();
+      binaryDisposable.dispose();
       titleDisposable.dispose();
       ro.disconnect();
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
@@ -509,7 +710,8 @@ export const TerminalView = memo(function TerminalView({
       });
       void terminalService.detach(sessionId, clientId);
       sessionStorage.removeItem(snapshotKey);
-      webgl?.dispose();
+      renderer.dispose();
+      rendererRef.current = null;
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
@@ -525,21 +727,54 @@ export const TerminalView = memo(function TerminalView({
     const term = termRef.current;
     if (!term) return;
 
+    term.options.fontFamily = buildTerminalFontStack(terminalFontFamily);
     term.options.fontSize = terminalFontSize;
+    term.options.fontWeight = typography.fontWeight;
+    term.options.fontWeightBold = typography.fontWeightBold;
+    term.options.lineHeight = typography.lineHeight;
+    term.options.letterSpacing = typography.letterSpacing;
+    term.options.cursorStyle = typography.cursorStyle;
+    term.options.cursorInactiveStyle = typography.cursorInactiveStyle;
     term.options.scrollback = terminalScrollbackLines;
     term.options.cursorBlink = cursorBlink;
-    term.options.minimumContrastRatio = getTerminalMinimumContrast(theme);
-    term.options.theme = getTerminalTheme(theme);
+    term.options.minimumContrastRatio = resolvedContrast;
+    term.options.theme = palette;
     const frame = requestAnimationFrame(() => {
       try {
         fitRef.current?.fit();
-        resizeQueueRef.current?.request(term.rows, term.cols);
+        requestResize(term);
       } catch {
         // The terminal may be hidden or closing while preferences update.
       }
     });
     return () => cancelAnimationFrame(frame);
-  }, [cursorBlink, terminalFontSize, terminalScrollbackLines, theme]);
+    // Every option here changes the cell size or the palette, so each needs
+    // the refit above; none of them requires rebuilding the terminal.
+  }, [
+    cursorBlink,
+    palette,
+    requestResize,
+    resolvedContrast,
+    terminalFontFamily,
+    terminalFontSize,
+    terminalScrollbackLines,
+    typography,
+  ]);
+
+  useEffect(() => {
+    rendererRef.current?.setPreference(terminalRenderer);
+  }, [terminalRenderer]);
+
+  // A terminal opened before app bootstrap resolved was built without a pty
+  // description. xterm reads it at resize time, so applying it late is enough
+  // and costs nothing - unlike rebuilding the terminal, which would detach the
+  // PTY and replay its scrollback.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term || !platformInfo) return;
+    const windowsPty = resolveWindowsPty(platformInfo);
+    if (windowsPty) term.options.windowsPty = windowsPty;
+  }, [platformInfo]);
 
   // When this view becomes visible again, re-fit so the terminal reports the
   // correct dimensions after being hidden.
@@ -550,21 +785,40 @@ export const TerminalView = memo(function TerminalView({
         fitRef.current?.fit();
         const term = termRef.current;
         if (term) {
-          resizeQueueRef.current?.request(term.rows, term.cols);
+          requestResize(term);
         }
       } catch {
         // ignore
       }
     }, 50);
     return () => clearTimeout(timer);
-  }, [active]);
+  }, [active, requestResize]);
 
   return (
     <div
-      className="relative h-full w-full bg-background p-2"
+      className="relative h-full w-full"
+      // The gutter takes the terminal's own background rather than the app's,
+      // so a colour scheme that differs from the chrome does not read as a
+      // mis-sized panel. Inline because it is a user setting, and the refit
+      // above depends on it: padding changes the fittable grid.
+      style={{
+        padding: `${typography.padding}px`,
+        background: palette.background,
+      }}
       onContextMenuCapture={handleContextMenu}
       onFocusCapture={onFocus}
     >
+      {rendererState === "degraded" && active ? (
+        // Rendered as UI, never written into the terminal: a notice in the
+        // byte stream would corrupt whatever TUI is on screen.
+        <div
+          role="status"
+          className="pointer-events-none absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-md border border-border bg-popover/95 px-2 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur"
+        >
+          <TriangleAlert className="h-3.5 w-3.5 text-warn" />
+          {t("Hardware rendering is unavailable; using software rendering.")}
+        </div>
+      ) : null}
       {searchOpen && active ? (
         <form
           className="absolute right-4 top-3 z-20 flex items-center gap-1 rounded-md border border-border bg-popover/95 p-1 shadow-lg backdrop-blur"
@@ -582,7 +836,10 @@ export const TerminalView = memo(function TerminalView({
               const query = event.target.value;
               setSearchQuery(query);
               if (query) {
-                searchRef.current?.findNext(query, { incremental: true });
+                searchRef.current?.findNext(query, {
+                  ...searchOptions,
+                  incremental: true,
+                });
               } else {
                 searchRef.current?.clearDecorations();
               }
