@@ -470,32 +470,48 @@ fn remote_start_command(
     )))
 }
 
-fn wait_for_interactive_shell(
-    manager: &TerminalManager,
+/// The command whose output proves the shell is interactive.
+///
+/// Pure, so what the shell is actually told can be asserted without a PTY.
+fn readiness_command(
     profile: &crate::profile::TerminalProfile,
     session_id: &str,
-) -> AppResult<()> {
+) -> AppResult<String> {
     let marker = format!("__PROJECT_TERMINAL_READY_{session_id}__");
+    // Configuring the encoding rides along with the handshake rather than
+    // running after it. Both are typed into the PTY and both echo, and the
+    // readiness watcher discards every byte up to the marker's own line - so
+    // anything folded in here is invisible, and anything sent afterwards is
+    // not. Sent afterwards, this appeared at the top of every new terminal.
+    let utf8 = utf8_preamble_for(profile);
     let command = match profile.shell_type {
-        // Keep this command short. A long, generated command makes
-        // PSReadLine repaint wrapped fragments into the terminal before the
-        // handshake can filter them.
         crate::profile::ShellType::Powershell => {
             // Clear the bootstrap prompt after the marker is emitted. Some
             // PSReadLine versions paint that prompt before the PTY watcher is
             // armed; clearing here guarantees a new terminal opens with only
             // the final interactive prompt.
-            shell_command_line(
-                profile.shell_type,
-                "echo \"[$env:PROJECT_TERMINAL_READY]\"; Clear-Host",
-            )
+            //
+            // Length is not a constraint the way it looks: PSReadLine does
+            // repaint wrapped fragments, but they arrive before the marker
+            // and the watcher drops them with everything else.
+            let mut parts = Vec::new();
+            parts.extend(utf8);
+            parts.push("echo \"[$env:PROJECT_TERMINAL_READY]\"");
+            parts.push("Clear-Host");
+            shell_command_line(profile.shell_type, &parts.join("; "))
         }
         crate::profile::ShellType::Cmd => {
             let encoded_marker = marker
                 .chars()
                 .map(|character| format!("^{character}"))
                 .collect::<String>();
-            format!("echo [{encoded_marker}]\r\n")
+            // `^`-escaping keeps the raw marker out of the command echo, so
+            // the watcher matches the output rather than the echo.
+            let echo = format!("echo [{encoded_marker}]");
+            match utf8 {
+                Some(preamble) => format!("{preamble} & {echo}\r\n"),
+                None => format!("{echo}\r\n"),
+            }
         }
         crate::profile::ShellType::GitBash
         | crate::profile::ShellType::Wsl
@@ -520,6 +536,16 @@ fn wait_for_interactive_shell(
             )))
         }
     };
+    Ok(command)
+}
+
+fn wait_for_interactive_shell(
+    manager: &TerminalManager,
+    profile: &crate::profile::TerminalProfile,
+    session_id: &str,
+) -> AppResult<()> {
+    let marker = format!("__PROJECT_TERMINAL_READY_{session_id}__");
+    let command = readiness_command(profile, session_id)?;
 
     manager.wait_for_ready(
         session_id,
@@ -574,31 +600,21 @@ fn normalize_initialization_script(shell_type: crate::profile::ShellType, script
     script.replace("\r\n", "\r").replace('\n', "\r")
 }
 
-/// Configure the shell for UTF-8 output, before anything else runs in it.
+/// The command that configures this profile's shell for UTF-8 output, if it
+/// wants one.
 ///
-/// It has to come first: environment activation and the user's startup
-/// commands both print, and a `conda activate` banner that arrives before the
-/// encoding is set is mojibake nobody can explain afterwards.
-fn apply_utf8_preamble(
-    manager: &TerminalManager,
-    profile: &crate::profile::TerminalProfile,
-    session_id: &str,
-) {
+/// Folded into the readiness handshake by [`wait_for_interactive_shell`]
+/// rather than written after it, so its echo is discarded along with the rest
+/// of the handshake. It also has to precede environment activation: a
+/// `conda activate` banner printed before the encoding is set is mojibake
+/// nobody can explain afterwards.
+fn utf8_preamble_for(profile: &crate::profile::TerminalProfile) -> Option<&'static str> {
     let wanted = profile
         .force_utf8
         .unwrap_or_else(|| crate::terminal::forces_utf8_by_default(profile.shell_type));
-    if !wanted {
-        return;
-    }
-    let Some(command) = crate::terminal::utf8_preamble(profile.shell_type) else {
-        return;
-    };
-    // Failure here is not worth losing the session over: the shell is usable,
-    // it just decodes non-ASCII the way the console code page says to.
-    let _ = manager.write(
-        session_id,
-        shell_command_line(profile.shell_type, command).as_bytes(),
-    );
+    wanted
+        .then(|| crate::terminal::utf8_preamble(profile.shell_type))
+        .flatten()
 }
 
 /// Source the shell-integration script, if the profile asked for it.
@@ -631,7 +647,6 @@ fn execute_startup_commands(
     profile: &crate::profile::TerminalProfile,
     session_id: &str,
 ) -> AppResult<()> {
-    apply_utf8_preamble(manager, profile, session_id);
     apply_shell_integration(manager, profile, session_id);
 
     // Phase 3.6/3.7: Environment activation is evaluated and pushed first.
@@ -1296,6 +1311,54 @@ mod tests {
             cols: 80,
             scrollback_megabytes: None,
         }
+    }
+
+    #[test]
+    fn the_utf8_preamble_rides_the_handshake_so_it_never_shows() {
+        // Written after the handshake it echoed at the top of every new
+        // terminal. The readiness watcher discards every byte up to the
+        // marker's own line, so folding it in is what makes it invisible.
+        let powershell = default_powershell_profile("p".into(), "proj".into());
+        let preamble = utf8_preamble_for(&powershell).expect("PowerShell preamble");
+        assert!(preamble.contains("OutputEncoding"));
+
+        let command = readiness_command(&powershell, "session-1").unwrap();
+        assert!(command.starts_with(preamble), "{command}");
+        // Still ahead of the marker, which is what the watcher keys on.
+        assert!(
+            command.find(preamble).unwrap() < command.find("PROJECT_TERMINAL_READY").unwrap(),
+            "{command}"
+        );
+        // And the raw marker never appears in the echoed command itself, or
+        // the watcher would match the echo instead of the output.
+        assert!(!command.contains("__PROJECT_TERMINAL_READY_session-1__"));
+    }
+
+    #[test]
+    fn a_profile_that_declines_utf8_gets_the_bare_handshake() {
+        let mut powershell = default_powershell_profile("p".into(), "proj".into());
+        powershell.force_utf8 = Some(false);
+        assert_eq!(utf8_preamble_for(&powershell), None);
+
+        let command = readiness_command(&powershell, "session-1").unwrap();
+        assert!(command.starts_with("echo"), "{command}");
+        assert!(!command.contains("OutputEncoding"));
+    }
+
+    #[test]
+    fn cmd_opts_in_to_chcp_and_keeps_it_inside_the_handshake() {
+        // `chcp 65001` breaks `more` and OEM batch scripts, so it is off
+        // unless asked for - and when asked for it must not echo either.
+        let mut cmd = crate::profile::TerminalProfile {
+            shell_type: ShellType::Cmd,
+            ..default_powershell_profile("p".into(), "proj".into())
+        };
+        assert_eq!(utf8_preamble_for(&cmd), None);
+
+        cmd.force_utf8 = Some(true);
+        let command = readiness_command(&cmd, "session-1").unwrap();
+        assert!(command.starts_with("chcp 65001>nul & echo "), "{command}");
+        assert!(!command.contains("__PROJECT_TERMINAL_READY_session-1__"));
     }
 
     #[test]
@@ -2008,5 +2071,84 @@ mod tests {
             output_str
         );
         let _ = dir;
+    }
+}
+
+#[cfg(test)]
+mod handshake_probe {
+    use super::*;
+    use crate::profile::repository::default_powershell_profile;
+
+    /// Spawn a real PowerShell through the same path a session uses and
+    /// assert the encoding command never reaches the terminal.
+    #[test]
+    fn a_real_powershell_session_shows_no_encoding_command() {
+        if !cfg!(windows) {
+            return;
+        }
+        let manager = TerminalManager::new();
+        let profile = default_powershell_profile("p".into(), "proj".into());
+        let (program, args) = crate::terminal::resolve_local_shell(&profile).unwrap();
+        let session_id = "handshake-probe";
+        let marker = format!("__PROJECT_TERMINAL_READY_{session_id}__");
+        manager
+            .create(crate::terminal::SessionSpawn {
+                session_id: session_id.into(),
+                project_id: "proj".into(),
+                profile_id: "p".into(),
+                program,
+                args,
+                cwd: None,
+                env: vec![("PROJECT_TERMINAL_READY".into(), marker.clone())],
+                env_remove: Vec::new(),
+                readiness_marker: Some(marker.clone()),
+                rows: 24,
+                cols: 80,
+                scrollback_bytes: 1024 * 1024,
+            })
+            .unwrap();
+
+        let visible_now = || {
+            std::thread::sleep(std::time::Duration::from_millis(1200));
+            let (_, subscription) = manager
+                .attach(
+                    session_id,
+                    format!("probe-{}", uuid::Uuid::new_v4()),
+                    crate::terminal::scrollback::ScrollbackSnapshotFormat::Flat,
+                )
+                .unwrap();
+            String::from_utf8_lossy(&subscription.snapshot.bytes).to_string()
+        };
+
+        wait_for_interactive_shell(&manager, &profile, session_id).unwrap();
+        let after_handshake = visible_now();
+
+        // What the fix is worth: sending the same command a moment later -
+        // which is what `execute_startup_commands` used to do - puts it on
+        // screen. Asserting both directions stops this passing for the
+        // trivial reason that PowerShell echoed nothing at all.
+        let preamble = utf8_preamble_for(&profile).unwrap();
+        manager
+            .write(
+                session_id,
+                shell_command_line(profile.shell_type, preamble).as_bytes(),
+            )
+            .unwrap();
+        let after_startup_commands = visible_now();
+        manager.close_all();
+
+        assert!(
+            !after_handshake.contains("OutputEncoding"),
+            "folded into the handshake it still reached the terminal:\n{after_handshake}"
+        );
+        assert!(
+            !after_handshake.contains(&marker),
+            "the readiness marker reached the terminal:\n{after_handshake}"
+        );
+        assert!(
+            after_startup_commands.contains("OutputEncoding"),
+            "sent after the handshake it should be visible, so this test is \
+             actually measuring the handshake:\n{after_startup_commands}"
+        );
     }
 }
