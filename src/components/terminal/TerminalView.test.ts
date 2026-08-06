@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type { Terminal } from "@xterm/xterm";
 
 import { resolveTerminalTabTitle } from "./terminalTitle";
-import { measureGridPixels } from "./TerminalView";
+import { measureGridPixels } from "./measureGridPixels";
 
 describe("resolveTerminalTabTitle", () => {
   it("restores the profile name when PowerShell emits an executable path", () => {
@@ -29,10 +30,7 @@ describe("measureGridPixels", () => {
       Object.defineProperty(screen, "clientHeight", { value: 300 });
       container.appendChild(screen);
     }
-    const term = { rows: 30, cols: 100 } as {
-      rows: number;
-      cols: number;
-    };
+    const term = { rows: 30, cols: 100 } as unknown as Terminal;
     return { container, term };
   }
 
@@ -56,7 +54,7 @@ describe("measureGridPixels", () => {
     Object.defineProperty(screen, "clientWidth", { value: 900 });
     Object.defineProperty(screen, "clientHeight", { value: 0 });
     container.appendChild(screen);
-    const term = { rows: 30, cols: 100 } as { rows: number; cols: number };
+    const term = { rows: 30, cols: 100 } as unknown as Terminal;
     expect(measureGridPixels(container, term)).toEqual({ width: 0, height: 0 });
   });
 
@@ -67,7 +65,7 @@ describe("measureGridPixels", () => {
     Object.defineProperty(screen, "clientWidth", { value: 900 });
     Object.defineProperty(screen, "clientHeight", { value: 300 });
     container.appendChild(screen);
-    const term = { rows: 0, cols: 0 } as { rows: number; cols: number };
+    const term = { rows: 0, cols: 0 } as unknown as Terminal;
     expect(measureGridPixels(container, term)).toEqual({ width: 0, height: 0 });
   });
 
@@ -78,7 +76,7 @@ describe("measureGridPixels", () => {
     Object.defineProperty(screen, "clientWidth", { value: 995 });
     Object.defineProperty(screen, "clientHeight", { value: 300 });
     container.appendChild(screen);
-    const term = { rows: 30, cols: 100 } as { rows: number; cols: number };
+    const term = { rows: 30, cols: 100 } as unknown as Terminal;
     expect(measureGridPixels(container, term)).toEqual({
       width: Math.round((995 / 100) * 100),
       height: Math.round((300 / 30) * 30),
