@@ -209,7 +209,25 @@ describe("TerminalOutputQueue", () => {
 
     // Bytes before the hide are safe to render; the hide and everything
     // after it is mid-redraw and must stay queued.
-    queue.send(bytes(0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x20, 0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x6c, 1, 2, 3));
+    queue.send(
+      bytes(
+        0x68,
+        0x65,
+        0x6c,
+        0x6c,
+        0x6f,
+        0x20,
+        0x1b,
+        0x5b,
+        0x3f,
+        0x32,
+        0x35,
+        0x6c,
+        1,
+        2,
+        3,
+      ),
+    );
 
     // Continuous output trips the max-wait valve at 16 ms: only the safe
     // prefix goes out.
@@ -228,7 +246,10 @@ describe("TerminalOutputQueue", () => {
     timers.run(MAX_WAIT);
     expect(writes).toEqual([
       [0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x20],
-      [0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x6c, 1, 2, 3, 4, 5, 0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x68, 6, 7],
+      [
+        0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x6c, 1, 2, 3, 4, 5, 0x1b, 0x5b, 0x3f,
+        0x32, 0x35, 0x68, 6, 7,
+      ],
     ]);
     expect(queue.pendingCount()).toBe(0);
   });
@@ -240,9 +261,21 @@ describe("TerminalOutputQueue", () => {
 
     queue.send(
       bytes(
-        0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x6c, // hide
-        1, 2, 3,
-        0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x68, // show
+        0x1b,
+        0x5b,
+        0x3f,
+        0x32,
+        0x35,
+        0x6c, // hide
+        1,
+        2,
+        3,
+        0x1b,
+        0x5b,
+        0x3f,
+        0x32,
+        0x35,
+        0x68, // show
         4,
       ),
     );
@@ -251,7 +284,12 @@ describe("TerminalOutputQueue", () => {
     // The whole frame - hide, payload, show, and the trailing byte that
     // landed in the same burst - is written together: the show closed the
     // bracket, and the trailing byte was queued before any flush ran.
-    expect(writes).toEqual([[0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x6c, 1, 2, 3, 0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x68, 4]]);
+    expect(writes).toEqual([
+      [
+        0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x6c, 1, 2, 3, 0x1b, 0x5b, 0x3f, 0x32,
+        0x35, 0x68, 4,
+      ],
+    ]);
     expect(queue.pendingCount()).toBe(0);
   });
 
@@ -294,7 +332,10 @@ describe("TerminalOutputQueue", () => {
     queue.send(bytes(0x1b, 0x38, 5));
     timers.run(DEBOUNCE);
     expect(writes).toEqual([
-      [0x1b, 0x37, 1, 2, 0x1b, 0x5b, 0x73, 3, 4, 0x1b, 0x5b, 0x75, 0x1b, 0x38, 5],
+      [
+        0x1b, 0x37, 1, 2, 0x1b, 0x5b, 0x73, 3, 4, 0x1b, 0x5b, 0x75, 0x1b, 0x38,
+        5,
+      ],
     ]);
   });
 
@@ -304,7 +345,23 @@ describe("TerminalOutputQueue", () => {
     const queue = createQueue(writes, timers);
 
     // `ESC[?25;1049l` hides the cursor and enters the alternate screen.
-    queue.send(bytes(0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x3b, 0x31, 0x30, 0x34, 0x39, 0x6c, 7, 8));
+    queue.send(
+      bytes(
+        0x1b,
+        0x5b,
+        0x3f,
+        0x32,
+        0x35,
+        0x3b,
+        0x31,
+        0x30,
+        0x34,
+        0x39,
+        0x6c,
+        7,
+        8,
+      ),
+    );
     timers.run(MAX_WAIT);
     expect(writes).toEqual([]);
 
@@ -312,7 +369,27 @@ describe("TerminalOutputQueue", () => {
     timers.run(DEBOUNCE);
     expect(writes).toHaveLength(1);
     expect(concatenated(writes)).toEqual(
-      bytes(0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x3b, 0x31, 0x30, 0x34, 0x39, 0x6c, 7, 8, 0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x68),
+      bytes(
+        0x1b,
+        0x5b,
+        0x3f,
+        0x32,
+        0x35,
+        0x3b,
+        0x31,
+        0x30,
+        0x34,
+        0x39,
+        0x6c,
+        7,
+        8,
+        0x1b,
+        0x5b,
+        0x3f,
+        0x32,
+        0x35,
+        0x68,
+      ),
     );
   });
 
@@ -342,7 +419,25 @@ describe("TerminalOutputQueue", () => {
     timers.advance(HOLDBACK);
     timers.run();
     expect(concatenated(writes)).toEqual(
-      bytes(0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x6c, 1, 2, 3, 4, 0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x6c, 5),
+      bytes(
+        0x1b,
+        0x5b,
+        0x3f,
+        0x32,
+        0x35,
+        0x6c,
+        1,
+        2,
+        3,
+        4,
+        0x1b,
+        0x5b,
+        0x3f,
+        0x32,
+        0x35,
+        0x6c,
+        5,
+      ),
     );
   });
 
