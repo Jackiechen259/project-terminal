@@ -51,6 +51,18 @@ const TERMINAL_IMAGE_STORAGE_LIMIT_MB = 32;
 const OVERVIEW_RULER_WIDTH = 10;
 
 /**
+ * The gutter's own outline, hidden.
+ *
+ * xterm paints a 1px full-height line down the left edge of the ruler on every
+ * render, in `theme.overviewRulerBorder` - which defaults to `#ffffff`, not to
+ * anything derived from the palette. No colour scheme sets it, so every
+ * terminal drew a white hairline beside the scrollbar. The gutter sits on the
+ * terminal's own background, so a transparent outline leaves it invisible
+ * until a search actually marks something in it.
+ */
+const OVERVIEW_RULER_BORDER = "#00000000";
+
+/**
  * Open a link from terminal output.
  *
  * Both the OSC 8 handler and the plain-URL addon default to `window.open`,
@@ -175,15 +187,20 @@ export const TerminalView = memo(function TerminalView({
   }, [loadColorSchemes]);
 
   const palette = useMemo(
-    () =>
+    () => ({
       // The profile wins when it names one. Resolution falls back to the
       // global choice for an id that no longer exists, so deleting a scheme
       // does not leave a profile without colours.
-      resolveColorScheme(
+      ...resolveColorScheme(
         colorSchemeId || terminalColorScheme,
         theme,
         importedSchemes,
       ).theme,
+      // Applied here rather than in each scheme: it is a property of how this
+      // app draws the ruler, not of any palette, and imported schemes never
+      // carry it.
+      overviewRulerBorder: OVERVIEW_RULER_BORDER,
+    }),
     [colorSchemeId, terminalColorScheme, theme, importedSchemes],
   );
   // `0` means derive it from the scheme, which is right almost always; the

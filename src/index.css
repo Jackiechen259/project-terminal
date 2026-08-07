@@ -70,13 +70,14 @@
     }
   }
 
-  /* A restrained scrollbar treatment for app chrome and xterm's viewport. */
-  .app-scrollbar,
-  .xterm .xterm-viewport {
-    scrollbar-width: thin;
-    scrollbar-color: hsl(var(--scrollbar)) transparent;
-  }
-
+  /* A restrained scrollbar treatment for app chrome and xterm's viewport.
+   *
+   * Deliberately no `scrollbar-width` / `scrollbar-color` here: Chromium drops
+   * every `::-webkit-scrollbar` rule for an element that sets either of them,
+   * so declaring them turned the whole block below into dead CSS and left the
+   * platform's Fluent scrollbar - arrow buttons and all - in the gutter. The
+   * app only ever renders in a Chromium WebView, so the vendor pseudo-elements
+   * are the path that works. */
   .app-scrollbar::-webkit-scrollbar,
   .xterm .xterm-viewport::-webkit-scrollbar {
     width: 10px;
