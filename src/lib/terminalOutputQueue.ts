@@ -205,10 +205,14 @@ export class TerminalOutputQueue {
 
     const writeLength = this.tailStart - this.head;
     if (writeLength > 0) {
-      const output = this.buffer.subarray(this.head, this.tailStart);
-      // A one-element copy keeps `write` from holding a view into the
-      // growing buffer; every write of multiple bytes already allocates.
-      this.write(output.byteLength === 1 ? output.slice() : output);
+      // `slice`, never `subarray`: xterm's WriteBuffer keeps whatever array it
+      // is handed and parses it on a *later* macrotask, so the bytes have to
+      // outlive this call. `ensureCapacity` compacts this buffer back to
+      // offset 0 and `send` refills it, which would rewrite an outstanding
+      // view with output from a later frame - xterm would then parse that
+      // frame's cursor addressing twice and never see the older bytes at all,
+      // landing the cursor at whatever cell the stale sequence named.
+      this.write(this.buffer.slice(this.head, this.tailStart));
       this.head = this.tailStart;
       this.byteLength -= writeLength;
     }
@@ -311,16 +315,26 @@ export class TerminalOutputQueue {
    */
   private recomputeTail() {
     const pendingEnd = this.head + this.byteLength;
+    // A sequence that began before `head` is already xterm's - its parser
+    // carries that state, and it renders nothing until the final byte lands,
+    // so holding the continuation back protects nothing and only stalls the
+    // queue behind a cut it can never reach. The holdback valve leaves the
+    // scanner in exactly that position whenever it releases a tail that ends
+    // mid-sequence.
+    const openSequence =
+      this.state !== "idle" && this.seqStart >= this.head
+        ? this.seqStart
+        : pendingEnd;
     const cut = Math.min(
       this.cursorHideStack[0] ?? pendingEnd,
       this.decscStack[0] ?? pendingEnd,
-      this.state !== "idle" ? this.seqStart : pendingEnd,
+      openSequence,
     );
     this.tailStart = Math.min(cut, this.tailStart);
     if (
       this.cursorHideStack.length === 0 &&
       this.decscStack.length === 0 &&
-      this.state === "idle"
+      openSequence === pendingEnd
     ) {
       this.tailStart = pendingEnd;
       this.holdbackSince = null;

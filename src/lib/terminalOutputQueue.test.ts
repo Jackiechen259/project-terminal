@@ -383,6 +383,60 @@ describe("TerminalOutputQueue", () => {
     expect(concatenated(writes)).toEqual(Uint8Array.from(sent));
   });
 
+  it("hands xterm bytes it owns, not a view that later output rewrites", () => {
+    // xterm's WriteBuffer stores the array it is given and parses it on a
+    // later macrotask, so a view into the queue's own storage is read after
+    // the queue has compacted and refilled it - xterm ends up parsing a newer
+    // frame's cursor addressing in place of the bytes it was handed.
+    const handedOut: Uint8Array[] = [];
+    const timers = createTimerScheduler();
+    const queue = new TerminalOutputQueue(
+      (data) => handedOut.push(data),
+      timers.schedule,
+      timers.cancel,
+      timers.now,
+    );
+
+    // Each chunk is filled with its own marker, and 6 KiB a piece cycles well
+    // past the 32 KiB internal buffer so compaction runs several times.
+    const markers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    for (const marker of markers) {
+      queue.send(new Uint8Array(6 * 1024).fill(marker));
+      timers.run(DEBOUNCE);
+    }
+
+    expect(handedOut).toHaveLength(markers.length);
+    // Read every buffer only now, the way a deferred parse would.
+    expect(handedOut.map((data) => [...new Set(data)])).toEqual(
+      markers.map((marker) => [marker]),
+    );
+  });
+
+  it("keeps writing after the holdback valve releases a partial sequence", () => {
+    const writes: number[][] = [];
+    const timers = createTimerScheduler();
+    const queue = createQueue(writes, timers);
+
+    // Hide the cursor, then flood past MAX_HOLDBACK_BYTES ending mid-CSI, so
+    // the valve releases a tail whose escape sequence is still unfinished.
+    queue.send(bytes(0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x6c));
+    const flood = new Uint8Array(256 * 1024);
+    flood[flood.length - 2] = 0x1b;
+    flood[flood.length - 1] = 0x5b; // trailing `ESC[`
+    queue.send(flood);
+    timers.run(MAX_WAIT);
+    expect(queue.pendingCount()).toBe(0);
+
+    // The scanner is still mid-sequence over bytes xterm already has, and its
+    // parser carries that state itself. A fragment that does not finish the
+    // sequence must not be cut behind the already-written `ESC[`, which leaves
+    // the queue with nothing to write and no timer to retry.
+    queue.send(bytes(0x33)); // a CSI parameter byte, sequence still open
+    timers.run(DEBOUNCE);
+    expect(writes.at(-1)).toEqual([0x33]);
+    expect(queue.pendingCount()).toBe(0);
+  });
+
   it("re-arms both timers after flush() on an empty queue", () => {
     const writes: number[][] = [];
     const timers = createTimerScheduler();

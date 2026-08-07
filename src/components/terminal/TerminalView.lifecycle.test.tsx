@@ -29,16 +29,8 @@ const mocks = vi.hoisted(() => ({
     ((event: KeyboardEvent) => boolean) | undefined,
   binaryHandler: undefined as ((data: string) => void) | undefined,
   terminalOptions: undefined as Record<string, unknown> | undefined,
-  liveTerminal:
-    undefined as
-      | {
-          options: Record<string, unknown>;
-          element: HTMLElement | undefined;
-          textarea: HTMLTextAreaElement | undefined;
-        }
-      | undefined,
+  liveTerminal: undefined as { options: Record<string, unknown> } | undefined,
   oscHandlers: new Map<number, (payload: string) => boolean>(),
-  csiHandlers: [] as ((params: (number | number[])[]) => boolean)[],
 }));
 
 vi.mock("@/services", () => ({
@@ -74,16 +66,8 @@ vi.mock("@xterm/xterm", () => ({
         mocks.oscHandlers.set(identifier, handler);
         return { dispose: vi.fn() };
       },
-      registerCsiHandler: (
-        _id: { prefix?: string; final?: string },
-        handler: (params: (number | number[])[]) => boolean,
-      ) => {
-        mocks.csiHandlers.push(handler);
-        return { dispose: vi.fn() };
-      },
     };
     element: HTMLElement | undefined;
-    textarea: HTMLTextAreaElement | undefined;
 
     constructor(options: Record<string, unknown>) {
       this.options = { ...options };
@@ -94,9 +78,6 @@ vi.mock("@xterm/xterm", () => ({
     loadAddon() {}
     open(container: HTMLElement) {
       this.element = document.createElement("div");
-      this.textarea = document.createElement("textarea");
-      this.textarea.className = "xterm-helper-textarea";
-      this.element.appendChild(this.textarea);
       container.appendChild(this.element);
     }
     onData() {
@@ -189,7 +170,6 @@ beforeEach(() => {
   mocks.binaryHandler = undefined;
   mocks.terminalOptions = undefined;
   mocks.oscHandlers.clear();
-  mocks.csiHandlers.length = 0;
   mocks.readClipboardText.mockResolvedValue("");
   usePlatformStore.setState({
     info: {
@@ -624,38 +604,5 @@ describe("TerminalView session lifecycle", () => {
     await waitFor(() =>
       expect(mocks.write).toHaveBeenCalledWith("session-one", "\x1b[13;2u"),
     );
-  });
-
-  it("pins the helper textarea while the cursor is hidden", async () => {
-    render(
-      <TerminalView sessionId="session-one" active defaultTitle="PowerShell" />,
-    );
-    await waitFor(() =>
-      expect(mocks.csiHandlers.length).toBe(2), // hide + show handlers
-    );
-
-    const terminal = mocks.liveTerminal!;
-    const textarea = terminal.textarea!;
-    // Simulate xterm moving the textarea to an intermediate redraw cell.
-    textarea.style.left = "320px";
-    textarea.style.top = "96px";
-
-    // `ESC[?25l` hides the cursor: the textarea must be pinned out of the
-    // way so the IME does not follow the redraw's intermediate positions.
-    mocks.csiHandlers[0]([25]);
-    expect(textarea.style.getPropertyPriority("left")).toBe("important");
-    expect(textarea.style.left).toBe("0px");
-    expect(textarea.style.top).toBe("0px");
-    expect(textarea.style.opacity).toBe("0");
-
-    // xterm's internal sync must not override the pin mid-frame.
-    textarea.style.left = "480px";
-    expect(textarea.style.left).toBe("480px");
-    expect(textarea.style.opacity).toBe("0");
-
-    // `ESC[?25h` shows the cursor again: the pin lifts and xterm's own
-    // positioning takes over once more.
-    mocks.csiHandlers[1]([25]);
-    expect(textarea.style.getPropertyPriority("left")).toBe("");
   });
 });

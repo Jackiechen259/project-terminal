@@ -387,48 +387,6 @@ export const TerminalView = memo(function TerminalView({
     const scrollOnEraseDisposable = term.buffer.onBufferChange((buffer) => {
       term.options.scrollOnEraseInDisplay = buffer.type === "normal";
     });
-    // A redraw hides the cursor (`ESC[?25l`) and shows it again (`ESC[?25h`)
-    // around the frame. xterm only hides its *rendered* cursor during that
-    // window, but its hidden textarea - the anchor the IME and the WebView's
-    // composition UI follow - is re-positioned on every cursor move without
-    // checking cursor visibility, so it skips through the intermediate
-    // positions of a multi-line redraw. Pin it (invisible) while the cursor
-    // is hidden so the IME does not follow the redraw; `!important` beats the
-    // inline styles xterm writes on cursor moves. CSS-covering beats
-    // subscribing to `onCursorMove` because the internal handler has already
-    // run by the time an external listener fires.
-    let cursorHidden = false;
-    const pinTextareaWhileCursorHidden = (hidden: boolean) => {
-      if (cursorHidden === hidden) return;
-      cursorHidden = hidden;
-      const textarea = term.element?.querySelector<HTMLElement>(
-        ".xterm-helper-textarea",
-      );
-      if (!textarea) return;
-      if (hidden) {
-        textarea.style.setProperty("left", "0", "important");
-        textarea.style.setProperty("top", "0", "important");
-        textarea.style.setProperty("opacity", "0", "important");
-      } else {
-        textarea.style.removeProperty("left");
-        textarea.style.removeProperty("top");
-        textarea.style.removeProperty("opacity");
-      }
-    };
-    const hideCursorDisposable = term.parser.registerCsiHandler(
-      { prefix: "?", final: "l" },
-      (params) => {
-        if (params.flat().includes(25)) pinTextareaWhileCursorHidden(true);
-        return false; // let xterm process the DECRST normally
-      },
-    );
-    const showCursorDisposable = term.parser.registerCsiHandler(
-      { prefix: "?", final: "h" },
-      (params) => {
-        if (params.flat().includes(25)) pinTextareaWhileCursorHidden(false);
-        return false; // let xterm process the DECSET normally
-      },
-    );
     // DOM rendering can display the first prompt immediately. The renderer
     // upgrades to WebGL once its separate chunk arrives, and gets it back
     // after the GPU takes the context away.
@@ -731,8 +689,6 @@ export const TerminalView = memo(function TerminalView({
       binaryDisposable.dispose();
       titleDisposable.dispose();
       scrollOnEraseDisposable.dispose();
-      hideCursorDisposable.dispose();
-      showCursorDisposable.dispose();
       ro.disconnect();
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
       if (viewportSyncFrame !== null) {
