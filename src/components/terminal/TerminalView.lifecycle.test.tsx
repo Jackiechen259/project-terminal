@@ -53,7 +53,10 @@ vi.mock("@xterm/xterm", () => ({
     rows = 43;
     cols = 132;
     options: Record<string, unknown> = {};
-    buffer = { active: { viewportY: 0, baseY: 0 } };
+    buffer = {
+      active: { viewportY: 0, baseY: 0, type: "normal" },
+      onBufferChange: () => ({ dispose: vi.fn() }),
+    };
     modes = { bracketedPasteMode: false };
     parser = {
       registerOscHandler: (

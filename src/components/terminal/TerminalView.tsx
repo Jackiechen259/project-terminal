@@ -39,6 +39,7 @@ import {
   useSettingsStore,
 } from "@/stores/settingsStore";
 import { resolveTerminalTabTitle } from "./terminalTitle";
+import { measureGridPixels } from "./measureGridPixels";
 
 /** How many times a single session may rebuild itself after dropped output. */
 const MAX_LAGGED_RESYNCS = 3;
@@ -50,26 +51,16 @@ const TERMINAL_IMAGE_STORAGE_LIMIT_MB = 32;
 const OVERVIEW_RULER_WIDTH = 10;
 
 /**
- * The grid's size in pixels, for `TIOCGWINSZ`.
+ * The gutter's own outline, hidden.
  *
- * Image tools read it to decide how large a picture to draw; a pty that
- * reports zero makes them fall back to a fixed guess or refuse. Measured from
- * the rendered rows element rather than the container so it excludes padding
- * and the scrollbar, and returns zeroes rather than a guess when the terminal
- * has not been laid out yet - zero already means "unknown" over there.
+ * xterm paints a 1px full-height line down the left edge of the ruler on every
+ * render, in `theme.overviewRulerBorder` - which defaults to `#ffffff`, not to
+ * anything derived from the palette. No colour scheme sets it, so every
+ * terminal drew a white hairline beside the scrollbar. The gutter sits on the
+ * terminal's own background, so a transparent outline leaves it invisible
+ * until a search actually marks something in it.
  */
-function measureGridPixels(container: HTMLElement, term: Terminal) {
-  const rows = container.querySelector<HTMLElement>(".xterm-rows");
-  if (!rows || !rows.clientWidth || !rows.clientHeight) {
-    return { width: 0, height: 0 };
-  }
-  const cellWidth = rows.clientWidth / Math.max(1, term.cols);
-  const cellHeight = rows.clientHeight / Math.max(1, term.rows);
-  return {
-    width: Math.round(cellWidth * term.cols),
-    height: Math.round(cellHeight * term.rows),
-  };
-}
+const OVERVIEW_RULER_BORDER = "#00000000";
 
 /**
  * Open a link from terminal output.
@@ -196,15 +187,20 @@ export const TerminalView = memo(function TerminalView({
   }, [loadColorSchemes]);
 
   const palette = useMemo(
-    () =>
+    () => ({
       // The profile wins when it names one. Resolution falls back to the
       // global choice for an id that no longer exists, so deleting a scheme
       // does not leave a profile without colours.
-      resolveColorScheme(
+      ...resolveColorScheme(
         colorSchemeId || terminalColorScheme,
         theme,
         importedSchemes,
       ).theme,
+      // Applied here rather than in each scheme: it is a property of how this
+      // app draws the ruler, not of any palette, and imported schemes never
+      // carry it.
+      overviewRulerBorder: OVERVIEW_RULER_BORDER,
+    }),
     [colorSchemeId, terminalColorScheme, theme, importedSchemes],
   );
   // `0` means derive it from the scheme, which is right almost always; the
@@ -370,7 +366,11 @@ export const TerminalView = memo(function TerminalView({
       // Shrink glyphs whose font outline spills past the cell they occupy in
       // the model - CJK punctuation and roman numerals in a Latin font.
       rescaleOverlappingGlyphs: true,
-      // `clear`/`cls` should push the screen into scrollback rather than eat it.
+      // `clear`/`cls` should push the screen into scrollback rather than eat
+      // it. This only applies to the normal screen buffer: xterm applies the
+      // option unconditionally to whichever buffer is active, but scrolling
+      // the viewport on `ESC[2J` is not what the alternate screen's clear
+      // sequences mean. `onBufferChange` below flips it back off there.
       scrollOnEraseInDisplay: true,
       overviewRuler: { width: OVERVIEW_RULER_WIDTH },
       windowsPty,
@@ -397,6 +397,13 @@ export const TerminalView = memo(function TerminalView({
       }),
     );
     term.open(container);
+    // xterm applies `scrollOnEraseInDisplay` to whichever buffer is active,
+    // with no buffer-type check; scrolling the viewport on the alternate
+    // screen's `ESC[2J` is not what that clear sequence means. Flip the
+    // option off while a full-screen TUI is showing.
+    const scrollOnEraseDisposable = term.buffer.onBufferChange((buffer) => {
+      term.options.scrollOnEraseInDisplay = buffer.type === "normal";
+    });
     // DOM rendering can display the first prompt immediately. The renderer
     // upgrades to WebGL once its separate chunk arrives, and gets it back
     // after the GPU takes the context away.
@@ -698,6 +705,7 @@ export const TerminalView = memo(function TerminalView({
       disposable.dispose();
       binaryDisposable.dispose();
       titleDisposable.dispose();
+      scrollOnEraseDisposable.dispose();
       ro.disconnect();
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
       if (viewportSyncFrame !== null) {
