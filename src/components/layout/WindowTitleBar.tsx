@@ -15,9 +15,7 @@ import { useTranslation } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { nativeWindowService } from "@/services/native";
 import { BrandMark } from "./BrandMark";
-
-/** Which panel the right sidebar shows. */
-export type RightSidebarMode = "files" | "memos";
+import type { RightSidebarMode } from "./rightSidebarState";
 
 /**
  * Application-owned title bar for the undecorated desktop window. Keeping the

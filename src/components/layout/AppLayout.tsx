@@ -5,8 +5,11 @@ import { TerminalWorkspace } from "@/components/terminal/TerminalWorkspace";
 import { StatusBar } from "@/components/layout/StatusBar";
 import {
   WindowTitleBar,
-  type RightSidebarMode,
 } from "@/components/layout/WindowTitleBar";
+import {
+  selectRightSidebarMode,
+  type RightSidebarMode,
+} from "@/components/layout/rightSidebarState";
 import { useState } from "react";
 import { ChevronRight, LogOut, Minimize2, PowerOff } from "lucide-react";
 import {
@@ -28,11 +31,12 @@ export function AppLayout() {
   const openFileSidebarByDefault = useSettingsStore(
     (state) => state.openFileSidebarByDefault,
   );
-  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(
-    () => !openFileSidebarByDefault,
-  );
-  const [rightSidebarMode, setRightSidebarMode] =
-    useState<RightSidebarMode>("files");
+  const [rightSidebar, setRightSidebarState] = useState(() => ({
+    collapsed: !openFileSidebarByDefault,
+    mode: "files" as RightSidebarMode,
+  }));
+  const { collapsed: rightSidebarCollapsed, mode: rightSidebarMode } =
+    rightSidebar;
   const [closePromptOpen, setClosePromptOpen] = useState(false);
   const runningTerminalCount = useTerminalStore(
     (state) =>
@@ -48,14 +52,7 @@ export function AppLayout() {
    * is already showing collapses the sidebar.
    */
   const handleSelectRightSidebar = (mode: RightSidebarMode) => {
-    if (rightSidebarCollapsed) {
-      setRightSidebarMode(mode);
-      setRightSidebarCollapsed(false);
-    } else if (rightSidebarMode !== mode) {
-      setRightSidebarMode(mode);
-    } else {
-      setRightSidebarCollapsed(true);
-    }
+    setRightSidebarState((state) => selectRightSidebarMode(state, mode));
   };
 
   return (
@@ -67,7 +64,10 @@ export function AppLayout() {
         rightSidebarMode={rightSidebarMode}
         onSelectRightSidebar={handleSelectRightSidebar}
         onToggleRightSidebar={() =>
-          setRightSidebarCollapsed((collapsed) => !collapsed)
+          setRightSidebarState((state) => ({
+            ...state,
+            collapsed: !state.collapsed,
+          }))
         }
         onCloseRequest={() => setClosePromptOpen(true)}
       />
@@ -77,11 +77,15 @@ export function AppLayout() {
         {!rightSidebarCollapsed ? (
           <div className="relative flex h-full">
             <ProjectFilePanel
-              onClose={() => setRightSidebarCollapsed(true)}
+              onClose={() =>
+                setRightSidebarState((state) => ({ ...state, collapsed: true }))
+              }
               hidden={rightSidebarMode !== "files"}
             />
             <ProjectMemoPanel
-              onClose={() => setRightSidebarCollapsed(true)}
+              onClose={() =>
+                setRightSidebarState((state) => ({ ...state, collapsed: true }))
+              }
               hidden={rightSidebarMode !== "memos"}
             />
           </div>

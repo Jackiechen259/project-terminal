@@ -288,12 +288,14 @@ export function ProjectMemoPanel({ onClose, hidden = false }: ProjectMemoPanelPr
           {editingMemo ? (
             editingMemo.kind === "markdown" ? (
               <MarkdownMemoEditor
+                key={editingMemo.id}
                 projectId={activeProject.id}
                 memo={editingMemo}
                 onClose={() => setEditingId(null)}
               />
             ) : (
               <CommandMemoEditor
+                key={editingMemo.id}
                 projectId={activeProject.id}
                 memo={editingMemo}
                 onClose={() => setEditingId(null)}
