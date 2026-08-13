@@ -4,6 +4,7 @@ import {
   memoStoreStorage,
   PROJECT_MEMO_STORAGE_KEY,
   useMemoStore,
+  type MarkdownMemo,
 } from "@/stores/memoStore";
 
 beforeEach(() => {
@@ -17,7 +18,8 @@ describe("memoStore", () => {
       const a = useMemoStore.getState().createMarkdownMemo("project-a");
       const b = useMemoStore.getState().createMarkdownMemo("project-a");
       expect(a).not.toBe(b);
-      const memo = useMemoStore.getState().memosByProjectId["project-a"][0];
+      const memo = useMemoStore.getState().memosByProjectId["project-a"][0] as
+        MarkdownMemo;
       expect(memo.kind).toBe("markdown");
       expect(memo.id).toBe(a);
       expect(memo.projectId).toBe("project-a");
@@ -85,7 +87,8 @@ describe("memoStore", () => {
       useMemoStore
         .getState()
         .updateMarkdownMemo("p", id, { title: "API", content: "# Notes" });
-      const memo = useMemoStore.getState().memosByProjectId.p[0];
+      const memo = useMemoStore.getState().memosByProjectId.p[0] as
+        MarkdownMemo;
       expect(memo.title).toBe("API");
       expect(memo.content).toBe("# Notes");
       expect(memo.updatedAt).toBeGreaterThan(1);

@@ -1,8 +1,12 @@
 import { ProjectSidebar } from "@/components/projects/ProjectSidebar";
 import { ProjectFilePanel } from "@/components/files/ProjectFilePanel";
+import { ProjectMemoPanel } from "@/components/memos/ProjectMemoPanel";
 import { TerminalWorkspace } from "@/components/terminal/TerminalWorkspace";
 import { StatusBar } from "@/components/layout/StatusBar";
-import { WindowTitleBar } from "@/components/layout/WindowTitleBar";
+import {
+  WindowTitleBar,
+  type RightSidebarMode,
+} from "@/components/layout/WindowTitleBar";
 import { useState } from "react";
 import { ChevronRight, LogOut, Minimize2, PowerOff } from "lucide-react";
 import {
@@ -24,9 +28,11 @@ export function AppLayout() {
   const openFileSidebarByDefault = useSettingsStore(
     (state) => state.openFileSidebarByDefault,
   );
-  const [fileSidebarCollapsed, setFileSidebarCollapsed] = useState(
+  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(
     () => !openFileSidebarByDefault,
   );
+  const [rightSidebarMode, setRightSidebarMode] =
+    useState<RightSidebarMode>("files");
   const [closePromptOpen, setClosePromptOpen] = useState(false);
   const runningTerminalCount = useTerminalStore(
     (state) =>
@@ -36,22 +42,49 @@ export function AppLayout() {
   );
   const { t } = useTranslation();
 
+  /**
+   * Title-bar Files/Memo behavior: opening a collapsed sidebar shows the
+   * requested panel; an open sidebar switches panels; clicking the panel that
+   * is already showing collapses the sidebar.
+   */
+  const handleSelectRightSidebar = (mode: RightSidebarMode) => {
+    if (rightSidebarCollapsed) {
+      setRightSidebarMode(mode);
+      setRightSidebarCollapsed(false);
+    } else if (rightSidebarMode !== mode) {
+      setRightSidebarMode(mode);
+    } else {
+      setRightSidebarCollapsed(true);
+    }
+  };
+
   return (
     <div className="app-frame flex h-full w-full flex-col overflow-hidden bg-bg text-foreground">
       <WindowTitleBar
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={() => setSidebarCollapsed((collapsed) => !collapsed)}
-        fileSidebarCollapsed={fileSidebarCollapsed}
-        onToggleFileSidebar={() =>
-          setFileSidebarCollapsed((collapsed) => !collapsed)
+        rightSidebarCollapsed={rightSidebarCollapsed}
+        rightSidebarMode={rightSidebarMode}
+        onSelectRightSidebar={handleSelectRightSidebar}
+        onToggleRightSidebar={() =>
+          setRightSidebarCollapsed((collapsed) => !collapsed)
         }
         onCloseRequest={() => setClosePromptOpen(true)}
       />
       <div className="flex min-h-0 flex-1 flex-row">
         {!sidebarCollapsed ? <ProjectSidebar /> : null}
         <TerminalWorkspace />
-        {!fileSidebarCollapsed ? (
-          <ProjectFilePanel onClose={() => setFileSidebarCollapsed(true)} />
+        {!rightSidebarCollapsed ? (
+          <div className="relative flex h-full">
+            <ProjectFilePanel
+              onClose={() => setRightSidebarCollapsed(true)}
+              hidden={rightSidebarMode !== "files"}
+            />
+            <ProjectMemoPanel
+              onClose={() => setRightSidebarCollapsed(true)}
+              hidden={rightSidebarMode !== "memos"}
+            />
+          </div>
         ) : null}
       </div>
       <StatusBar />

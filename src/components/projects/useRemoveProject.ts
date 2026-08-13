@@ -1,12 +1,13 @@
 import { useCallback } from "react";
 
 import { useProjectStore } from "@/stores/projectStore";
+import { useMemoStore } from "@/stores/memoStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 
 /**
  * Coordinate the frontend state transition around backend-owned project
  * deletion. The backend closes the project's PTYs and deletes its persisted
- * resources; this hook only keeps workspace selection and cached tabs
+ * resources; this hook only keeps workspace selection and cached tabs/memos
  * consistent, including rollback when persistence fails.
  */
 export function useRemoveProject() {
@@ -30,7 +31,10 @@ export function useRemoveProject() {
 
       try {
         await deleteProject(projectId);
+        // Both cleanups run only after the backend delete succeeded, so a
+        // failed delete can never lose tabs or memos.
         removeProjectTabs(projectId);
+        useMemoStore.getState().removeProjectMemos(projectId);
       } catch (error) {
         if (
           switchedProject &&
