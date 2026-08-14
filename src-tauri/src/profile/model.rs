@@ -1,4 +1,4 @@
-﻿//! Terminal profile domain model. Mirrors the frontend `TerminalProfile`
+//! Terminal profile domain model. Mirrors the frontend `TerminalProfile`
 //! type. All structs use `#[serde(rename_all = "camelCase")]`.
 
 use chrono::{DateTime, Utc};
@@ -136,7 +136,6 @@ pub struct TerminalProfile {
     /// Accent for this profile's tab and focused-pane ring. `#rrggbb`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accent_color: Option<String>,
-
 
     pub is_default: bool,
     #[serde(default = "default_true")]

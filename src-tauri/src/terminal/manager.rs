@@ -1,4 +1,4 @@
-﻿//! Terminal manager: holds all live sessions keyed by session id.
+//! Terminal manager: holds all live sessions keyed by session id.
 //!
 //! Phase 3 wires local shells. The manager is process-wide state shared via
 //! Tauri's `manage()`. Closing a session kills the child process so it does
@@ -27,6 +27,14 @@ pub struct SessionInfo {
     pub status: SessionStatus,
     pub exit_code: Option<i32>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// The workspace that owns this session. `None` for sessions created
+    /// outside any window (for example the remote gateway).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    /// The window label that owns this session (== `workspace_id` for desktop
+    /// windows). `None` for sessions created outside any window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<String>,
 }
 
 impl From<&TerminalSession> for SessionInfo {
@@ -38,6 +46,8 @@ impl From<&TerminalSession> for SessionInfo {
             status: session.status(),
             exit_code: session.exit_code(),
             created_at: session.created_at,
+            workspace_id: session.workspace_id.clone(),
+            window_id: session.window_id.clone(),
         }
     }
 }
@@ -182,6 +192,8 @@ mod tests {
             session_id: id.into(),
             project_id: "project-1".into(),
             profile_id: "profile-1".into(),
+            workspace_id: Some("workspace-1".into()),
+            window_id: Some("workspace-1".into()),
             program: "cmd.exe".into(),
             args: vec!["/Q".into()],
             cwd: None,

@@ -1,4 +1,4 @@
-﻿use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
@@ -476,7 +476,16 @@ async fn create_session(
         scrollback_megabytes: Some(4),
     };
 
-    match create_terminal_inner(&state.app, &state.terminal, create_request).await {
+    // Remote clients own no window: sessions created through the gateway are
+    // deliberately outside every desktop workspace.
+    match create_terminal_inner(
+        &state.app,
+        &state.terminal,
+        create_request,
+        crate::commands::terminal::SessionOwnership::default(),
+    )
+    .await
+    {
         Ok(session_id) => {
             audit(
                 &state,
@@ -1500,6 +1509,8 @@ mod tests {
                 session_id: session_id.clone(),
                 project_id: "project-visible".into(),
                 profile_id: "profile-visible".into(),
+                workspace_id: None,
+                window_id: None,
                 program: if cfg!(windows) {
                     "cmd.exe".into()
                 } else {

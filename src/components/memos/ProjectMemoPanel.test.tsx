@@ -304,8 +304,8 @@ describe("ProjectMemoPanel", () => {
     expect(await screen.findByText("Docker Todo")).toBeInTheDocument();
 
     // Project B memos stay in the store under their own key.
-    expect(
-      useMemoStore.getState().memosByProjectId.p2[0].title,
-    ).toBe("Docker Todo");
+    expect(useMemoStore.getState().memosByProjectId.p2[0].title).toBe(
+      "Docker Todo",
+    );
   });
 });

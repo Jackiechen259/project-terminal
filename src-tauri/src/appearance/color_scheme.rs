@@ -51,9 +51,7 @@ pub struct TerminalColorScheme {
 /// Deliberately narrow. Windows Terminal writes exactly this form, and
 /// accepting shorthand or `rgb()` would push normalisation onto every reader.
 pub fn is_hex_color(value: &str) -> bool {
-    value.len() == 7
-        && value.starts_with('#')
-        && value[1..].chars().all(|c| c.is_ascii_hexdigit())
+    value.len() == 7 && value.starts_with('#') && value[1..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
 impl TerminalColorScheme {

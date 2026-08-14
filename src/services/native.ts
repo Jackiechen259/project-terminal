@@ -1,5 +1,6 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview, type DragDropEvent } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -22,6 +23,12 @@ export const nativeWindowService = {
   minimize: () => getCurrentWindow().minimize(),
   close: () => getCurrentWindow().close(),
   toggleMaximize: () => getCurrentWindow().toggleMaximize(),
+  /**
+   * Subscribe to a backend-emitted event on this window. The unsubscribe
+   * function is returned asynchronously, matching Tauri's API.
+   */
+  listen: <T>(event: string, handler: (payload: T) => void) =>
+    listen<T>(event, (event) => handler(event.payload)),
 };
 
 export const nativeDialogService = {

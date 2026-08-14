@@ -29,14 +29,13 @@ const mocks = vi.hoisted(() => ({
     ((event: KeyboardEvent) => boolean) | undefined,
   binaryHandler: undefined as ((data: string) => void) | undefined,
   terminalOptions: undefined as Record<string, unknown> | undefined,
-  liveTerminal:
-    undefined as
-      | {
-          options: Record<string, unknown>;
-          element: HTMLElement | undefined;
-          textarea: HTMLTextAreaElement | undefined;
-        }
-      | undefined,
+  liveTerminal: undefined as
+    | {
+        options: Record<string, unknown>;
+        element: HTMLElement | undefined;
+        textarea: HTMLTextAreaElement | undefined;
+      }
+    | undefined,
   oscHandlers: new Map<number, (payload: string) => boolean>(),
   csiHandlers: [] as ((params: (number | number[])[]) => boolean)[],
 }));
@@ -630,8 +629,8 @@ describe("TerminalView session lifecycle", () => {
     render(
       <TerminalView sessionId="session-one" active defaultTitle="PowerShell" />,
     );
-    await waitFor(() =>
-      expect(mocks.csiHandlers.length).toBe(2), // hide + show handlers
+    await waitFor(
+      () => expect(mocks.csiHandlers.length).toBe(2), // hide + show handlers
     );
 
     const terminal = mocks.liveTerminal!;

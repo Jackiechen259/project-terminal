@@ -1,4 +1,4 @@
-﻿//! Terminal module: PTY sessions, manager, shell escaping.
+//! Terminal module: PTY sessions, manager, shell escaping.
 //!
 //! Phase 3 supports local PowerShell/CMD/custom-shell sessions. SSH
 //! (`ssh.exe`) sessions arrive in Phase 6; environment initialization
@@ -9,8 +9,8 @@ pub mod escaping;
 pub mod initializer;
 pub mod manager;
 pub mod scrollback;
-pub mod shell_integration;
 pub mod session;
+pub mod shell_integration;
 pub mod wsl;
 
 use std::path::PathBuf;
@@ -108,10 +108,7 @@ pub fn resolve_term_env(project_type: ProjectType, shell_type: ShellType) -> Vec
 /// understand the inline form and reads it as a directory path. The result is
 /// the same `unknown terminal type` failure the inline entry exists to
 /// prevent, arriving by a different route.
-pub fn resolve_term_env_remove(
-    project_type: ProjectType,
-    shell_type: ShellType,
-) -> Vec<String> {
+pub fn resolve_term_env_remove(project_type: ProjectType, shell_type: ShellType) -> Vec<String> {
     if resolve_term(project_type, shell_type) == TERM_SIXEL {
         // This session sets its own TERMINFO; nothing to strip.
         return Vec::new();
@@ -152,9 +149,9 @@ pub fn utf8_preamble(shell_type: ShellType) -> Option<&'static str> {
         // write; `$OutputEncoding` is how PowerShell encodes what it pipes to
         // them. `UTF8Encoding::new($false)` is UTF-8 without a BOM - the BOM
         // would otherwise appear at the head of every redirected file.
-        ShellType::Powershell => Some(
-            "$OutputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)",
-        ),
+        ShellType::Powershell => {
+            Some("$OutputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)")
+        }
         ShellType::Cmd => Some("chcp 65001>nul"),
         _ => None,
     }
@@ -385,11 +382,19 @@ fn find_powershell_uncached() -> AppResult<(String, bool)> {
 /// none of which put Git under `Program Files`.
 pub(crate) fn git_root_from_git_exe(git_exe: &std::path::Path) -> Option<PathBuf> {
     let parent = git_exe.parent()?;
-    match parent.file_name()?.to_string_lossy().to_ascii_lowercase().as_str() {
+    match parent
+        .file_name()?
+        .to_string_lossy()
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "cmd" => Some(parent.parent()?.to_path_buf()),
         "bin" => {
             let grandparent = parent.parent()?;
-            let name = grandparent.file_name()?.to_string_lossy().to_ascii_lowercase();
+            let name = grandparent
+                .file_name()?
+                .to_string_lossy()
+                .to_ascii_lowercase();
             // `<root>\mingw64\bin` and `<root>\bin` are both real layouts.
             if name.starts_with("mingw") {
                 Some(grandparent.parent()?.to_path_buf())

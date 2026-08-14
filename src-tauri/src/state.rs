@@ -51,9 +51,8 @@ impl AppState {
         // separately rather than as a fifth argument because most callers -
         // every test helper - have no interest in them, and threading an
         // unused path through all of them would obscure the ones that do.
-        let color_schemes = ColorSchemeRepository::new(
-            projects.path().with_file_name("color-schemes.json"),
-        );
+        let color_schemes =
+            ColorSchemeRepository::new(projects.path().with_file_name("color-schemes.json"));
         Self {
             projects: Arc::new(projects),
             profiles: Arc::new(profiles),

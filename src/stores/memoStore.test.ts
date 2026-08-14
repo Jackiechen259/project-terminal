@@ -18,8 +18,9 @@ describe("memoStore", () => {
       const a = useMemoStore.getState().createMarkdownMemo("project-a");
       const b = useMemoStore.getState().createMarkdownMemo("project-a");
       expect(a).not.toBe(b);
-      const memo = useMemoStore.getState().memosByProjectId["project-a"][0] as
-        MarkdownMemo;
+      const memo = useMemoStore.getState().memosByProjectId[
+        "project-a"
+      ][0] as MarkdownMemo;
       expect(memo.kind).toBe("markdown");
       expect(memo.id).toBe(a);
       expect(memo.projectId).toBe("project-a");
@@ -87,8 +88,8 @@ describe("memoStore", () => {
       useMemoStore
         .getState()
         .updateMarkdownMemo("p", id, { title: "API", content: "# Notes" });
-      const memo = useMemoStore.getState().memosByProjectId.p[0] as
-        MarkdownMemo;
+      const memo = useMemoStore.getState().memosByProjectId
+        .p[0] as MarkdownMemo;
       expect(memo.title).toBe("API");
       expect(memo.content).toBe("# Notes");
       expect(memo.updatedAt).toBeGreaterThan(1);
@@ -113,9 +114,7 @@ describe("memoStore", () => {
 
     it("does not touch a command memo through the markdown API", () => {
       const id = useMemoStore.getState().createCommandMemo("p");
-      useMemoStore
-        .getState()
-        .updateMarkdownMemo("p", id, { content: "nope" });
+      useMemoStore.getState().updateMarkdownMemo("p", id, { content: "nope" });
       expect(useMemoStore.getState().memosByProjectId.p[0].kind).toBe(
         "command",
       );
@@ -133,13 +132,11 @@ describe("memoStore", () => {
           ),
         },
       }));
-      useMemoStore
-        .getState()
-        .updateCommandMemo("p", id, {
-          title: "Dev server",
-          description: "Start Vite",
-          command: "pnpm dev",
-        });
+      useMemoStore.getState().updateCommandMemo("p", id, {
+        title: "Dev server",
+        description: "Start Vite",
+        command: "pnpm dev",
+      });
       const memo = useMemoStore.getState().memosByProjectId.p[0];
       expect(memo).toMatchObject({
         title: "Dev server",

@@ -31,10 +31,7 @@ export function CommandMemoEditor({
   const [dirty, setDirty] = useState(false);
 
   const handleClose = () => {
-    if (
-      dirty &&
-      !window.confirm(t("Discard unsaved changes?"))
-    ) {
+    if (dirty && !window.confirm(t("Discard unsaved changes?"))) {
       return;
     }
     onClose();
@@ -64,7 +61,10 @@ export function CommandMemoEditor({
       </div>
       <div className="app-scrollbar flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-3">
         <div className="flex flex-col gap-1">
-          <Label htmlFor="memo-command-title" className="text-[11px] text-muted-foreground">
+          <Label
+            htmlFor="memo-command-title"
+            className="text-[11px] text-muted-foreground"
+          >
             {t("Title")}
           </Label>
           <Input
@@ -79,7 +79,10 @@ export function CommandMemoEditor({
           />
         </div>
         <div className="flex flex-col gap-1">
-          <Label htmlFor="memo-command-description" className="text-[11px] text-muted-foreground">
+          <Label
+            htmlFor="memo-command-description"
+            className="text-[11px] text-muted-foreground"
+          >
             {t("Description")}
           </Label>
           <Input
@@ -94,7 +97,10 @@ export function CommandMemoEditor({
           />
         </div>
         <div className="flex min-h-0 flex-1 flex-col gap-1">
-          <Label htmlFor="memo-command-body" className="text-[11px] text-muted-foreground">
+          <Label
+            htmlFor="memo-command-body"
+            className="text-[11px] text-muted-foreground"
+          >
             {t("Command")}
           </Label>
           <textarea

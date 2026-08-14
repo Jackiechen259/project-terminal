@@ -33,9 +33,7 @@ pnpm dev
 
 describe("MarkdownMemoPreview", () => {
   it("renders headings, emphasis, lists, task lists, code, quotes, links, and GFM tables", () => {
-    const { container } = render(
-      <MarkdownMemoPreview content={GFM_SAMPLE} />,
-    );
+    const { container } = render(<MarkdownMemoPreview content={GFM_SAMPLE} />);
 
     expect(container.querySelector("h1")?.textContent).toBe("Heading");
     expect(container.querySelector("strong")?.textContent).toBe("bold");
@@ -62,7 +60,9 @@ describe("MarkdownMemoPreview", () => {
   it("never executes raw HTML from memo content", () => {
     const { container } = render(
       <MarkdownMemoPreview
-        content={'# Safe\n\n<script>window.__memoPwned = true</script>\n\n<img src=x onerror="window.__memoPwned = true">'}
+        content={
+          '# Safe\n\n<script>window.__memoPwned = true</script>\n\n<img src=x onerror="window.__memoPwned = true">'
+        }
       />,
     );
 

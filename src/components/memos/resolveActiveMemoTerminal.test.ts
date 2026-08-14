@@ -33,7 +33,10 @@ function makeState(
   overrides: Partial<
     Pick<
       TerminalStoreState,
-      "activeProjectId" | "tabsById" | "tabGroupsByProjectId" | "splitViewsByProjectId"
+      | "activeProjectId"
+      | "tabsById"
+      | "tabGroupsByProjectId"
+      | "splitViewsByProjectId"
     >
   > = {},
 ): TerminalStoreState {
@@ -180,9 +183,9 @@ describe("resolveActiveTerminalForProject", () => {
 
 describe("isMemoTerminalRunnable", () => {
   it("rejects a tab without a sessionId", () => {
-    expect(isMemoTerminalRunnable(makeTab("t1", "p1", { sessionId: null }))).toBe(
-      false,
-    );
+    expect(
+      isMemoTerminalRunnable(makeTab("t1", "p1", { sessionId: null })),
+    ).toBe(false);
   });
 
   it("rejects an exited or errored tab", () => {

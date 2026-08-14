@@ -50,7 +50,10 @@ interface ProjectMemoPanelProps {
  * through the project's existing, focused terminal session - never a spawned
  * shell.
  */
-export function ProjectMemoPanel({ onClose, hidden = false }: ProjectMemoPanelProps) {
+export function ProjectMemoPanel({
+  onClose,
+  hidden = false,
+}: ProjectMemoPanelProps) {
   const { t, language } = useTranslation();
   const activeProjectId = useTerminalStore((state) => state.activeProjectId);
   const projects = useProjectStore((state) => state.projects);
@@ -98,8 +101,7 @@ export function ProjectMemoPanel({ onClose, hidden = false }: ProjectMemoPanelPr
   }, [copiedId]);
 
   const sortedMemos = useMemo(
-    () =>
-      [...memos].sort((a, b) => b.updatedAt - a.updatedAt),
+    () => [...memos].sort((a, b) => b.updatedAt - a.updatedAt),
     [memos],
   );
   const notes = useMemo(
@@ -114,9 +116,7 @@ export function ProjectMemoPanel({ onClose, hidden = false }: ProjectMemoPanelPr
 
   const editingMemo = useMemo(
     () =>
-      editingId
-        ? (memos.find((memo) => memo.id === editingId) ?? null)
-        : null,
+      editingId ? (memos.find((memo) => memo.id === editingId) ?? null) : null,
     [editingId, memos],
   );
 
@@ -252,9 +252,7 @@ export function ProjectMemoPanel({ onClose, hidden = false }: ProjectMemoPanelPr
               variant="ghost"
               size="icon"
               className="h-7 w-7 shrink-0 text-muted-foreground"
-              title={
-                tab === "notes" ? t("New note") : t("New command")
-              }
+              title={tab === "notes" ? t("New note") : t("New command")}
               aria-label={tab === "notes" ? t("New note") : t("New command")}
               onClick={handleNew}
             >

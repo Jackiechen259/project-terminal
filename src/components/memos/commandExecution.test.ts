@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { terminalService } from "@/services";
 
-import { copyTextToClipboard, insertCommand, runCommand } from "./commandExecution";
+import {
+  copyTextToClipboard,
+  insertCommand,
+  runCommand,
+} from "./commandExecution";
 
 vi.mock("@/services", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/services")>()),

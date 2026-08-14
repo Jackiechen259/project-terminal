@@ -9,11 +9,13 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Square,
+  SquarePlus,
   X,
 } from "lucide-react";
 import { useTranslation } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { nativeWindowService } from "@/services/native";
+import { windowService } from "@/window/windowService";
 import { BrandMark } from "./BrandMark";
 import type { RightSidebarMode } from "./rightSidebarState";
 
@@ -186,6 +188,12 @@ export function WindowTitleBar({
         onMouseDown={(event) => event.stopPropagation()}
         onDoubleClick={(event) => event.stopPropagation()}
       >
+        <WindowControl
+          label={t("New window")}
+          onClick={() => void windowService.newWindow()}
+        >
+          <SquarePlus />
+        </WindowControl>
         <WindowControl
           label={t("Minimize")}
           onClick={() => void nativeWindowService.minimize()}

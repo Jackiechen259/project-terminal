@@ -8,7 +8,10 @@
  */
 
 import { focusedPane } from "@/lib/paneLayout";
-import { useTerminalStore, type TerminalStoreState } from "@/stores/terminalStore";
+import {
+  useTerminalStore,
+  type TerminalStoreState,
+} from "@/stores/terminalStore";
 import type { TerminalTab } from "@/types";
 
 type TerminalStateSlice = Pick<
@@ -56,7 +59,9 @@ export function isMemoTerminalRunnable(
  * a memo panel re-renders only when the target tab actually changes (new
  * focused pane, tab activated, tab status/session updated).
  */
-export function useMemoTerminalTarget(projectId: string | null): TerminalTab | null {
+export function useMemoTerminalTarget(
+  projectId: string | null,
+): TerminalTab | null {
   const targetTabId = useTerminalStore((state) => {
     if (!projectId) return null;
     const group = state.tabGroupsByProjectId[projectId];

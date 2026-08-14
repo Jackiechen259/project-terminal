@@ -653,6 +653,22 @@ const zhCNWorkspace: Record<string, string> = {
   "Right panel": "右侧面板",
   "Show right sidebar": "显示右侧边栏",
   "Hide right sidebar": "隐藏右侧边栏",
+  // --- Multi-window ---
+  "New window": "新建窗口",
+  "Open in New Window": "在新窗口中打开",
+  "Close this window?": "关闭此窗口？",
+  "{count} terminal(s) in this window are still running.":
+    "此窗口中有 {count} 个终端仍在运行。",
+  "Close window and keep terminals running": "关闭窗口并保持终端运行",
+  "Terminals keep working in the background. Reopen this window from the tray icon.":
+    "终端将在后台继续运行。可从托盘图标重新打开此窗口。",
+  "Close window and stop terminals in this window":
+    "关闭窗口并停止此窗口中的终端",
+  "Other windows and their terminals are not affected.":
+    "其他窗口及其终端不受影响。",
+  "Restore windows from previous session": "恢复上次会话的窗口",
+  "Reopen every workspace window that was open when the application last ran. When off, only the most recently active window is restored.":
+    "重新打开应用上次运行时的所有工作区窗口。关闭后仅恢复最近活动的一个窗口。",
 };
 
 const dictionaries: Record<AppLanguage, Record<string, string>> = {

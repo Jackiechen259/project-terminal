@@ -324,7 +324,10 @@ fn list_ssh_files(
 /// no size, which is no worse than the previous per-file probe reporting zero.
 fn parse_wc_sizes(block: &[u8]) -> HashMap<String, u64> {
     let text = String::from_utf8_lossy(block);
-    let mut lines: Vec<&str> = text.lines().filter(|line| !line.trim().is_empty()).collect();
+    let mut lines: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
     lines.pop();
 
     let mut sizes = HashMap::with_capacity(lines.len());

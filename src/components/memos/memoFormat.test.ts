@@ -4,10 +4,8 @@ import { translate } from "@/i18n";
 
 import { formatMemoUpdatedAt, memoDisplayTitle } from "./memoFormat";
 
-const t = (
-  source: string,
-  params?: Record<string, string | number>,
-): string => translate("en", source, params);
+const t = (source: string, params?: Record<string, string | number>): string =>
+  translate("en", source, params);
 
 describe("memoDisplayTitle", () => {
   it("falls back to kind-specific untitled labels", () => {
@@ -30,7 +28,9 @@ describe("formatMemoUpdatedAt", () => {
 
   it("labels recent updates in minutes", () => {
     expect(formatMemoUpdatedAt(minutesAgo(1), t, "en")).toBe("Updated 1m ago");
-    expect(formatMemoUpdatedAt(minutesAgo(30), t, "en")).toBe("Updated 30m ago");
+    expect(formatMemoUpdatedAt(minutesAgo(30), t, "en")).toBe(
+      "Updated 30m ago",
+    );
   });
 
   it("labels the first minute as just now", () => {

@@ -29,11 +29,7 @@ export function MarkdownMemoPreview({ content }: { content: string }) {
   );
 }
 
-function MemoLink({
-  href,
-  children,
-  ...rest
-}: ComponentPropsWithoutRef<"a">) {
+function MemoLink({ href, children, ...rest }: ComponentPropsWithoutRef<"a">) {
   return (
     <a
       href={href}

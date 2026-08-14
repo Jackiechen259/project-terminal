@@ -1,4 +1,4 @@
-﻿//! Terminal session: owns one PTY plus a reader thread, bounded scrollback,
+//! Terminal session: owns one PTY plus a reader thread, bounded scrollback,
 //! and a broadcast event stream.
 //!
 //! Phase 3 supports local shells only. SSH (`ssh.exe`) sessions arrive in
@@ -104,6 +104,12 @@ pub struct SessionSpawn {
     pub session_id: String,
     pub project_id: String,
     pub profile_id: String,
+    /// The workspace window that requested this session. `None` for sessions
+    /// created outside any window (for example the remote gateway).
+    pub workspace_id: Option<String>,
+    /// The window label the session belongs to (== `workspace_id` for desktop
+    /// windows). `None` for sessions created outside any window.
+    pub window_id: Option<String>,
     pub program: String,
     pub args: Vec<String>,
     pub cwd: Option<String>,
@@ -297,6 +303,8 @@ pub struct TerminalSession {
     pub session_id: String,
     pub project_id: String,
     pub profile_id: String,
+    pub workspace_id: Option<String>,
+    pub window_id: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     inner: Arc<Mutex<SessionInner>>,
     ready_watcher: Arc<Mutex<ReadyWatcher>>,
@@ -496,6 +504,8 @@ impl TerminalSession {
             session_id,
             project_id: spawn.project_id,
             profile_id: spawn.profile_id,
+            workspace_id: spawn.workspace_id,
+            window_id: spawn.window_id,
             created_at: chrono::Utc::now(),
             inner,
             ready_watcher,
@@ -702,6 +712,8 @@ mod tests {
             session_id: "test-session".to_string(),
             project_id: "test-project".to_string(),
             profile_id: "test-profile".to_string(),
+            workspace_id: None,
+            window_id: None,
             program: program.to_string(),
             args: args.iter().map(|s| s.to_string()).collect(),
             cwd: None,
@@ -918,6 +930,8 @@ mod tests {
             session_id: "ready-session".to_string(),
             project_id: "test-project".to_string(),
             profile_id: "test-profile".to_string(),
+            workspace_id: None,
+            window_id: None,
             program: "cmd.exe".to_string(),
             args: vec!["/Q".to_string()],
             cwd: None,
@@ -985,6 +999,8 @@ mod tests {
             session_id: "powershell-ready-session".to_string(),
             project_id: "test-project".to_string(),
             profile_id: "test-profile".to_string(),
+            workspace_id: None,
+            window_id: None,
             program: "powershell.exe".to_string(),
             args: vec!["-NoLogo".to_string()],
             cwd: None,

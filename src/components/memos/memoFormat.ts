@@ -6,9 +6,7 @@ export function memoDisplayTitle(
   t: TranslateFn,
 ): string {
   if (memo.title.trim()) return memo.title;
-  return memo.kind === "markdown"
-    ? t("Untitled note")
-    : t("Untitled command");
+  return memo.kind === "markdown" ? t("Untitled note") : t("Untitled command");
 }
 
 /**

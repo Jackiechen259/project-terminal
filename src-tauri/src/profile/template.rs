@@ -1,4 +1,4 @@
-﻿//! Reusable profile template. Unlike `TerminalProfile`, a template is not
+//! Reusable profile template. Unlike `TerminalProfile`, a template is not
 //! bound to a project - it stores shell/environment/startup configuration
 //! that can be applied to any project. When the user picks a template from
 //! the quick-launch menu, the frontend creates a concrete `TerminalProfile`
@@ -95,7 +95,6 @@ pub struct ProfileTemplate {
     /// Accent for this profile's tab and focused-pane ring. `#rrggbb`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accent_color: Option<String>,
-
 
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
