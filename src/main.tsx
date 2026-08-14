@@ -2,6 +2,9 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
+import { WindowWorkspaceProvider } from "./window/WindowWorkspaceProvider";
+import { prepareWorkspace } from "./window/windowBoot";
+import type { WorkspaceInfo } from "./window/windowService";
 
 // Prevent WebView2 from showing its Edge context menu on any surface. Individual
 // components can still open an application-owned menu from the same event.
@@ -50,10 +53,29 @@ class AppErrorBoundary extends React.Component<
   }
 }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <AppErrorBoundary>
-      <App />
-    </AppErrorBoundary>
-  </React.StrictMode>,
-);
+function renderApp(info: WorkspaceInfo | null) {
+  const fallbackInfo: WorkspaceInfo = {
+    windowLabel: "main",
+    workspaceId: "main",
+    projectId: null,
+  };
+  ReactDOM.createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>
+      <AppErrorBoundary>
+        <WindowWorkspaceProvider info={info ?? fallbackInfo}>
+          <App />
+        </WindowWorkspaceProvider>
+      </AppErrorBoundary>
+    </React.StrictMode>,
+  );
+}
+
+// Resolve the workspace identity and hydrate its layout before the first
+// frame renders, so a restored window never flashes its empty state. The
+// static startup shell in index.html stays visible until then.
+void prepareWorkspace()
+  .then(renderApp)
+  .catch((error) => {
+    console.error("Failed to resolve workspace, using legacy fallback", error);
+    renderApp(null);
+  });

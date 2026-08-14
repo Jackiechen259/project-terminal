@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 import { WindowTitleBar } from "./WindowTitleBar";
 
@@ -87,5 +87,52 @@ describe("WindowTitleBar maximize button", () => {
     const button = await screen.findByRole("button", { name: "Maximize" });
     expect(button.querySelector(".lucide-square")).not.toBeNull();
     expect(button.querySelector(".lucide-copy")).toBeNull();
+  });
+});
+
+describe("WindowTitleBar right sidebar mode", () => {
+  it("reports Files and Memo selections", () => {
+    const onSelect = vi.fn();
+    render(
+      <WindowTitleBar
+        rightSidebarMode="files"
+        onSelectRightSidebar={onSelect}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Memo" }));
+    expect(onSelect).toHaveBeenCalledWith("memos");
+    fireEvent.click(screen.getByRole("tab", { name: "Files" }));
+    expect(onSelect).toHaveBeenCalledWith("files");
+  });
+
+  it("marks the visible panel selected and dims it when the sidebar is collapsed", () => {
+    const { rerender } = render(
+      <WindowTitleBar
+        rightSidebarMode="files"
+        rightSidebarCollapsed={false}
+        onSelectRightSidebar={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("tab", { name: "Files" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("tab", { name: "Memo" })).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
+
+    rerender(
+      <WindowTitleBar
+        rightSidebarMode="files"
+        rightSidebarCollapsed
+        onSelectRightSidebar={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("tab", { name: "Files" })).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
   });
 });

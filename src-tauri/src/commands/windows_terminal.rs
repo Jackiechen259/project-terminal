@@ -1,4 +1,4 @@
-﻿//! Import visible profiles and colour schemes from the local Windows Terminal
+//! Import visible profiles and colour schemes from the local Windows Terminal
 //! settings files.
 //!
 //! Windows Terminal stores JSON-with-comments and accepts trailing commas, so
@@ -510,8 +510,11 @@ fn import_windows_terminal_templates_from_paths_inner(
 
     state.with_config_write(|| {
         let mut collection = state.templates.load()?;
-        let mut signatures: HashSet<String> =
-            collection.templates.iter().map(template_signature).collect();
+        let mut signatures: HashSet<String> = collection
+            .templates
+            .iter()
+            .map(template_signature)
+            .collect();
         let mut imported = Vec::new();
 
         for draft in drafts {
@@ -1486,7 +1489,10 @@ mod tests {
         .unwrap();
         assert_eq!(first.imported.len(), 2);
         assert_eq!(first.imported[0].icon, TemplateIcon::Terminal);
-        assert_eq!(first.imported[1].wsl_distribution.as_deref(), Some("Ubuntu"));
+        assert_eq!(
+            first.imported[1].wsl_distribution.as_deref(),
+            Some("Ubuntu")
+        );
 
         let rescan = scan_windows_terminal_templates_from_paths_inner(
             &state,

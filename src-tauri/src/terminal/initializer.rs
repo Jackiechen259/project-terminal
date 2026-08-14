@@ -1,4 +1,4 @@
-﻿//! Environment initialization commands for PTY sessions.
+//! Environment initialization commands for PTY sessions.
 //!
 //! Phase 3.6/3.7 covers Conda, venv, Poetry, uv, and custom initializations.
 //! The manager resolves the profile's environment type and returns a script
@@ -115,9 +115,7 @@ pub fn build_remote_initialization_commands(profile: &TerminalProfile) -> AppRes
         commands.push(if fish {
             format!("begin; {activation}; end; or printf '%s\\n' '{WARNING}' >&2")
         } else {
-            format!(
-                "if ! ( {activation} ); then printf '%s\\n' '{WARNING}' >&2; fi"
-            )
+            format!("if ! ( {activation} ); then printf '%s\\n' '{WARNING}' >&2; fi")
         });
     }
     commands.extend(

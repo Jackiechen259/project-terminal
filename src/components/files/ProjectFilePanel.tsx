@@ -67,7 +67,14 @@ const ARCHIVE_EXTENSIONS = new Set([
   "xz",
 ]);
 
-export function ProjectFilePanel({ onClose }: { onClose: () => void }) {
+export function ProjectFilePanel({
+  onClose,
+  hidden = false,
+}: {
+  onClose: () => void;
+  /** Kept mounted (but hidden) while the Memo panel is active. */
+  hidden?: boolean;
+}) {
   const { t } = useTranslation();
   const panelRef = useRef<HTMLElement>(null);
   const activeProjectId = useTerminalStore((state) => state.activeProjectId);
@@ -216,7 +223,10 @@ export function ProjectFilePanel({ onClose }: { onClose: () => void }) {
   return (
     <aside
       ref={panelRef}
-      className="relative flex w-[320px] min-w-[260px] max-w-[38vw] shrink-0 flex-col border-l border-border bg-surface/95"
+      className={cn(
+        "relative flex w-[320px] min-w-[260px] max-w-[38vw] shrink-0 flex-col border-l border-border bg-surface/95",
+        hidden && "hidden",
+      )}
       aria-label={t("Project files")}
     >
       <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-3">

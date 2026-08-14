@@ -66,6 +66,11 @@ impl ConfigDirs {
     pub fn remote_config_path(&self) -> PathBuf {
         self.root.join("remote-config.json")
     }
+    /// Multi-window workspace registry: which workspace windows were open when
+    /// the application last ran, plus their geometry and active projects.
+    pub fn window_workspaces_path(&self) -> PathBuf {
+        self.root.join("window-workspaces.json")
+    }
     #[cfg(test)]
     pub fn settings_path(&self) -> PathBuf {
         self.root.join("settings.json")

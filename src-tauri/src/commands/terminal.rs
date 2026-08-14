@@ -1,4 +1,4 @@
-﻿//! Terminal Tauri commands.
+//! Terminal Tauri commands.
 //!
 //! Per plan Â§12.3: `create_terminal`, `write_terminal`, `resize_terminal`,
 //! `close_terminal`, `restart_terminal`.
@@ -12,7 +12,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, InvokeResponseBody};
-use tauri::State;
+use tauri::{Manager, State};
 
 use crate::error::{AppError, AppResult};
 use crate::state::{new_id, AppState};
@@ -47,6 +47,32 @@ pub struct CreateTerminalRequest {
     pub cols: u16,
     #[serde(default)]
     pub scrollback_megabytes: Option<u8>,
+}
+
+/// Which workspace/window owns a terminal session.
+///
+/// The backend derives this from the calling webview's label - the frontend
+/// never submits a window id of its own choosing, so window A cannot claim to
+/// be window B. `None` fields mean the session was created outside any window
+/// (for example by the remote gateway).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionOwnership {
+    pub workspace_id: Option<String>,
+    pub window_id: Option<String>,
+}
+
+impl SessionOwnership {
+    /// Resolve the owning workspace from the webview that invoked a command.
+    pub fn from_webview(app: &tauri::AppHandle, webview_label: &str) -> Self {
+        let windows = app.try_state::<crate::window::WindowManager>();
+        match windows.and_then(|manager| manager.workspace_id_for_window(webview_label)) {
+            Some(workspace_id) => Self {
+                workspace_id: Some(workspace_id.clone()),
+                window_id: Some(workspace_id),
+            },
+            None => Self::default(),
+        }
+    }
 }
 
 /// Per-session state we keep alongside the manager so restart can rebuild
@@ -144,6 +170,34 @@ impl TerminalState {
             let _ = self.manager.close(&session_id);
             self.forget(&session_id);
         }
+    }
+
+    /// Live sessions owned by one workspace. Used when a window is reopened
+    /// so its frontend can reattach instead of starting fresh shells.
+    pub(crate) fn list_workspace_sessions(&self, workspace_id: &str) -> Vec<SessionInfo> {
+        self.manager
+            .list()
+            .into_iter()
+            .filter(|session| session.workspace_id.as_deref() == Some(workspace_id))
+            .collect()
+    }
+
+    /// Close every session owned by one workspace and discard their restart
+    /// metadata. Windows from other workspaces are never touched - this is the
+    /// "Stop terminals in this window" path, not a global shutdown.
+    pub(crate) fn close_workspace_sessions(&self, workspace_id: &str) -> usize {
+        let session_ids = self
+            .manager
+            .list()
+            .into_iter()
+            .filter(|session| session.workspace_id.as_deref() == Some(workspace_id))
+            .map(|session| session.session_id)
+            .collect::<Vec<_>>();
+        for session_id in &session_ids {
+            let _ = self.manager.close(session_id);
+            self.forget(session_id);
+        }
+        session_ids.len()
     }
 
     #[allow(dead_code)]
@@ -294,6 +348,11 @@ pub(crate) fn build_session_spawn(
             session_id: session_id.to_string(),
             project_id: project.id.clone(),
             profile_id: profile.id.clone(),
+            // Ownership is attached by the caller (`create_terminal_inner` /
+            // `restart_terminal_inner`) from the calling webview - it is never
+            // part of the frontend request.
+            workspace_id: None,
+            window_id: None,
             program,
             args,
             cwd,
@@ -770,23 +829,29 @@ where
 
 #[tauri::command]
 pub async fn create_terminal(
-    app: State<'_, AppState>,
+    app: tauri::AppHandle,
     terminal: State<'_, TerminalState>,
+    webview: tauri::Webview,
     request: CreateTerminalRequest,
 ) -> AppResult<String> {
-    create_terminal_inner(&app, &terminal, request).await
+    let ownership = SessionOwnership::from_webview(&app, webview.label());
+    let app_state = app.state::<AppState>();
+    create_terminal_inner(&app_state, &terminal, request, ownership).await
 }
 
 pub async fn create_terminal_inner(
     app: &AppState,
     terminal: &TerminalState,
     request: CreateTerminalRequest,
+    ownership: SessionOwnership,
 ) -> AppResult<String> {
     let session_id = new_id("session");
     // Load the project and profile once for the whole launch. Previously the
     // same JSON files were read and parsed again for project-type detection,
     // readiness and startup-command injection.
-    let (spawn, project_type, profile) = build_session_spawn(app, &request, &session_id)?;
+    let (mut spawn, project_type, profile) = build_session_spawn(app, &request, &session_id)?;
+    spawn.workspace_id = ownership.workspace_id.clone();
+    spawn.window_id = ownership.window_id.clone();
     let manager = terminal.manager.clone_handle();
     let id = run_terminal_launch(terminal, move || {
         launch_terminal(&manager, spawn, project_type, &profile)
@@ -855,17 +920,21 @@ pub fn close_terminal(terminal: State<'_, TerminalState>, session_id: String) ->
 /// profile. The frontend swaps the channel - we return the new session id.
 #[tauri::command]
 pub async fn restart_terminal(
-    app: State<'_, AppState>,
+    app: tauri::AppHandle,
     terminal: State<'_, TerminalState>,
+    webview: tauri::Webview,
     session_id: String,
 ) -> AppResult<String> {
-    restart_terminal_inner(&app, &terminal, &session_id).await
+    let ownership = SessionOwnership::from_webview(&app, webview.label());
+    let app_state = app.state::<AppState>();
+    restart_terminal_inner(&app_state, &terminal, &session_id, ownership).await
 }
 
 pub async fn restart_terminal_inner(
     app: &AppState,
     terminal: &TerminalState,
     session_id: &str,
+    ownership: SessionOwnership,
 ) -> AppResult<String> {
     // Reuse the grid and history budget the session was actually running with,
     // not a fixed 80x24 the frontend has to correct afterwards.
@@ -878,7 +947,9 @@ pub async fn restart_terminal_inner(
     terminal.forget(session_id);
 
     let new_id = new_id("session");
-    let (spawn, project_type, profile) = build_session_spawn(app, &request, &new_id)?;
+    let (mut spawn, project_type, profile) = build_session_spawn(app, &request, &new_id)?;
+    spawn.workspace_id = ownership.workspace_id.clone();
+    spawn.window_id = ownership.window_id.clone();
     let manager = terminal.manager.clone_handle();
     let id = run_terminal_launch(terminal, move || {
         launch_terminal(&manager, spawn, project_type, &profile)
@@ -918,8 +989,8 @@ pub enum SessionReplayEvent {
 fn coalesce_replay(
     events: Vec<crate::terminal::scrollback::ScrollbackReplayEvent>,
 ) -> Vec<SessionReplayEvent> {
-    use base64::Engine;
     use crate::terminal::scrollback::ScrollbackReplayEvent;
+    use base64::Engine;
 
     let mut out: Vec<SessionReplayEvent> = Vec::new();
     let mut run: Vec<bytes::Bytes> = Vec::new();
@@ -976,7 +1047,9 @@ enum DesktopSessionFrame {
 
 impl DesktopSessionFrame {
     fn into_body(self) -> Option<InvokeResponseBody> {
-        serde_json::to_string(&self).ok().map(InvokeResponseBody::Json)
+        serde_json::to_string(&self)
+            .ok()
+            .map(InvokeResponseBody::Json)
     }
 }
 
@@ -1077,6 +1150,43 @@ pub fn session_detach(
 #[tauri::command]
 pub fn session_list(terminal: State<'_, TerminalState>) -> ListResponse<SessionInfo> {
     ListResponse::new(terminal.manager.list())
+}
+
+/// Live sessions owned by the workspace of the calling window.
+///
+/// A reopened window uses this to reattach to the sessions it kept running
+/// instead of spawning fresh shells. Ownership is derived from the calling
+/// webview, never trusted from the payload.
+#[tauri::command]
+pub fn list_workspace_sessions(
+    app: tauri::AppHandle,
+    terminal: State<'_, TerminalState>,
+    webview: tauri::Webview,
+) -> ListResponse<SessionInfo> {
+    let ownership = SessionOwnership::from_webview(&app, webview.label());
+    match ownership.workspace_id {
+        Some(workspace_id) => ListResponse::new(terminal.list_workspace_sessions(&workspace_id)),
+        // A webview that is not registered as a workspace window (should not
+        // happen in practice) owns nothing.
+        None => ListResponse::new(Vec::new()),
+    }
+}
+
+/// Close every session owned by the calling window's workspace.
+///
+/// This is the "Stop terminals in this window" path: sessions of other
+/// windows - and the window itself - are never touched.
+#[tauri::command]
+pub fn close_workspace_sessions(
+    app: tauri::AppHandle,
+    terminal: State<'_, TerminalState>,
+    webview: tauri::Webview,
+) -> AppResult<u32> {
+    let ownership = SessionOwnership::from_webview(&app, webview.label());
+    let Some(workspace_id) = ownership.workspace_id else {
+        return Ok(0);
+    };
+    Ok(terminal.close_workspace_sessions(&workspace_id) as u32)
 }
 
 #[tauri::command]
@@ -1266,6 +1376,8 @@ mod tests {
                 session_id: session_id.into(),
                 project_id: project_id.into(),
                 profile_id: format!("profile-{project_id}"),
+                workspace_id: Some(project_id.into()),
+                window_id: Some(project_id.into()),
                 program: if cfg!(windows) {
                     "cmd.exe".into()
                 } else {
@@ -1300,6 +1412,84 @@ mod tests {
         let remaining = terminal.meta_for("session-p2").expect("meta for p2");
         assert_eq!(remaining.project_id, "p2");
         assert_eq!(remaining.profile_id, "profile-p2");
+        terminal.manager.close_all();
+    }
+
+    #[test]
+    fn closing_one_workspace_sessions_leaves_other_workspaces_untouched() {
+        fn spawn(session_id: &str, project_id: &str, workspace: &str) -> SessionSpawn {
+            SessionSpawn {
+                session_id: session_id.into(),
+                project_id: project_id.into(),
+                profile_id: format!("profile-{project_id}"),
+                workspace_id: Some(workspace.into()),
+                window_id: Some(workspace.into()),
+                program: if cfg!(windows) {
+                    "cmd.exe".into()
+                } else {
+                    "/bin/sh".into()
+                },
+                args: if cfg!(windows) {
+                    vec!["/Q".into()]
+                } else {
+                    Vec::new()
+                },
+                cwd: None,
+                env: Vec::new(),
+                env_remove: Vec::new(),
+                readiness_marker: None,
+                rows: 24,
+                cols: 80,
+                scrollback_bytes: 1024,
+            }
+        }
+
+        let terminal = TerminalState::new();
+        // Two sessions in workspace A (same project twice - allowed), one in B,
+        // one with no owner at all (remote gateway).
+        terminal
+            .manager
+            .create(spawn("a1", "p1", "workspace-a"))
+            .unwrap();
+        terminal
+            .manager
+            .create(spawn("a2", "p1", "workspace-a"))
+            .unwrap();
+        terminal
+            .manager
+            .create(spawn("b1", "p2", "workspace-b"))
+            .unwrap();
+        let mut remote_spawn = spawn("remote-1", "p3", "workspace-x");
+        remote_spawn.workspace_id = None;
+        remote_spawn.window_id = None;
+        terminal.manager.create(remote_spawn).unwrap();
+        terminal.remember("a1", &create_request("p1", "profile-p1"));
+        terminal.remember("a2", &create_request("p1", "profile-p1"));
+        terminal.remember("b1", &create_request("p2", "profile-p2"));
+
+        // Listing is scoped to the workspace (registry order, so compare
+        // sorted).
+        let listed = terminal.list_workspace_sessions("workspace-a");
+        let mut ids = listed
+            .iter()
+            .map(|s| s.session_id.as_str())
+            .collect::<Vec<_>>();
+        ids.sort();
+        assert_eq!(ids, vec!["a1", "a2"]);
+        assert!(listed
+            .iter()
+            .all(|s| s.workspace_id.as_deref() == Some("workspace-a")));
+
+        // Closing workspace A stops exactly A's sessions.
+        let closed = terminal.close_workspace_sessions("workspace-a");
+        assert_eq!(closed, 2);
+        assert!(terminal.manager.get("a1").is_err());
+        assert!(terminal.manager.get("a2").is_err());
+        assert!(terminal.manager.get("b1").is_ok());
+        assert!(terminal.manager.get("remote-1").is_ok());
+        // Restart metadata was discarded for A only.
+        assert!(terminal.meta_for("a1").is_none());
+        assert!(terminal.meta_for("b1").is_some());
         terminal.manager.close_all();
     }
 
@@ -1568,9 +1758,7 @@ mod tests {
     }
 
     /// Insert a WSL project whose profile carries `vars`, and build its spawn.
-    fn wsl_spawn_with_environment(
-        vars: &[(&str, &str)],
-    ) -> crate::terminal::SessionSpawn {
+    fn wsl_spawn_with_environment(vars: &[(&str, &str)]) -> crate::terminal::SessionSpawn {
         let app = test_state();
         app.projects
             .upsert(Project {
@@ -1637,10 +1825,7 @@ mod tests {
         let app = test_state();
         let _dir = seed_project(&app, "p1");
         app.profiles
-            .upsert(default_powershell_profile(
-                "profile-1".into(),
-                "p1".into(),
-            ))
+            .upsert(default_powershell_profile("profile-1".into(), "p1".into()))
             .unwrap();
 
         let request = CreateTerminalRequest {
@@ -1662,7 +1847,10 @@ mod tests {
             .map(|(_, v)| v.as_str())
             .expect("WSLENV should be set for a local session");
         let entries: Vec<&str> = wslenv.split(':').collect();
-        assert!(entries.contains(&"TERM"), "WSLENV {wslenv} should carry TERM");
+        assert!(
+            entries.contains(&"TERM"),
+            "WSLENV {wslenv} should carry TERM"
+        );
         assert!(
             entries.contains(&"TERMINFO"),
             "WSLENV {wslenv} should carry TERMINFO"
@@ -2096,6 +2284,8 @@ mod handshake_probe {
                 session_id: session_id.into(),
                 project_id: "proj".into(),
                 profile_id: "p".into(),
+                workspace_id: None,
+                window_id: None,
                 program,
                 args,
                 cwd: None,

@@ -32,9 +32,7 @@ fn validate_web_url(url: &str) -> AppResult<()> {
     let rest = lower
         .strip_prefix("https://")
         .or_else(|| lower.strip_prefix("http://"))
-        .ok_or_else(|| {
-            AppError::Configuration("Only http and https links can be opened".into())
-        })?;
+        .ok_or_else(|| AppError::Configuration("Only http and https links can be opened".into()))?;
     if rest.is_empty() {
         return Err(AppError::Configuration("Link is missing a host".into()));
     }

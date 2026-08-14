@@ -1,17 +1,23 @@
 import { useEffect, useState } from "react";
 import {
   Copy,
+  Files,
   Minus,
+  NotebookPen,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
   Square,
+  SquarePlus,
   X,
 } from "lucide-react";
 import { useTranslation } from "@/i18n";
+import { cn } from "@/lib/utils";
 import { nativeWindowService } from "@/services/native";
+import { windowService } from "@/window/windowService";
 import { BrandMark } from "./BrandMark";
+import type { RightSidebarMode } from "./rightSidebarState";
 
 /**
  * Application-owned title bar for the undecorated desktop window. Keeping the
@@ -21,14 +27,18 @@ import { BrandMark } from "./BrandMark";
 export function WindowTitleBar({
   sidebarCollapsed = false,
   onToggleSidebar,
-  fileSidebarCollapsed = false,
-  onToggleFileSidebar,
+  rightSidebarCollapsed = false,
+  rightSidebarMode = "files",
+  onSelectRightSidebar,
+  onToggleRightSidebar,
   onCloseRequest,
 }: {
   sidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
-  fileSidebarCollapsed?: boolean;
-  onToggleFileSidebar?: () => void;
+  rightSidebarCollapsed?: boolean;
+  rightSidebarMode?: RightSidebarMode;
+  onSelectRightSidebar?: (mode: RightSidebarMode) => void;
+  onToggleRightSidebar?: () => void;
   onCloseRequest?: () => void;
 }) {
   const { t } = useTranslation();
@@ -52,6 +62,8 @@ export function WindowTitleBar({
   function toggleMaximize() {
     void nativeWindowService.toggleMaximize();
   }
+
+  const rightSidebarOpen = !rightSidebarCollapsed;
 
   return (
     <header
@@ -99,26 +111,70 @@ export function WindowTitleBar({
         <span className="pointer-events-none hidden text-[11px] text-muted-foreground sm:inline">
           {t("Workspace")}
         </span>
-        {onToggleFileSidebar ? (
+        {onSelectRightSidebar ? (
+          <div
+            className="ml-auto flex shrink-0 items-center gap-0.5 rounded-md border border-border p-0.5"
+            role="tablist"
+            aria-label={t("Right panel")}
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={rightSidebarOpen && rightSidebarMode === "files"}
+              className={cn(
+                "flex h-6 items-center gap-1 rounded px-2 text-[11px] transition-colors",
+                rightSidebarOpen && rightSidebarMode === "files"
+                  ? "bg-accent text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              title={t("Files panel")}
+              onMouseDown={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => event.stopPropagation()}
+              onClick={() => onSelectRightSidebar("files")}
+            >
+              <Files className="h-3 w-3" />
+              {t("Files")}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={rightSidebarOpen && rightSidebarMode === "memos"}
+              className={cn(
+                "flex h-6 items-center gap-1 rounded px-2 text-[11px] transition-colors",
+                rightSidebarOpen && rightSidebarMode === "memos"
+                  ? "bg-accent text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              title={t("Memo panel")}
+              onMouseDown={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => event.stopPropagation()}
+              onClick={() => onSelectRightSidebar("memos")}
+            >
+              <NotebookPen className="h-3 w-3" />
+              {t("Memo")}
+            </button>
+          </div>
+        ) : null}
+        {onToggleRightSidebar ? (
           <button
             type="button"
-            className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label={
-              fileSidebarCollapsed
-                ? t("Show file sidebar")
-                : t("Hide file sidebar")
+              rightSidebarCollapsed
+                ? t("Show right sidebar")
+                : t("Hide right sidebar")
             }
-            aria-expanded={!fileSidebarCollapsed}
+            aria-expanded={!rightSidebarCollapsed}
             title={
-              fileSidebarCollapsed
-                ? t("Show file sidebar")
-                : t("Hide file sidebar")
+              rightSidebarCollapsed
+                ? t("Show right sidebar")
+                : t("Hide right sidebar")
             }
             onMouseDown={(event) => event.stopPropagation()}
             onDoubleClick={(event) => event.stopPropagation()}
-            onClick={onToggleFileSidebar}
+            onClick={onToggleRightSidebar}
           >
-            {fileSidebarCollapsed ? (
+            {rightSidebarCollapsed ? (
               <PanelRightOpen className="h-4 w-4" />
             ) : (
               <PanelRightClose className="h-4 w-4" />
@@ -132,6 +188,12 @@ export function WindowTitleBar({
         onMouseDown={(event) => event.stopPropagation()}
         onDoubleClick={(event) => event.stopPropagation()}
       >
+        <WindowControl
+          label={t("New window")}
+          onClick={() => void windowService.newWindow()}
+        >
+          <SquarePlus />
+        </WindowControl>
         <WindowControl
           label={t("Minimize")}
           onClick={() => void nativeWindowService.minimize()}

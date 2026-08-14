@@ -143,9 +143,8 @@ pub fn import_color_schemes_from_file(
     let contents = std::fs::read_to_string(PathBuf::from(&path))?;
     // Windows Terminal writes JSON with comments and trailing commas, and a
     // scheme file copied out of one usually keeps them.
-    let normalised = super::windows_terminal::normalise_jsonc(
-        contents.trim_start_matches('\u{feff}'),
-    );
+    let normalised =
+        super::windows_terminal::normalise_jsonc(contents.trim_start_matches('\u{feff}'));
     let parsed: ColorSchemeFile = serde_json::from_str(&normalised)
         .map_err(|error| AppError::Configuration(format!("Invalid color scheme file: {error}")))?;
     let incoming = match parsed {
@@ -247,8 +246,7 @@ mod tests {
     #[test]
     fn defaults_the_cursor_to_the_foreground_when_the_scheme_omits_it() {
         // Windows Terminal leaves an unset cursor colour to the terminal.
-        let json =
-            scheme_json("Campbell", "purple").replace(r##""cursorColor": "#ffffff","##, "");
+        let json = scheme_json("Campbell", "purple").replace(r##""cursorColor": "#ffffff","##, "");
         let ColorSchemeFile::Single(scheme) = parse(&json) else {
             panic!("expected a single scheme");
         };

@@ -516,6 +516,14 @@ export const terminalService = {
     invokeOrThrow<ListResponse<SessionInfo>>("session_list").then(
       (response) => response.items,
     ),
+  /**
+   * Live sessions owned by the calling window's workspace (derived by the
+   * backend from the webview, never trusted from a payload).
+   */
+  listWorkspaceSessions: (): Promise<SessionInfo[]> =>
+    invokeOrThrow<ListResponse<SessionInfo>>("list_workspace_sessions").then(
+      (response) => response.items,
+    ),
   get: (sessionId: string) =>
     invokeOrThrow<SessionInfo>("session_get", { sessionId }),
   write: (sessionId: string, data: string) =>

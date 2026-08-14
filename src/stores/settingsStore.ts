@@ -30,6 +30,12 @@ export interface GeneralSettings {
   language: AppLanguage;
   theme: AppTheme;
   restoreLastProject: boolean;
+  /**
+   * Reopen every workspace window that was open when the process last ran
+   * (geometry and layout included). When off, only the most recently active
+   * workspace is restored.
+   */
+  restoreWindowsFromPreviousSession: boolean;
   confirmCloseTerminal: boolean;
   confirmDeleteProject: boolean;
   showTerminalCount: boolean;
@@ -94,6 +100,7 @@ export const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   language: "en",
   theme: "dark",
   restoreLastProject: true,
+  restoreWindowsFromPreviousSession: true,
   confirmCloseTerminal: true,
   confirmDeleteProject: true,
   showTerminalCount: true,
@@ -290,6 +297,8 @@ export const useSettingsStore = create<SettingsStoreState>()(
         language: state.language,
         theme: state.theme,
         restoreLastProject: state.restoreLastProject,
+        restoreWindowsFromPreviousSession:
+          state.restoreWindowsFromPreviousSession,
         confirmCloseTerminal: state.confirmCloseTerminal,
         confirmDeleteProject: state.confirmDeleteProject,
         showTerminalCount: state.showTerminalCount,
