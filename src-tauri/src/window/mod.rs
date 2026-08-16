@@ -16,4 +16,6 @@
 pub mod commands;
 pub mod manager;
 
-pub use manager::{WindowCloseDecision, WindowInfo, WindowManager, WindowOpenOptions};
+pub use manager::{
+    WindowCloseDecision, WindowInfo, WindowInitOutcome, WindowManager, WindowOpenOptions,
+};

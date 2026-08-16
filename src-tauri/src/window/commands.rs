@@ -11,7 +11,7 @@ use crate::window::{WindowInfo, WindowManager, WindowOpenOptions};
 /// `project_id` optionally opens the new window with a project selected
 /// ("Open in New Window").
 #[tauri::command]
-pub fn new_window(app: AppHandle, project_id: Option<String>) -> AppResult<String> {
+pub async fn new_window(app: AppHandle, project_id: Option<String>) -> AppResult<String> {
     app.state::<WindowManager>().create_window(
         &app,
         WindowOpenOptions {
@@ -39,9 +39,20 @@ pub fn close_window(app: AppHandle, workspace_id: String, keep_sessions: bool) -
 
 /// Show/focus an open workspace window, or reopen a detached one.
 #[tauri::command]
-pub fn show_window(app: AppHandle, workspace_id: String) -> AppResult<()> {
-    app.state::<WindowManager>()
-        .show_window(&app, &workspace_id)
+pub async fn show_window(app: AppHandle, workspace_id: String) -> AppResult<()> {
+    let manager = app.state::<WindowManager>();
+    if app.get_webview_window(&workspace_id).is_some() {
+        return manager.show_window(&app, &workspace_id);
+    }
+    manager.create_window(
+        &app,
+        WindowOpenOptions {
+            workspace_id: Some(workspace_id),
+            focus: true,
+            ..Default::default()
+        },
+    )?;
+    Ok(())
 }
 
 /// Show every open window.
@@ -103,6 +114,6 @@ pub fn set_window_project(
 /// Reopen every workspace that has no live window (previous-session restore).
 /// Returns the number of windows created.
 #[tauri::command]
-pub fn restore_previous_windows(app: AppHandle) -> AppResult<usize> {
+pub async fn restore_previous_windows(app: AppHandle) -> AppResult<usize> {
     app.state::<WindowManager>().restore_previous_windows(&app)
 }

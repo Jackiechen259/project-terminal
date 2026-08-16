@@ -69,6 +69,7 @@ fn show_fatal_error(message: &str) {
 }
 
 pub fn run() {
+    tracing::info!("app startup beginning");
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
@@ -88,6 +89,7 @@ pub fn run() {
     };
 
     let terminal_state = TerminalState::new();
+    tracing::info!("terminal manager initialized");
     // Remote and desktop clients share the same manager, making the desktop
     // process the single owner of every live PTY.
     let remote_gateway =
@@ -103,20 +105,15 @@ pub fn run() {
             // Registered before everything else: a second `Project Terminal`
             // launch must never start a second process, a second
             // TerminalManager, or a second tray. Instead the existing process
-            // opens a new workspace window.
+            // opens a new workspace window. The request is queued while the
+            // window manager is still initializing and served once it is
+            // ready.
             .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
                 tracing::info!(
-                    "Second launch detected ({}); opening a new workspace window",
+                    "second launch detected ({}); requesting a new workspace window",
                     argv.join(" ")
                 );
-                let windows = app.state::<WindowManager>();
-                let _ = windows.create_window(
-                    app,
-                    window::WindowOpenOptions {
-                        focus: true,
-                        ..Default::default()
-                    },
-                );
+                app.state::<WindowManager>().request_new_window(app);
             }))
             .plugin(tauri_plugin_dialog::init())
             .plugin(tauri_plugin_process::init())
@@ -139,13 +136,7 @@ pub fn run() {
                     builder
                         .on_menu_event(|app, event| match event.id().as_ref() {
                             "new-window" => {
-                                let _ = app.state::<WindowManager>().create_window(
-                                    app,
-                                    window::WindowOpenOptions {
-                                        focus: true,
-                                        ..Default::default()
-                                    },
-                                );
+                                app.state::<WindowManager>().request_new_window(app);
                             }
                             "show-all" => app.state::<WindowManager>().show_all(app),
                             "hide-all" => app.state::<WindowManager>().hide_all(app),
@@ -177,10 +168,18 @@ pub fn run() {
                 };
                 app.state::<WindowManager>().set_tray(tray);
                 // Create the initial workspace window (restoring the most
-                // recently active workspace) and rebuild the tray menu to
-                // match.
-                app.state::<WindowManager>().init(app.handle())?;
+                // recently active workspace with sanitized geometry) and
+                // rebuild the tray menu to match. Window-restore failures are
+                // recovered from inside the manager: bad persisted state only
+                // quarantines the offending records and falls back to a safe
+                // fresh window. Only a completely unavailable windowing
+                // runtime reaches this error.
+                let outcome: window::WindowInitOutcome = app
+                    .state::<WindowManager>()
+                    .initialize_with_recovery(app.handle())?;
+                tracing::info!(?outcome, "initial workspace window ready");
                 app.state::<remote::RemoteGateway>().start();
+                tracing::info!("application startup complete");
                 Ok(())
             })
             .invoke_handler(tauri::generate_handler![

@@ -25,6 +25,8 @@ src-tauri/gen/
 # Node
 node_modules/
 .pnpm-store/
+.pnpm-store-local/
+.pnpm-cache-local/
 npm-debug.log*
 
 # Env
