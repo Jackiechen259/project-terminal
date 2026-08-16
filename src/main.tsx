@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import App from "./App";
 import "./index.css";
 import { WindowWorkspaceProvider } from "./window/WindowWorkspaceProvider";
@@ -54,15 +55,10 @@ class AppErrorBoundary extends React.Component<
 }
 
 function renderApp(info: WorkspaceInfo | null) {
-  const fallbackInfo: WorkspaceInfo = {
-    windowLabel: "main",
-    workspaceId: "main",
-    projectId: null,
-  };
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
       <AppErrorBoundary>
-        <WindowWorkspaceProvider info={info ?? fallbackInfo}>
+        <WindowWorkspaceProvider info={info ?? fallbackInfo()}>
           <App />
         </WindowWorkspaceProvider>
       </AppErrorBoundary>
@@ -70,9 +66,27 @@ function renderApp(info: WorkspaceInfo | null) {
   );
 }
 
+/**
+ * Boot-failure fallback: the UI must still render even when the backend
+ * workspace handshake failed. The fallback workspace is this WebView's own
+ * label (Tauri exposes it synchronously), so even a second window whose boot
+ * failed lands on its own workspace state instead of the legacy `main` one.
+ */
+function fallbackInfo(): WorkspaceInfo {
+  let label = "main";
+  try {
+    label = getCurrentWebview().label;
+  } catch {
+    // Plain browser dev / tests: the legacy workspace id.
+  }
+  return { windowLabel: label, workspaceId: label, projectId: null };
+}
+
 // Resolve the workspace identity and hydrate its layout before the first
 // frame renders, so a restored window never flashes its empty state. The
-// static startup shell in index.html stays visible until then.
+// static startup shell in index.html stays visible until then. The boot is
+// bounded (see `windowBoot.ts`); any failure falls back to rendering with
+// the window's own label as its workspace.
 void prepareWorkspace()
   .then(renderApp)
   .catch((error) => {

@@ -8,7 +8,7 @@ import {
   selectRightSidebarMode,
   type RightSidebarMode,
 } from "@/components/layout/rightSidebarState";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ChevronRight,
   Minimize2,
@@ -127,12 +127,19 @@ export function AppLayout() {
     setActiveProject,
   ]);
 
-  // Restore every workspace window from the previous session.
+  // Restore every workspace window from the previous session. The backend
+  // serializes window creation, but React StrictMode (dev) mounts effects
+  // twice: a second concurrent restore call would race the first against
+  // WebView2's environment, so the request is guarded to fire exactly once
+  // per window.
   const restoreWindowsFromPreviousSession = useSettingsStore(
     (s) => s.restoreWindowsFromPreviousSession,
   );
+  const restoreRequestedRef = useRef(false);
   useEffect(() => {
     if (!restoreWindowsFromPreviousSession) return;
+    if (restoreRequestedRef.current) return;
+    restoreRequestedRef.current = true;
     void windowService.restorePreviousWindows().catch(() => {});
   }, [restoreWindowsFromPreviousSession]);
 
