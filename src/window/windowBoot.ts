@@ -1,11 +1,19 @@
 /**
- * One-time boot step for a workspace window.
+ * One-time boot step for the main window.
  *
- * Runs before React renders: resolves which workspace this WebView belongs to,
- * selects the matching per-workspace terminal store, waits for its persisted
- * layout to hydrate, then reconciles it against the workspace's live backend
- * sessions. The reconcile is what makes a window reopened after "keep
- * running" reattach to its surviving PTYs instead of starting fresh shells.
+ * Runs before React renders: resolves the workspace identity (always `main`
+ * in the single-window architecture), selects the matching terminal store,
+ * waits for its persisted layout to hydrate, then reconciles it against the
+ * workspace's live backend sessions. The reconcile is what makes a window
+ * reopened after "keep running" reattach to its surviving PTYs instead of
+ * starting fresh shells.
+ *
+ * Legacy migration: an install upgraded from the multi-window architecture
+ * may have its most recent layout stored under a `workspace-{uuid}` key. When
+ * the backend reports which workspace it migrated (see
+ * `WorkspaceInfo.migratedFromWorkspaceId`), that layout is copied to the
+ * `main` key once, before hydration - but only when `main` has no layout of
+ * its own and no legacy v1 layout to fall back to.
  *
  * Boot is bounded: `workspaceInfo` must answer within `timeoutMs` or the boot
  * rejects so the caller can fall back to rendering the UI with the window's
@@ -16,7 +24,10 @@
 import { terminalService } from "@/services";
 import {
   getTerminalWorkspaceStore,
+  LEGACY_WORKSPACE_ID,
   setCurrentWorkspaceId,
+  TERMINAL_WORKSPACE_STORAGE_KEY,
+  workspaceStorageKey,
 } from "@/stores/terminalStore";
 import { windowService, type WorkspaceInfo } from "./windowService";
 
@@ -45,6 +56,33 @@ function withTimeout<T>(
 }
 
 /**
+ * One-time layout migration for installs upgraded from the multi-window
+ * architecture. Copies the layout of the workspace the backend migrated from
+ * into the `main` key, unless `main` already has its own layout or a legacy
+ * v1 layout to fall back to.
+ */
+export function migrateLegacyWorkspaceLayout(info: WorkspaceInfo): void {
+  if (info.workspaceId !== LEGACY_WORKSPACE_ID) return;
+  const migratedFrom = info.migratedFromWorkspaceId;
+  if (!migratedFrom || migratedFrom === LEGACY_WORKSPACE_ID) return;
+
+  const ownKey = workspaceStorageKey(LEGACY_WORKSPACE_ID);
+  if (localStorage.getItem(ownKey) !== null) return;
+  // The v1 key is the true legacy single-window layout and wins over any
+  // per-workspace v2 key.
+  if (localStorage.getItem(TERMINAL_WORKSPACE_STORAGE_KEY) !== null) return;
+
+  const sourceKey = workspaceStorageKey(migratedFrom);
+  const raw = localStorage.getItem(sourceKey);
+  if (raw === null) return;
+
+  localStorage.setItem(ownKey, raw);
+  // One-time: a later launch (with the backend file already collapsed) must
+  // not re-copy stale data over a newer `main` layout.
+  localStorage.removeItem(sourceKey);
+}
+
+/**
  * Resolve the workspace identity, hydrate its layout and reconcile live
  * sessions. Rejects only when the workspace identity itself cannot be
  * resolved in time - the caller renders the UI with a workspace fallback.
@@ -58,6 +96,7 @@ export async function prepareWorkspace(
     "workspace_info",
   );
   setCurrentWorkspaceId(info.workspaceId);
+  migrateLegacyWorkspaceLayout(info);
   const store = getTerminalWorkspaceStore(info.workspaceId);
   try {
     await store.persist.rehydrate();

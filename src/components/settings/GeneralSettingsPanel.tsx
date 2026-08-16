@@ -31,9 +31,6 @@ export function GeneralSettingsPanel() {
   const restoreLastProject = useSettingsStore(
     (state) => state.restoreLastProject,
   );
-  const restoreWindowsFromPreviousSession = useSettingsStore(
-    (state) => state.restoreWindowsFromPreviousSession,
-  );
   const confirmCloseTerminal = useSettingsStore(
     (state) => state.confirmCloseTerminal,
   );
@@ -101,8 +98,6 @@ export function GeneralSettingsPanel() {
     language === DEFAULT_GENERAL_SETTINGS.language &&
     theme === DEFAULT_GENERAL_SETTINGS.theme &&
     restoreLastProject === DEFAULT_GENERAL_SETTINGS.restoreLastProject &&
-    restoreWindowsFromPreviousSession ===
-      DEFAULT_GENERAL_SETTINGS.restoreWindowsFromPreviousSession &&
     confirmCloseTerminal === DEFAULT_GENERAL_SETTINGS.confirmCloseTerminal &&
     confirmDeleteProject === DEFAULT_GENERAL_SETTINGS.confirmDeleteProject &&
     showTerminalCount === DEFAULT_GENERAL_SETTINGS.showTerminalCount &&
@@ -165,20 +160,6 @@ export function GeneralSettingsPanel() {
             checked={restoreLastProject}
             onCheckedChange={(checked) =>
               update({ restoreLastProject: checked })
-            }
-          />
-        </SettingRow>
-        <SettingRow
-          title={t("Restore windows from previous session")}
-          description={t(
-            "Reopen every workspace window that was open when the application last ran. When off, only the most recently active window is restored.",
-          )}
-        >
-          <SettingSwitch
-            label={t("Restore windows from previous session")}
-            checked={restoreWindowsFromPreviousSession}
-            onCheckedChange={(checked) =>
-              update({ restoreWindowsFromPreviousSession: checked })
             }
           />
         </SettingRow>

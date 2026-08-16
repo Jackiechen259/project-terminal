@@ -58,8 +58,8 @@ pub fn terminfo_sixel_entry() -> &'static str {
 ///
 /// CLI tools decide whether they may emit inline images from this string alone
 /// - Codex, for one, only enables its image output when `TERM` contains
-/// `sixel`. The terminal renders Sixel, so saying so is what makes those
-/// features work.
+///   `sixel`. The terminal renders Sixel, so saying so is what makes those
+///   features work.
 ///
 /// The catch is that `xterm-sixel` is not in any stock terminfo database. It is
 /// therefore only announced where [`resolve_term_env`] can hand the entry along

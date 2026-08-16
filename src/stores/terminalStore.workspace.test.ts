@@ -35,10 +35,10 @@ afterEach(() => {
   resetWorkspaceStoreCacheForTests();
 });
 
-describe("multi-window workspace stores", () => {
+describe("per-workspace stores (the single main window is one of them)", () => {
   it("keeps two workspaces' tabs and active projects fully independent", () => {
-    const windowA = getTerminalWorkspaceStore("workspace-a");
-    const windowB = getTerminalWorkspaceStore("workspace-b");
+    const windowA = getTerminalWorkspaceStore("ws-a");
+    const windowB = getTerminalWorkspaceStore("ws-b");
 
     windowA.getState().registerTab(makeTab("a-t1", "p1"));
     windowB.getState().registerTab(makeTab("b-t1", "p1"));
@@ -55,8 +55,8 @@ describe("multi-window workspace stores", () => {
   });
 
   it("keeps independent active tabs for the same project", () => {
-    const windowA = getTerminalWorkspaceStore("workspace-a");
-    const windowB = getTerminalWorkspaceStore("workspace-b");
+    const windowA = getTerminalWorkspaceStore("ws-a");
+    const windowB = getTerminalWorkspaceStore("ws-b");
 
     windowA.getState().registerTab(makeTab("a-1", "p1"));
     windowA.getState().registerTab(makeTab("a-2", "p1"));
@@ -68,8 +68,8 @@ describe("multi-window workspace stores", () => {
   });
 
   it("keeps split layouts independent per workspace", () => {
-    const windowA = getTerminalWorkspaceStore("workspace-a");
-    const windowB = getTerminalWorkspaceStore("workspace-b");
+    const windowA = getTerminalWorkspaceStore("ws-a");
+    const windowB = getTerminalWorkspaceStore("ws-b");
 
     windowA.getState().registerTab(makeTab("a-1", "p1"));
     windowA.getState().registerTab(makeTab("a-2", "p1"));
@@ -92,8 +92,8 @@ describe("multi-window workspace stores", () => {
   });
 
   it("running-terminal counts are scoped to the workspace (close dialog)", () => {
-    const windowA = getTerminalWorkspaceStore("workspace-a");
-    const windowB = getTerminalWorkspaceStore("workspace-b");
+    const windowA = getTerminalWorkspaceStore("ws-a");
+    const windowB = getTerminalWorkspaceStore("ws-b");
 
     const countRunning = (
       store: ReturnType<typeof getTerminalWorkspaceStore>,
@@ -111,22 +111,22 @@ describe("multi-window workspace stores", () => {
   });
 
   it("persists each workspace under its own storage key", async () => {
-    const windowA = getTerminalWorkspaceStore("workspace-a");
-    const windowB = getTerminalWorkspaceStore("workspace-b");
+    const windowA = getTerminalWorkspaceStore("ws-a");
+    const windowB = getTerminalWorkspaceStore("ws-b");
     windowA.getState().registerTab(makeTab("a-1", "p1"));
     windowB.getState().registerTab(makeTab("b-1", "p2"));
     // The throttled storage flushes on pagehide.
     window.dispatchEvent(new Event("pagehide"));
 
-    const rawA = localStorage.getItem(workspaceStorageKey("workspace-a"));
-    const rawB = localStorage.getItem(workspaceStorageKey("workspace-b"));
+    const rawA = localStorage.getItem(workspaceStorageKey("ws-a"));
+    const rawB = localStorage.getItem(workspaceStorageKey("ws-b"));
     expect(rawA).toBeTruthy();
     expect(rawB).toBeTruthy();
     expect(rawA).not.toBe(rawB);
 
     // A fresh store rehydrates only its own key.
     resetWorkspaceStoreCacheForTests();
-    const restoredA = getTerminalWorkspaceStore("workspace-a");
+    const restoredA = getTerminalWorkspaceStore("ws-a");
     await restoredA.persist.rehydrate();
     expect(Object.keys(restoredA.getState().tabsById)).toEqual(["a-1"]);
     expect(restoredA.getState().tabsById["a-1"].projectId).toBe("p1");
@@ -165,8 +165,8 @@ describe("multi-window workspace stores", () => {
 
 describe("workspace session reconcile (keep-running reopen)", () => {
   it("revives tabs whose sessions are still live and drops stale ids", async () => {
-    const workspaceId = "workspace-reattach";
-    // A window was closed with "keep terminals running": the persisted layout
+    const workspaceId = "ws-reattach";
+    // A main-window layout persisted with "keep terminals running": the persisted layout
     // still carries the session ids.
     localStorage.setItem(
       workspaceStorageKey(workspaceId),

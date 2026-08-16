@@ -94,8 +94,9 @@ pub fn run() {
     // process the single owner of every live PTY.
     let remote_gateway =
         remote::RemoteGateway::new(&remote_dirs, state.clone(), terminal_state.clone());
-    // Every window of the process is owned by the window manager. Closing one
-    // window never shuts the process down; only the explicit quit path does.
+    // The process's single desktop window is owned by the window manager.
+    // Closing (hiding) the window never shuts the process down; only the
+    // explicit quit path does.
     let window_manager = WindowManager::new(remote_dirs.window_workspaces_path());
 
     // Build the app. The RunEvent handler closes all PTY child processes on
@@ -105,15 +106,15 @@ pub fn run() {
             // Registered before everything else: a second `Project Terminal`
             // launch must never start a second process, a second
             // TerminalManager, or a second tray. Instead the existing process
-            // opens a new workspace window. The request is queued while the
-            // window manager is still initializing and served once it is
-            // ready.
+            // restores and focuses its single `main` window. The focus
+            // request is queued while the window manager is still
+            // initializing and served once it is ready.
             .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
                 tracing::info!(
-                    "second launch detected ({}); requesting a new workspace window",
+                    "second launch detected ({}); focusing existing main window",
                     argv.join(" ")
                 );
-                app.state::<WindowManager>().request_new_window(app);
+                app.state::<WindowManager>().focus_main_window(app);
             }))
             .plugin(tauri_plugin_dialog::init())
             .plugin(tauri_plugin_process::init())
@@ -126,58 +127,54 @@ pub fn run() {
             .setup(|app| {
                 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
-                let tray = {
-                    let mut builder = TrayIconBuilder::with_id("project-terminal")
-                        .show_menu_on_left_click(false)
-                        .tooltip("Project Terminal");
-                    if let Some(icon) = app.default_window_icon().cloned() {
-                        builder = builder.icon(icon);
-                    }
-                    builder
-                        .on_menu_event(|app, event| match event.id().as_ref() {
-                            "new-window" => {
-                                app.state::<WindowManager>().request_new_window(app);
+                // Single-window tray: Show / Hide / Quit. No window list -
+                // there is exactly one window. The icon is registered with
+                // the runtime and stays alive without a stored handle.
+                let tray_icon = app.default_window_icon().cloned();
+                let mut tray_builder = TrayIconBuilder::with_id("project-terminal")
+                    .show_menu_on_left_click(false)
+                    .tooltip("Project Terminal")
+                    .menu(&WindowManager::build_tray_menu(app.handle())?);
+                if let Some(icon) = tray_icon {
+                    tray_builder = tray_builder.icon(icon);
+                }
+                tray_builder
+                    .on_menu_event(|app, event| match event.id().as_ref() {
+                        "show" => {
+                            app.state::<WindowManager>().focus_main_window(app);
+                        }
+                        "hide" => {
+                            app.state::<WindowManager>().hide_main_window(app);
+                        }
+                        "quit" => quit_application(app),
+                        _ => {}
+                    })
+                    .on_tray_icon_event(|tray, event| {
+                        if matches!(
+                            event,
+                            TrayIconEvent::Click {
+                                button: MouseButton::Left,
+                                button_state: MouseButtonState::Up,
+                                ..
                             }
-                            "show-all" => app.state::<WindowManager>().show_all(app),
-                            "hide-all" => app.state::<WindowManager>().hide_all(app),
-                            "quit" => quit_application(app),
-                            id => {
-                                if let Some(workspace_id) =
-                                    id.strip_prefix(window::manager::TRAY_WINDOW_ID_PREFIX)
-                                {
-                                    let _ =
-                                        app.state::<WindowManager>().show_window(app, workspace_id);
-                                }
-                            }
-                        })
-                        .on_tray_icon_event(|tray, event| {
-                            if matches!(
-                                event,
-                                TrayIconEvent::Click {
-                                    button: MouseButton::Left,
-                                    button_state: MouseButtonState::Up,
-                                    ..
-                                }
-                            ) {
-                                tray.app_handle()
-                                    .state::<WindowManager>()
-                                    .focus_last_active(tray.app_handle());
-                            }
-                        })
-                        .build(app)?
-                };
-                app.state::<WindowManager>().set_tray(tray);
-                // Create the initial workspace window (restoring the most
-                // recently active workspace with sanitized geometry) and
-                // rebuild the tray menu to match. Window-restore failures are
-                // recovered from inside the manager: bad persisted state only
-                // quarantines the offending records and falls back to a safe
+                        ) {
+                            tray.app_handle()
+                                .state::<WindowManager>()
+                                .focus_main_window(tray.app_handle());
+                        }
+                    })
+                    .build(app)?;
+                // Create the single `main` window (restoring persisted
+                // geometry, or the most recently active legacy workspace) and
+                // serve any focus requests that arrived during startup.
+                // Window-restore failures are recovered from inside the
+                // manager: bad persisted state only falls back to a safe
                 // fresh window. Only a completely unavailable windowing
                 // runtime reaches this error.
                 let outcome: window::WindowInitOutcome = app
                     .state::<WindowManager>()
                     .initialize_with_recovery(app.handle())?;
-                tracing::info!(?outcome, "initial workspace window ready");
+                tracing::info!(?outcome, "main window ready");
                 app.state::<remote::RemoteGateway>().start();
                 tracing::info!("application startup complete");
                 Ok(())
@@ -200,16 +197,9 @@ pub fn run() {
                 commands::remote::set_remote_lan_access,
                 commands::remote::set_remote_enabled,
                 exit_application,
-                // Multi-window workspace management
-                window::commands::new_window,
-                window::commands::close_window,
-                window::commands::show_window,
-                window::commands::show_all_windows,
-                window::commands::hide_all_windows,
-                window::commands::list_windows,
+                // Single main window identity and title
                 window::commands::workspace_info,
                 window::commands::set_window_project,
-                window::commands::restore_previous_windows,
                 // Project CRUD (plan §12.1)
                 commands::project::list_projects,
                 commands::project::validate_project,
@@ -283,16 +273,21 @@ pub fn run() {
                         }
                         let windows = app.state::<WindowManager>();
                         let terminal = app.state::<TerminalState>();
+                        // Single-window lifecycle: the `main` window is never
+                        // destroyed by a close request. Without running
+                        // terminals it hides to the tray; with running
+                        // terminals the frontend is asked whether to keep
+                        // them running while hidden, or quit.
                         match windows.on_close_requested(&terminal.manager, window.label()) {
                             WindowCloseDecision::Allow => {}
+                            WindowCloseDecision::HideToTray => {
+                                api.prevent_close();
+                                let _ = window.hide();
+                            }
                             WindowCloseDecision::AskFrontend {
                                 workspace_id,
                                 running_count,
                             } => {
-                                // Keep the window alive and let its frontend
-                                // choose: keep sessions running (window
-                                // closes, PTYs stay), stop this workspace's
-                                // sessions, or cancel.
                                 api.prevent_close();
                                 let _ = window.emit(
                                     "window://close-request",
@@ -306,7 +301,7 @@ pub fn run() {
                     }
                     WindowEvent::Destroyed => {
                         let windows = app.state::<WindowManager>();
-                        windows.on_window_destroyed(&app, window.label());
+                        windows.on_window_destroyed(window.label());
                     }
                     WindowEvent::Moved(position) => {
                         let windows = app.state::<WindowManager>();
@@ -316,12 +311,6 @@ pub fn run() {
                         let windows = app.state::<WindowManager>();
                         let maximized = window.is_maximized().unwrap_or(false);
                         windows.record_resized(window.label(), size.width, size.height, maximized);
-                    }
-                    WindowEvent::Focused(gained) => {
-                        if *gained {
-                            let windows = app.state::<WindowManager>();
-                            windows.mark_active(window.label());
-                        }
                     }
                     _ => {}
                 }
@@ -337,8 +326,8 @@ pub fn run() {
     }
 }
 
-/// Payload of the `window://close-request` event sent to a window whose close
-/// was held because its workspace still has running sessions.
+/// Payload of the `window://close-request` event sent when the main window's
+/// close was held because it still has running sessions.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CloseRequestPayload {
@@ -346,14 +335,15 @@ struct CloseRequestPayload {
     running_count: usize,
 }
 
-/// The one and only global shutdown path. Everything else - closing a window,
+/// The one and only global shutdown path. Everything else - hiding a window,
 /// closing a tab - stops only what it owns.
 fn quit_application(app: &tauri::AppHandle) {
     app.state::<AppLifecycleState>()
         .quitting
         .store(true, Ordering::SeqCst);
-    // Persist the workspace registry (geometry, projects, restore state)
-    // before the process exits.
+    // Persist the main window's geometry and project, then stop every PTY
+    // (desktop and remote alike) before exiting - no orphan child processes
+    // may survive.
     app.state::<WindowManager>().save_workspaces();
     app.state::<TerminalState>().manager.close_all();
     app.exit(0);

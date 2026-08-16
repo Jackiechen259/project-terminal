@@ -990,7 +990,7 @@ mod tests {
         assert!(should_throttle(BACKPRESSURE_HIGH_WATER_EVENTS + 1));
         assert!(should_throttle(LIVE_OUTPUT_BUFFER_EVENTS));
         // And it leaves headroom rather than waiting for the channel to fill.
-        assert!(BACKPRESSURE_HIGH_WATER_EVENTS < LIVE_OUTPUT_BUFFER_EVENTS);
+        const _: () = assert!(BACKPRESSURE_HIGH_WATER_EVENTS < LIVE_OUTPUT_BUFFER_EVENTS);
     }
 
     #[test]

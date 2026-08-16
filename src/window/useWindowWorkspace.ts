@@ -3,8 +3,8 @@
  *
  * The workspace info is resolved once before rendering (see `windowBoot.ts`)
  * and provided through the context set up by `WindowWorkspaceProvider`.
- * Outside Tauri (browser dev, tests) the fallback is the legacy `main`
- * workspace so the UI still renders.
+ * Outside Tauri (browser dev, tests) the fallback is the `main` workspace so
+ * the UI still renders.
  */
 
 import { createContext, useContext } from "react";
@@ -18,5 +18,10 @@ export function useWindowWorkspace(): WorkspaceInfo {
   const info = useContext(WorkspaceContext);
   if (info) return info;
   const id = getCurrentWorkspaceId();
-  return { windowLabel: id, workspaceId: id, projectId: null };
+  return {
+    windowLabel: id,
+    workspaceId: id,
+    projectId: null,
+    migratedFromWorkspaceId: null,
+  };
 }

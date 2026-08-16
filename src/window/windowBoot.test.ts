@@ -11,9 +11,11 @@ import {
   getCurrentWorkspaceId,
   getTerminalWorkspaceStore,
   resetWorkspaceStoreCacheForTests,
+  TERMINAL_WORKSPACE_STORAGE_KEY,
+  workspaceStorageKey,
 } from "@/stores/terminalStore";
 import type { TerminalTab } from "@/types";
-import { windowService } from "./windowService";
+import { windowService, type WorkspaceInfo } from "./windowService";
 
 vi.mock("@/services", () => ({
   terminalService: {
@@ -28,9 +30,19 @@ vi.mock("./windowService", () => ({
 }));
 
 import { terminalService } from "@/services";
-import { prepareWorkspace } from "./windowBoot";
+import { migrateLegacyWorkspaceLayout, prepareWorkspace } from "./windowBoot";
 
 const WORKSPACE_KEY = "project-terminal.workspace-layout.v2";
+
+function workspaceInfo(overrides: Partial<WorkspaceInfo> = {}): WorkspaceInfo {
+  return {
+    windowLabel: "ws-test",
+    workspaceId: "ws-test",
+    projectId: null,
+    migratedFromWorkspaceId: null,
+    ...overrides,
+  };
+}
 
 function makeTab(
   id: string,
@@ -95,11 +107,12 @@ describe("prepareWorkspace", () => {
         },
       }),
     );
-    vi.mocked(windowService.workspaceInfo).mockResolvedValue({
-      windowLabel: "ws-test",
-      workspaceId: "ws-test",
-      projectId: null,
-    });
+    vi.mocked(windowService.workspaceInfo).mockResolvedValue(
+      workspaceInfo({
+        windowLabel: "ws-test",
+        workspaceId: "ws-test",
+      }),
+    );
     vi.mocked(terminalService.listWorkspaceSessions).mockResolvedValue([
       runningSession("session-live"),
       runningSession("session-other"),
@@ -137,11 +150,12 @@ describe("prepareWorkspace", () => {
 
   it("survives a corrupt persisted layout and starts with a clean store", async () => {
     localStorage.setItem(`${WORKSPACE_KEY}:ws-test`, "{ not valid json !!");
-    vi.mocked(windowService.workspaceInfo).mockResolvedValue({
-      windowLabel: "ws-test",
-      workspaceId: "ws-test",
-      projectId: null,
-    });
+    vi.mocked(windowService.workspaceInfo).mockResolvedValue(
+      workspaceInfo({
+        windowLabel: "ws-test",
+        workspaceId: "ws-test",
+      }),
+    );
     vi.mocked(terminalService.listWorkspaceSessions).mockResolvedValue([]);
 
     const info = await prepareWorkspace();
@@ -152,11 +166,12 @@ describe("prepareWorkspace", () => {
   });
 
   it("continues UI startup when the live-session reconcile fails", async () => {
-    vi.mocked(windowService.workspaceInfo).mockResolvedValue({
-      windowLabel: "ws-test",
-      workspaceId: "ws-test",
-      projectId: null,
-    });
+    vi.mocked(windowService.workspaceInfo).mockResolvedValue(
+      workspaceInfo({
+        windowLabel: "ws-test",
+        workspaceId: "ws-test",
+      }),
+    );
     vi.mocked(terminalService.listWorkspaceSessions).mockRejectedValue(
       new Error("backend unreachable"),
     );
@@ -169,17 +184,19 @@ describe("prepareWorkspace", () => {
     ).toEqual({});
   });
 
-  it("keeps two windows' boot state independent", async () => {
-    vi.mocked(windowService.workspaceInfo).mockResolvedValueOnce({
-      windowLabel: "ws-a",
-      workspaceId: "ws-a",
-      projectId: null,
-    });
-    vi.mocked(windowService.workspaceInfo).mockResolvedValueOnce({
-      windowLabel: "ws-b",
-      workspaceId: "ws-b",
-      projectId: null,
-    });
+  it("keeps two workspaces' boot state independent", async () => {
+    vi.mocked(windowService.workspaceInfo).mockResolvedValueOnce(
+      workspaceInfo({
+        windowLabel: "ws-a",
+        workspaceId: "ws-a",
+      }),
+    );
+    vi.mocked(windowService.workspaceInfo).mockResolvedValueOnce(
+      workspaceInfo({
+        windowLabel: "ws-b",
+        workspaceId: "ws-b",
+      }),
+    );
     vi.mocked(terminalService.listWorkspaceSessions).mockResolvedValue([]);
 
     await prepareWorkspace();
@@ -187,9 +204,123 @@ describe("prepareWorkspace", () => {
     await prepareWorkspace();
     expect(getCurrentWorkspaceId()).toBe("ws-b");
 
-    // Each WebView has its own store instance keyed by its workspace.
+    // Each workspace has its own store instance keyed by its id.
     expect(getTerminalWorkspaceStore("ws-a")).not.toBe(
       getTerminalWorkspaceStore("ws-b"),
     );
+  });
+});
+
+describe("migrateLegacyWorkspaceLayout", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("copies the migrated workspace's layout into the main key once", () => {
+    const legacy = JSON.stringify({
+      version: 1,
+      state: { tabsById: { t: 1 } },
+    });
+    localStorage.setItem(workspaceStorageKey("workspace-old-a"), legacy);
+
+    migrateLegacyWorkspaceLayout(
+      workspaceInfo({
+        windowLabel: "main",
+        workspaceId: "main",
+        migratedFromWorkspaceId: "workspace-old-a",
+      }),
+    );
+
+    expect(localStorage.getItem(workspaceStorageKey("main"))).toBe(legacy);
+    // One-time: the source key is removed so a later launch cannot re-copy
+    // stale data over a newer main layout.
+    expect(localStorage.getItem(workspaceStorageKey("workspace-old-a"))).toBe(
+      null,
+    );
+  });
+
+  it("keeps an existing main layout and never overwrites it", () => {
+    const own = JSON.stringify({ version: 1, state: { tabsById: { x: 1 } } });
+    localStorage.setItem(workspaceStorageKey("main"), own);
+    localStorage.setItem(
+      workspaceStorageKey("workspace-old-a"),
+      JSON.stringify({ version: 1, state: { tabsById: { y: 1 } } }),
+    );
+
+    migrateLegacyWorkspaceLayout(
+      workspaceInfo({
+        windowLabel: "main",
+        workspaceId: "main",
+        migratedFromWorkspaceId: "workspace-old-a",
+      }),
+    );
+
+    expect(localStorage.getItem(workspaceStorageKey("main"))).toBe(own);
+    expect(
+      localStorage.getItem(workspaceStorageKey("workspace-old-a")),
+    ).not.toBe(null);
+  });
+
+  it("keeps the legacy v1 layout when present (it wins over any v2 workspace)", () => {
+    const v1 = JSON.stringify({ version: 1, state: { tabsById: { v: 1 } } });
+    localStorage.setItem(TERMINAL_WORKSPACE_STORAGE_KEY, v1);
+    localStorage.setItem(
+      workspaceStorageKey("workspace-old-a"),
+      JSON.stringify({ version: 1, state: { tabsById: { y: 1 } } }),
+    );
+
+    migrateLegacyWorkspaceLayout(
+      workspaceInfo({
+        windowLabel: "main",
+        workspaceId: "main",
+        migratedFromWorkspaceId: "workspace-old-a",
+      }),
+    );
+
+    expect(localStorage.getItem(workspaceStorageKey("main"))).toBe(null);
+    expect(localStorage.getItem(TERMINAL_WORKSPACE_STORAGE_KEY)).toBe(v1);
+  });
+
+  it("does nothing without a migrated workspace", () => {
+    migrateLegacyWorkspaceLayout(workspaceInfo());
+    expect(localStorage.length).toBe(0);
+  });
+
+  it("does nothing for a non-main workspace or a main-to-main migration", () => {
+    const legacy = JSON.stringify({
+      version: 1,
+      state: { tabsById: { t: 1 } },
+    });
+    localStorage.setItem(workspaceStorageKey("workspace-old-a"), legacy);
+
+    // Non-main workspace: migration never applies.
+    migrateLegacyWorkspaceLayout(
+      workspaceInfo({
+        workspaceId: "ws-other",
+        migratedFromWorkspaceId: "workspace-old-a",
+      }),
+    );
+    expect(localStorage.getItem(workspaceStorageKey("main"))).toBe(null);
+
+    // Backend migrated from a main record: nothing to copy.
+    migrateLegacyWorkspaceLayout(
+      workspaceInfo({
+        windowLabel: "main",
+        workspaceId: "main",
+        migratedFromWorkspaceId: "main",
+      }),
+    );
+    expect(localStorage.getItem(workspaceStorageKey("main"))).toBe(null);
+  });
+
+  it("only copies keys that actually exist", () => {
+    migrateLegacyWorkspaceLayout(
+      workspaceInfo({
+        windowLabel: "main",
+        workspaceId: "main",
+        migratedFromWorkspaceId: "workspace-ghost",
+      }),
+    );
+    expect(localStorage.length).toBe(0);
   });
 });

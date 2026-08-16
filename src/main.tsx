@@ -69,17 +69,22 @@ function renderApp(info: WorkspaceInfo | null) {
 /**
  * Boot-failure fallback: the UI must still render even when the backend
  * workspace handshake failed. The fallback workspace is this WebView's own
- * label (Tauri exposes it synchronously), so even a second window whose boot
- * failed lands on its own workspace state instead of the legacy `main` one.
+ * label (Tauri exposes it synchronously); in the single-window architecture
+ * that label is always `main`.
  */
 function fallbackInfo(): WorkspaceInfo {
   let label = "main";
   try {
     label = getCurrentWebview().label;
   } catch {
-    // Plain browser dev / tests: the legacy workspace id.
+    // Plain browser dev / tests: the main workspace id.
   }
-  return { windowLabel: label, workspaceId: label, projectId: null };
+  return {
+    windowLabel: label,
+    workspaceId: label,
+    projectId: null,
+    migratedFromWorkspaceId: null,
+  };
 }
 
 // Resolve the workspace identity and hydrate its layout before the first

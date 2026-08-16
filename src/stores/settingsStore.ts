@@ -30,12 +30,6 @@ export interface GeneralSettings {
   language: AppLanguage;
   theme: AppTheme;
   restoreLastProject: boolean;
-  /**
-   * Reopen every workspace window that was open when the process last ran
-   * (geometry and layout included). When off, only the most recently active
-   * workspace is restored.
-   */
-  restoreWindowsFromPreviousSession: boolean;
   confirmCloseTerminal: boolean;
   confirmDeleteProject: boolean;
   showTerminalCount: boolean;
@@ -100,7 +94,6 @@ export const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   language: "en",
   theme: "dark",
   restoreLastProject: true,
-  restoreWindowsFromPreviousSession: true,
   confirmCloseTerminal: true,
   confirmDeleteProject: true,
   showTerminalCount: true,
@@ -291,14 +284,23 @@ export const useSettingsStore = create<SettingsStoreState>()(
     }),
     {
       name: "project-terminal.general-settings",
-      version: 1,
+      version: 2,
       storage: generalSettingsStorage,
+      // v1 → v2: the multi-window setting `restoreWindowsFromPreviousSession`
+      // was removed with the multi-window architecture. The field is dropped
+      // so it never re-enters the store (a stale value in localStorage would
+      // otherwise survive every later write through `partialize`).
+      migrate: (persistedState) => {
+        const state = persistedState as PersistedSettings & {
+          restoreWindowsFromPreviousSession?: boolean;
+        };
+        delete state.restoreWindowsFromPreviousSession;
+        return state;
+      },
       partialize: (state): PersistedSettings => ({
         language: state.language,
         theme: state.theme,
         restoreLastProject: state.restoreLastProject,
-        restoreWindowsFromPreviousSession:
-          state.restoreWindowsFromPreviousSession,
         confirmCloseTerminal: state.confirmCloseTerminal,
         confirmDeleteProject: state.confirmDeleteProject,
         showTerminalCount: state.showTerminalCount,

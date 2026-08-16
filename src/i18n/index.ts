@@ -521,16 +521,6 @@ const zhCNWorkspace: Record<string, string> = {
   "Could not duplicate profile.": "无法复制配置。",
   "A split group can contain at most four panes.":
     "一个分屏组最多可包含四个窗格。",
-  "Close Project Terminal?": "关闭 Project Terminal？",
-  "Choose whether running terminals should continue.":
-    "请选择是否让正在运行的终端继续工作。",
-  "{count} terminal(s) are still running.": "仍有 {count} 个终端在运行。",
-  "Hide to tray and keep running": "隐藏到系统托盘并继续运行",
-  "Terminals keep working in the background. Reopen from the tray icon.":
-    "终端将在后台继续运行，可从托盘图标重新打开。",
-  "Stop all terminals and quit": "停止所有终端并退出",
-  "All sessions end immediately and unsaved work is lost.":
-    "所有会话将立即结束，未保存的内容会丢失。",
   "Remote access": "远程访问",
   "The gateway binds to loopback by default. Use Tailscale or an HTTPS reverse proxy for other devices.":
     "网关默认仅监听本机。其他设备请使用 Tailscale 或 HTTPS 反向代理。",
@@ -653,22 +643,14 @@ const zhCNWorkspace: Record<string, string> = {
   "Right panel": "右侧面板",
   "Show right sidebar": "显示右侧边栏",
   "Hide right sidebar": "隐藏右侧边栏",
-  // --- Multi-window ---
-  "New window": "新建窗口",
-  "Open in New Window": "在新窗口中打开",
+  // --- Window close (single main window) ---
   "Close this window?": "关闭此窗口？",
-  "{count} terminal(s) in this window are still running.":
-    "此窗口中有 {count} 个终端仍在运行。",
-  "Close window and keep terminals running": "关闭窗口并保持终端运行",
-  "Terminals keep working in the background. Reopen this window from the tray icon.":
-    "终端将在后台继续运行。可从托盘图标重新打开此窗口。",
-  "Close window and stop terminals in this window":
-    "关闭窗口并停止此窗口中的终端",
-  "Other windows and their terminals are not affected.":
-    "其他窗口及其终端不受影响。",
-  "Restore windows from previous session": "恢复上次会话的窗口",
-  "Reopen every workspace window that was open when the application last ran. When off, only the most recently active window is restored.":
-    "重新打开应用上次运行时的所有工作区窗口。关闭后仅恢复最近活动的一个窗口。",
+  "{count} terminal(s) are still running.": "仍有 {count} 个终端在运行。",
+  "Hide window and keep terminals running": "隐藏窗口并保持终端运行",
+  "Terminals keep working in the background. Reopen from the tray icon.":
+    "终端将在后台继续运行，可从托盘图标重新打开。",
+  "Stop terminals and quit": "停止终端并退出",
+  "All running terminals will be stopped.": "所有正在运行的终端都将被停止。",
 };
 
 const dictionaries: Record<AppLanguage, Record<string, string>> = {

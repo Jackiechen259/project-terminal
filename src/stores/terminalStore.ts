@@ -5,14 +5,14 @@
  * only changes `activeProjectId`: tabs stay mounted, PTY readers keep running,
  * and xterm instances are not disposed.
  *
- * Multi-window: every workspace window gets its own store instance, created
- * lazily and cached by workspace id (each WebView runs its own JS heap, so the
- * module-level cache holds at most the stores this window ever touched). Each
- * store persists under its own `project-terminal.workspace-layout.v2:{id}`
- * key; the legacy `main` workspace falls back to the v1 key for migration.
- * The exported `useTerminalStore` hook and `.getState()`/`.setState()` always
- * target the store of the CURRENT workspace, which is selected at boot by
- * `setCurrentWorkspaceId()`.
+ * Workspace scoping: the store instance is keyed by workspace id, which is
+ * `main` in the single-window architecture (each WebView runs its own JS
+ * heap, so the module-level cache holds at most the stores this window ever
+ * touched). Each store persists under its own
+ * `project-terminal.workspace-layout.v2:{id}` key; the `main` workspace falls
+ * back to the v1 key for migration. The exported `useTerminalStore` hook and
+ * `.getState()`/`.setState()` always target the store of the CURRENT
+ * workspace, which is selected at boot by `setCurrentWorkspaceId()`.
  */
 
 import { create, useStore, type UseBoundStore } from "zustand";

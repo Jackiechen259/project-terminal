@@ -8,7 +8,7 @@ import {
   selectRightSidebarMode,
   type RightSidebarMode,
 } from "@/components/layout/rightSidebarState";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ChevronRight,
   Minimize2,
@@ -27,7 +27,7 @@ import { useTranslation } from "@/i18n";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useProjectStore } from "@/stores/projectStore";
-import { nativeWindowService } from "@/services/native";
+import { nativeAppService, nativeWindowService } from "@/services/native";
 import {
   windowService,
   WINDOW_CLOSE_REQUEST_EVENT,
@@ -35,10 +35,10 @@ import {
 } from "@/window/windowService";
 import { useWindowWorkspace } from "@/window/useWindowWorkspace";
 
-/** Top-level application shell and per-window close workflow. */
+/** Top-level application shell and the main window's close workflow. */
 export function AppLayout() {
   const { t } = useTranslation();
-  const { workspaceId, projectId: bootProjectId } = useWindowWorkspace();
+  const { projectId: bootProjectId } = useWindowWorkspace();
   const sidebarCollapsed = useTerminalStore((s) => s.sidebarCollapsed);
   const setSidebarCollapsed = useTerminalStore((s) => s.setSidebarCollapsed);
   const rightSidebarCollapsed = useTerminalStore(
@@ -49,8 +49,8 @@ export function AppLayout() {
   const activeProjectId = useTerminalStore((s) => s.activeProjectId);
   const setActiveProject = useTerminalStore((s) => s.setActiveProject);
   const [closePromptOpen, setClosePromptOpen] = useState(false);
-  // The running count is workspace-scoped: closing this window only ever
-  // reports terminals that actually belong to it.
+  // There is exactly one window, so the running count is global: closing the
+  // window reports every terminal of the application.
   const runningTerminalCount = useTerminalStore(
     (state) =>
       Object.values(state.tabsById).filter(
@@ -74,21 +74,20 @@ export function AppLayout() {
     setRightSidebar(!rightSidebarCollapsed, rightSidebarMode);
   };
 
-  // The close button asks the backend to close this window. When the
-  // workspace still has running terminals the backend holds the close and
-  // emits `window://close-request`; when it has none, the window closes
-  // directly. Either path is per-window - nothing here can stop another
-  // window's terminals.
+  // The close button hides the main window to the tray. When terminals are
+  // still running the user is asked first: hide and keep them running, or
+  // stop everything and quit. Without running terminals the window hides
+  // directly - the process and the tray stay alive.
   const handleCloseRequest = () => {
     if (runningTerminalCount > 0) {
       setClosePromptOpen(true);
       return;
     }
-    void nativeWindowService.close();
+    void nativeWindowService.hide();
   };
 
   // Backend-held close (Alt+F4 / taskbar close while terminals run): surface
-  // the same per-window dialog.
+  // the same hide-vs-quit dialog.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     void nativeWindowService
@@ -101,15 +100,14 @@ export function AppLayout() {
     return () => unlisten?.();
   }, []);
 
-  // Keep the backend's window title and tray listing in sync with the
-  // workspace's active project.
+  // Keep the backend's window title and persisted active project in sync
+  // with the workspace's active project.
   useEffect(() => {
     void windowService.setActiveProject(activeProjectId).catch(() => {});
   }, [activeProjectId]);
 
-  // "Open in New Window": the backend created this window with a project
-  // selected; apply it once the project list is available (only when the
-  // workspace itself has no restored selection).
+  // Restore the last project once the project list is available (only when
+  // the window itself has no restored selection).
   const projects = useProjectStore((s) => s.projects);
   const projectsLoaded = useProjectStore((s) => s.loaded);
   const rememberProject = useSettingsStore((s) => s.rememberProject);
@@ -126,22 +124,6 @@ export function AppLayout() {
     rememberProject,
     setActiveProject,
   ]);
-
-  // Restore every workspace window from the previous session. The backend
-  // serializes window creation, but React StrictMode (dev) mounts effects
-  // twice: a second concurrent restore call would race the first against
-  // WebView2's environment, so the request is guarded to fire exactly once
-  // per window.
-  const restoreWindowsFromPreviousSession = useSettingsStore(
-    (s) => s.restoreWindowsFromPreviousSession,
-  );
-  const restoreRequestedRef = useRef(false);
-  useEffect(() => {
-    if (!restoreWindowsFromPreviousSession) return;
-    if (restoreRequestedRef.current) return;
-    restoreRequestedRef.current = true;
-    void windowService.restorePreviousWindows().catch(() => {});
-  }, [restoreWindowsFromPreviousSession]);
 
   return (
     <div className="app-frame flex h-full w-full flex-col overflow-hidden bg-bg text-foreground">
@@ -183,14 +165,9 @@ export function AppLayout() {
                   {t("Close this window?")}
                 </DialogTitle>
                 <DialogDescription className="text-xs leading-relaxed">
-                  {runningTerminalCount > 0
-                    ? t(
-                        "{count} terminal(s) in this window are still running.",
-                        {
-                          count: runningTerminalCount,
-                        },
-                      )
-                    : t("Choose whether running terminals should continue.")}
+                  {t("{count} terminal(s) are still running.", {
+                    count: runningTerminalCount,
+                  })}
                 </DialogDescription>
               </div>
             </div>
@@ -201,18 +178,18 @@ export function AppLayout() {
               autoFocus
               onClick={() => {
                 setClosePromptOpen(false);
-                void windowService.closeWindow(workspaceId, true);
+                void nativeWindowService.hide();
               }}
               className="group flex w-full items-center gap-3 rounded-md border border-border px-3 py-3 text-left transition-colors hover:border-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <Minimize2 className="h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-primary" />
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="text-sm font-medium">
-                  {t("Close window and keep terminals running")}
+                  {t("Hide window and keep terminals running")}
                 </span>
                 <span className="text-xs leading-relaxed text-muted-foreground">
                   {t(
-                    "Terminals keep working in the background. Reopen this window from the tray icon.",
+                    "Terminals keep working in the background. Reopen from the tray icon.",
                   )}
                 </span>
               </span>
@@ -222,17 +199,17 @@ export function AppLayout() {
               type="button"
               onClick={() => {
                 setClosePromptOpen(false);
-                void windowService.closeWindow(workspaceId, false);
+                void nativeAppService.exit();
               }}
               className="group flex w-full items-center gap-3 rounded-md border border-border px-3 py-3 text-left transition-colors hover:border-destructive hover:bg-destructive/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <PowerOff className="h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-destructive" />
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="text-sm font-medium transition-colors group-hover:text-destructive">
-                  {t("Close window and stop terminals in this window")}
+                  {t("Stop terminals and quit")}
                 </span>
                 <span className="text-xs leading-relaxed text-muted-foreground">
-                  {t("Other windows and their terminals are not affected.")}
+                  {t("All running terminals will be stopped.")}
                 </span>
               </span>
               <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/60 transition-colors group-hover:text-destructive" />

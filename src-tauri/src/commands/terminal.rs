@@ -52,9 +52,9 @@ pub struct CreateTerminalRequest {
 /// Which workspace/window owns a terminal session.
 ///
 /// The backend derives this from the calling webview's label - the frontend
-/// never submits a window id of its own choosing, so window A cannot claim to
-/// be window B. `None` fields mean the session was created outside any window
-/// (for example by the remote gateway).
+/// never submits a window id of its own choosing, so a session can never be
+/// claimed by a window it did not come from. `None` fields mean the session
+/// was created outside any window (for example by the remote gateway).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionOwnership {
     pub workspace_id: Option<String>,
@@ -63,6 +63,7 @@ pub struct SessionOwnership {
 
 impl SessionOwnership {
     /// Resolve the owning workspace from the webview that invoked a command.
+    /// With the single-window architecture this is always `main`.
     pub fn from_webview(app: &tauri::AppHandle, webview_label: &str) -> Self {
         let windows = app.try_state::<crate::window::WindowManager>();
         match windows.and_then(|manager| manager.workspace_id_for_window(webview_label)) {
@@ -1174,8 +1175,8 @@ pub fn list_workspace_sessions(
 
 /// Close every session owned by the calling window's workspace.
 ///
-/// This is the "Stop terminals in this window" path: sessions of other
-/// windows - and the window itself - are never touched.
+/// With the single-window architecture that is every desktop session; remote
+/// gateway sessions (which have no owning workspace) are never touched.
 #[tauri::command]
 pub fn close_workspace_sessions(
     app: tauri::AppHandle,
@@ -1447,19 +1448,10 @@ mod tests {
         let terminal = TerminalState::new();
         // Two sessions in workspace A (same project twice - allowed), one in B,
         // one with no owner at all (remote gateway).
-        terminal
-            .manager
-            .create(spawn("a1", "p1", "workspace-a"))
-            .unwrap();
-        terminal
-            .manager
-            .create(spawn("a2", "p1", "workspace-a"))
-            .unwrap();
-        terminal
-            .manager
-            .create(spawn("b1", "p2", "workspace-b"))
-            .unwrap();
-        let mut remote_spawn = spawn("remote-1", "p3", "workspace-x");
+        terminal.manager.create(spawn("a1", "p1", "ws-a")).unwrap();
+        terminal.manager.create(spawn("a2", "p1", "ws-a")).unwrap();
+        terminal.manager.create(spawn("b1", "p2", "ws-b")).unwrap();
+        let mut remote_spawn = spawn("remote-1", "p3", "ws-x");
         remote_spawn.workspace_id = None;
         remote_spawn.window_id = None;
         terminal.manager.create(remote_spawn).unwrap();
@@ -1469,7 +1461,7 @@ mod tests {
 
         // Listing is scoped to the workspace (registry order, so compare
         // sorted).
-        let listed = terminal.list_workspace_sessions("workspace-a");
+        let listed = terminal.list_workspace_sessions("ws-a");
         let mut ids = listed
             .iter()
             .map(|s| s.session_id.as_str())
@@ -1478,10 +1470,10 @@ mod tests {
         assert_eq!(ids, vec!["a1", "a2"]);
         assert!(listed
             .iter()
-            .all(|s| s.workspace_id.as_deref() == Some("workspace-a")));
+            .all(|s| s.workspace_id.as_deref() == Some("ws-a")));
 
         // Closing workspace A stops exactly A's sessions.
-        let closed = terminal.close_workspace_sessions("workspace-a");
+        let closed = terminal.close_workspace_sessions("ws-a");
         assert_eq!(closed, 2);
         assert!(terminal.manager.get("a1").is_err());
         assert!(terminal.manager.get("a2").is_err());
@@ -1672,8 +1664,7 @@ mod tests {
             spawn
                 .env
                 .iter()
-                .filter(|(k, _)| k == "TERM")
-                .next_back()
+                .rfind(|(k, _)| k == "TERM")
                 .map(|(_, v)| v.clone())
                 .unwrap()
         };
@@ -1928,8 +1919,7 @@ mod tests {
         let last_askpass = spawn
             .env
             .iter()
-            .filter(|(k, _)| k == "SSH_ASKPASS")
-            .next_back();
+            .rfind(|(k, _)| k == "SSH_ASKPASS");
         // No SSH connection here, so the profile value is the only one; the
         // ordering guarantee is what the assertion below pins.
         assert_eq!(

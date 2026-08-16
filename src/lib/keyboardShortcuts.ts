@@ -1,7 +1,6 @@
 export type AppShortcut =
   | { type: "new-terminal" }
   | { type: "close-terminal" }
-  | { type: "new-window" }
   | { type: "next-tab" }
   | { type: "previous-tab" }
   | { type: "split-pane"; direction: "side-by-side" | "stacked" }
@@ -29,7 +28,6 @@ export function getAppShortcut(event: KeyboardEvent): AppShortcut | null {
   }
   if (event.shiftKey && key === "t") return { type: "new-terminal" };
   if (event.shiftKey && key === "w") return { type: "close-terminal" };
-  if (event.shiftKey && key === "n") return { type: "new-window" };
   if (event.shiftKey && key === "c") return { type: "copy-terminal" };
   if (key === "tab" || key === "pagedown") {
     return event.shiftKey ? { type: "previous-tab" } : { type: "next-tab" };

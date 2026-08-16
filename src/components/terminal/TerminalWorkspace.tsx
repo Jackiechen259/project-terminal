@@ -709,12 +709,6 @@ export function TerminalWorkspace() {
         case "new-terminal":
           if (activeProjectId) void handleNewTerminal(activeProjectId);
           break;
-        case "new-window":
-          // Ctrl+Shift+N: open another workspace window in this process.
-          void import("@/window/windowService").then(({ windowService }) =>
-            windowService.newWindow(),
-          );
-          break;
         case "close-terminal":
           if (activeTabId) void handleCloseTab(activeTabId);
           break;

@@ -1,17 +1,9 @@
-import {
-  FolderOpen,
-  Pencil,
-  Plus,
-  ShieldCheck,
-  SquarePlus,
-  Trash2,
-} from "lucide-react";
+import { FolderOpen, Pencil, Plus, ShieldCheck, Trash2 } from "lucide-react";
 
 import { ContextMenu } from "@/components/ui/context-menu";
 import { dispatchAppCommand } from "@/lib/appCommands";
 import { useTranslation } from "@/i18n";
 import { usePlatformStore } from "@/stores/platformStore";
-import { windowService } from "@/window/windowService";
 interface ProjectContextMenuProps {
   project: { id: string; name: string; type: "local" | "ssh" | "wsl" };
   position: { x: number; y: number };
@@ -48,11 +40,6 @@ export function ProjectContextMenu({
           icon: Plus,
           onSelect: () =>
             dispatchAppCommand({ type: "new-terminal", projectId: project.id }),
-        },
-        {
-          label: t("Open in New Window"),
-          icon: SquarePlus,
-          onSelect: () => void windowService.newWindow(project.id),
         },
         ...(project.type === "ssh" && onTestSsh
           ? [

@@ -74,4 +74,28 @@ describe("settingsStore", () => {
     expect(useSettingsStore.getState().lastProjectId).toBe("project-1");
     expect(useSettingsStore.getState().cursorBlink).toBe(true);
   });
+
+  it("migrates v1 settings by dropping the removed restore-windows field", async () => {
+    // A v1 install persisted the multi-window setting; the v2 migration must
+    // drop it so it never re-enters the store.
+    localStorage.setItem(
+      "project-terminal.general-settings",
+      JSON.stringify({
+        state: {
+          ...DEFAULT_GENERAL_SETTINGS,
+          restoreWindowsFromPreviousSession: true,
+          language: "zh-CN",
+        },
+        version: 1,
+      }),
+    );
+
+    await useSettingsStore.persist.rehydrate();
+
+    expect(useSettingsStore.getState().language).toBe("zh-CN");
+    expect(
+      "restoreWindowsFromPreviousSession" in useSettingsStore.getState(),
+    ).toBe(false);
+    expect(useSettingsStore.getState().restoreLastProject).toBe(true);
+  });
 });
