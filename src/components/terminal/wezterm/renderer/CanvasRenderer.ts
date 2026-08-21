@@ -224,11 +224,22 @@ export class CanvasRenderer implements TerminalRenderer {
   private imageLoads = new Set<string>();
   private pendingFrame: TerminalRenderFrame | null = null;
   private frameRequest: number | null = null;
+  private transparentBackground = false;
 
   mount(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     this.context = canvas.getContext("2d");
     this.updateMetrics();
+  }
+
+  /**
+   * WebGLRenderer uses Canvas2D as a correctness overlay. In that mode the
+   * GPU owns the terminal background while this renderer contributes glyphs,
+   * cell-specific backgrounds, decorations, selections, and images.
+   */
+  setBackgroundVisible(visible: boolean) {
+    this.transparentBackground = !visible;
+    if (this.frame) this.redrawVisibleRows();
   }
 
   resize(width: number, height: number, rows: number, cols: number) {
@@ -487,8 +498,12 @@ export class CanvasRenderer implements TerminalRenderer {
     const y = visibleRow * this.cellHeight;
     context.save();
     context.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    context.fillStyle = this.theme.background;
-    context.fillRect(0, y, this.width, this.cellHeight);
+    if (this.transparentBackground) {
+      context.clearRect(0, y, this.width, this.cellHeight);
+    } else {
+      context.fillStyle = this.theme.background;
+      context.fillRect(0, y, this.width, this.cellHeight);
+    }
     if (!row) {
       context.restore();
       return;
@@ -527,8 +542,16 @@ export class CanvasRenderer implements TerminalRenderer {
       );
     }
 
-    context.fillStyle = background;
-    context.fillRect(x, y, cellWidth, this.cellHeight);
+    const paintsDefaultBackground =
+      !this.transparentBackground ||
+      cell.background.kind !== "default" ||
+      cell.reverse ||
+      this.cellIsSelected(stableRow, cell) ||
+      this.cellIsSearchMatched(stableRow, cell);
+    if (paintsDefaultBackground) {
+      context.fillStyle = background;
+      context.fillRect(x, y, cellWidth, this.cellHeight);
+    }
     if (cell.invisible) return;
 
     context.save();

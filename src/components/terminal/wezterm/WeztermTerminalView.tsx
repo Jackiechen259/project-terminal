@@ -37,8 +37,9 @@ import {
   useSettingsStore,
 } from "@/stores/settingsStore";
 import { resolveTerminalTabTitle } from "../terminalTitle";
-import { CanvasRenderer } from "./renderer/CanvasRenderer";
+import { createTerminalRenderer } from "./renderer/WebGLRenderer";
 import type {
+  TerminalRenderer,
   TerminalRendererTheme,
   TerminalSelection,
 } from "./renderer/TerminalRenderer";
@@ -74,7 +75,7 @@ function isModifierKey(key: string) {
 
 function selectionFor(
   frame: TerminalRenderFrame,
-  renderer: CanvasRenderer,
+  renderer: TerminalRenderer,
   event: MouseEvent<HTMLCanvasElement>,
 ): SelectionPoint | null {
   const point = renderer.rowAtPoint(event.clientX, event.clientY);
@@ -134,7 +135,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
-  const rendererRef = useRef<CanvasRenderer | null>(null);
+  const rendererRef = useRef<TerminalRenderer | null>(null);
   const frameRef = useRef<TerminalRenderFrame | null>(null);
   const rowsRef = useRef(new Map<number, TerminalRenderRow>());
   const selectionRef = useRef<TerminalSelection | null>(null);
@@ -197,6 +198,9 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     (state) => state.terminalFontFamily,
   );
   const terminalFontSize = useSettingsStore((state) => state.terminalFontSize);
+  const terminalRendererPreference = useSettingsStore(
+    (state) => state.terminalRenderer,
+  );
   const terminalColorScheme = useSettingsStore(
     (state) => state.terminalColorScheme,
   );
@@ -647,8 +651,14 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     }
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const renderer = new CanvasRenderer();
-    renderer.mount(canvas);
+    let renderer = createTerminalRenderer(terminalRendererPreference);
+    try {
+      renderer.mount(canvas);
+    } catch {
+      renderer.dispose();
+      renderer = createTerminalRenderer("dom");
+      renderer.mount(canvas);
+    }
     renderer.setTheme(rendererTheme);
     renderer.setFont(font);
     rendererRef.current = renderer;
@@ -659,7 +669,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     // The current theme/font are applied by the effects below without
     // recreating the canvas renderer.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active]);
+  }, [active, terminalRendererPreference]);
 
   useEffect(() => {
     const renderer = rendererRef.current;
