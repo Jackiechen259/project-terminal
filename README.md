@@ -24,7 +24,7 @@ Project Terminal is a Windows-first desktop terminal workspace for developers wh
 
 Instead of keeping unrelated sessions in one global tab bar, Project Terminal organizes terminals by **project**. Each project owns its own tab group and terminal profiles. Switching projects changes the visible workspace without destroying running PTY sessions.
 
-The current release is **v0.5.1**.
+The current release is **v0.5.12**.
 
 ## Features
 
@@ -368,7 +368,7 @@ git push origin v0.3.0
 
 The workflow builds Windows and Linux packages, signs updater artifacts, creates the GitHub Release, and publishes update metadata.
 
-The repository must contain the Actions secret `TAURI_SIGNING_PRIVATE_KEY`. The private signing key must never be committed. Keep a secure backup because installed applications trust the matching public key embedded in the Tauri configuration.
+The repository must contain the Actions secret `TAURI_SIGNING_PRIVATE_KEY`. If the key is encrypted, also configure `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Neither secret may be committed. Keep a secure backup because installed applications trust the matching public key embedded in the Tauri configuration.
 
 ## Known limitations
 

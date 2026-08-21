@@ -206,8 +206,9 @@ Rust-owned search path.
 
 - Collect the Windows GUI performance matrix above against the historical
   xterm/WebGL baseline in an interactive Tauri desktop session. The current
-  managed desktop session creates the Rust process but no visible WebView
-  window, so this matrix cannot be inferred from the standalone harness.
+  managed desktop session creates the Rust process but WebView2 fails during
+  creation with `0x800700AA` (resource in use), leaving no visible window; the
+  matrix therefore cannot be inferred from the standalone harness.
 - Run a signed release build when TAURI_SIGNING_PRIVATE_KEY is available.
 - Keep the xterm terminology in this document only where it identifies the
   historical baseline or the required comparison.

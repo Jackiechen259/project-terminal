@@ -24,7 +24,7 @@ Project Terminal 是一款以 Windows 为优先支持平台的桌面终端工作
 
 Project Terminal 并没有将无关会话混杂在全局标签栏中，而是按**项目 (Project)** 来组织终端。每个项目都拥有独立的终端标签页组与终端配置 (Profiles)。切换项目只会改变当前可见的工作区，而不会中断后台正在运行的 PTY 会话。
 
-当前发布版本为 **v0.5.1**。
+当前发布版本为 **v0.5.12**。
 
 ## 功能特性
 
@@ -363,7 +363,7 @@ git push origin v0.3.0
 
 发布工作流将自动构建 Windows 与 Linux 安装包、为更新包签名、创建 GitHub Release 并发布更新元数据。
 
-仓库中必须设置 GitHub Actions secret `TAURI_SIGNING_PRIVATE_KEY`。私钥绝不可提交至代码库。请妥善保管备份，因为已安装的客户端信任与该私钥匹配并嵌入在 Tauri 配置中的公钥。
+仓库中必须设置 GitHub Actions secret `TAURI_SIGNING_PRIVATE_KEY`；如果私钥已加密，还必须设置 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。这两个 secret 都绝不可提交至代码库。请妥善保管备份，因为已安装的客户端信任与该私钥匹配并嵌入在 Tauri 配置中的公钥。
 
 ## 已知局限性
 
