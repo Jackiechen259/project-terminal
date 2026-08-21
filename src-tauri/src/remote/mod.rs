@@ -11,7 +11,6 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
-use base64::Engine;
 use chrono::Utc;
 use futures_util::{SinkExt, StreamExt};
 use parking_lot::Mutex;
@@ -24,6 +23,7 @@ use crate::config_dirs::ConfigDirs;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::terminal::TerminalManager;
+use crate::terminal_engine::{TerminalKeyEvent, TerminalMouseEvent};
 
 const DEFAULT_BIND: &str = "127.0.0.1:4097";
 const LEASE_TTL: Duration = Duration::from_secs(30);
@@ -303,14 +303,29 @@ enum WsClientMessage {
     Release {
         lease_id: String,
     },
-    Input {
+    Key {
         lease_id: String,
-        data: String,
+        event: TerminalKeyEvent,
+    },
+    Text {
+        lease_id: String,
+        text: String,
+    },
+    Paste {
+        lease_id: String,
+        text: String,
+    },
+    Mouse {
+        lease_id: String,
+        event: TerminalMouseEvent,
     },
     Resize {
         lease_id: String,
         rows: u16,
         cols: u16,
+    },
+    Viewport {
+        stable_row: i64,
     },
     Interrupt {
         lease_id: String,
@@ -321,14 +336,7 @@ enum WsClientMessage {
 fn build_router(state: RemoteState) -> Router {
     Router::new()
         .route("/", get(mobile_page))
-        .route("/xterm.js", get(xterm_js))
-        .route("/xterm.css", get(xterm_css))
-        .route("/xterm-addon-fit.js", get(xterm_addon_fit_js))
-        .route("/xterm-addon-image.js", get(xterm_addon_image_js))
-        .route(
-            "/xterm-addon-unicode-graphemes.js",
-            get(xterm_addon_unicode_graphemes_js),
-        )
+        .route("/remote-renderer.js", get(remote_renderer_js))
         .route("/api/projects", get(list_projects))
         .route("/api/sessions", get(list_sessions).post(create_session))
         .route("/api/sessions/{id}", get(get_session))
@@ -349,50 +357,13 @@ async fn mobile_page() -> Html<&'static str> {
     Html(MOBILE_PAGE)
 }
 
-async fn xterm_js() -> impl IntoResponse {
+async fn remote_renderer_js() -> impl IntoResponse {
     (
         [(
             axum::http::header::CONTENT_TYPE,
             "text/javascript; charset=utf-8",
         )],
-        XTERM_JS,
-    )
-}
-
-async fn xterm_css() -> impl IntoResponse {
-    (
-        [(axum::http::header::CONTENT_TYPE, "text/css; charset=utf-8")],
-        XTERM_CSS,
-    )
-}
-
-async fn xterm_addon_fit_js() -> impl IntoResponse {
-    (
-        [(
-            axum::http::header::CONTENT_TYPE,
-            "text/javascript; charset=utf-8",
-        )],
-        XTERM_ADDON_FIT_JS,
-    )
-}
-
-async fn xterm_addon_image_js() -> impl IntoResponse {
-    (
-        [(
-            axum::http::header::CONTENT_TYPE,
-            "text/javascript; charset=utf-8",
-        )],
-        XTERM_ADDON_IMAGE_JS,
-    )
-}
-
-async fn xterm_addon_unicode_graphemes_js() -> impl IntoResponse {
-    (
-        [(
-            axum::http::header::CONTENT_TYPE,
-            "text/javascript; charset=utf-8",
-        )],
-        XTERM_ADDON_UNICODE_GRAPHEMES_JS,
+        REMOTE_RENDERER_JS,
     )
 }
 
@@ -857,11 +828,13 @@ async fn websocket_loop(
     query: AttachQuery,
 ) {
     let attachment_id = format!("remote-{}", uuid::Uuid::new_v4());
-    let Ok((session, subscription)) = state.manager.attach(
-        &session_id,
-        attachment_id.clone(),
-        crate::terminal::scrollback::ScrollbackSnapshotFormat::Flat,
-    ) else {
+    let Ok((session, subscription, mut status_receiver)) = state
+        .manager
+        .attach_renderer(&session_id, attachment_id.clone())
+    else {
+        return;
+    };
+    let Ok(session_handle) = state.manager.get(&session_id) else {
         return;
     };
     audit(
@@ -876,15 +849,12 @@ async fn websocket_loop(
         },
         true,
     );
-    let snapshot = base64::engine::general_purpose::STANDARD.encode(subscription.snapshot.bytes);
     let (mut sender, mut receiver) = socket.split();
     if send_ws_json(
         &mut sender,
         &serde_json::json!({
-            "type": "snapshot",
+            "type": "session",
             "session": session,
-            "data": snapshot,
-            "truncated": subscription.snapshot.truncated,
             "readOnly": query.read_only,
         }),
     )
@@ -893,25 +863,63 @@ async fn websocket_loop(
     {
         return;
     }
-    let mut output = subscription.receiver;
+    let mut frames = subscription.frames;
+    let mut controls = subscription.controls;
+    let mut cancellation = subscription.cancellation;
     let mut message_times = VecDeque::new();
     loop {
         tokio::select! {
-            remote_output = output.recv() => {
-                match remote_output {
-                    Ok(event) => {
-                        // Base64 happens here rather than on the broadcast bus,
-                        // so a desktop-only session never pays for it.
-                        let event = crate::terminal::TerminalOutput::from_event(&event);
-                        if send_ws_json(&mut sender, &serde_json::json!({
-                            "type": "output",
-                            "event": event,
-                        })).await.is_err() {
-                            break;
-                        }
+            changed = cancellation.changed() => {
+                if changed.is_err() || *cancellation.borrow() {
+                    break;
+                }
+            }
+            remote_frame = frames.recv() => {
+                let message = match remote_frame {
+                    Ok(frame) => serde_json::json!({
+                        "type": "frame",
+                        "frame": &*frame,
+                    }),
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        session_handle.request_render_snapshot();
+                        serde_json::json!({ "type": "lagged" })
                     }
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(broadcast::error::RecvError::Closed) => break,
+                };
+                if send_ws_json(&mut sender, &message).await.is_err() {
+                    break;
+                }
+            }
+            remote_control = controls.recv() => {
+                let message = match remote_control {
+                    Ok(event) => serde_json::json!({
+                        "type": "control",
+                        "event": &*event,
+                    }),
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        session_handle.request_render_snapshot();
+                        serde_json::json!({ "type": "lagged" })
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                };
+                if send_ws_json(&mut sender, &message).await.is_err() {
+                    break;
+                }
+            }
+            status = status_receiver.recv() => {
+                let message = match status {
+                    Ok(event) => serde_json::json!({
+                        "type": "status",
+                        "status": event.status,
+                        "exitCode": event.exit_code,
+                    }),
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        serde_json::json!({ "type": "lagged" })
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                };
+                if send_ws_json(&mut sender, &message).await.is_err() {
+                    break;
                 }
             }
             incoming = receiver.next() => {
@@ -961,7 +969,7 @@ fn handle_ws_message(
     read_only: bool,
     message: WsClientMessage,
 ) -> serde_json::Value {
-    if read_only {
+    if read_only && !matches!(&message, WsClientMessage::Viewport { .. }) {
         return serde_json::json!({ "type": "error", "message": "Client is read-only" });
     }
     match message {
@@ -981,12 +989,33 @@ fn handle_ws_message(
             release_control(state, session_id, client_id, Some(&lease_id));
             serde_json::json!({ "type": "released" })
         }
-        WsClientMessage::Input { lease_id, data } => {
+        WsClientMessage::Key { lease_id, event } => {
             if validate_lease(state, session_id, client_id, &lease_id, true).is_err() {
                 return serde_json::json!({ "type": "error", "message": "A control lease is required" });
             }
-            let ok = state.manager.write(session_id, data.as_bytes()).is_ok();
-            serde_json::json!({ "type": "ack", "action": "input", "ok": ok })
+            let ok = state.manager.key_down(session_id, &event).is_ok();
+            serde_json::json!({ "type": "ack", "action": "key", "ok": ok })
+        }
+        WsClientMessage::Text { lease_id, text } => {
+            if validate_lease(state, session_id, client_id, &lease_id, true).is_err() {
+                return serde_json::json!({ "type": "error", "message": "A control lease is required" });
+            }
+            let ok = state.manager.text_input(session_id, &text).is_ok();
+            serde_json::json!({ "type": "ack", "action": "text", "ok": ok })
+        }
+        WsClientMessage::Paste { lease_id, text } => {
+            if validate_lease(state, session_id, client_id, &lease_id, true).is_err() {
+                return serde_json::json!({ "type": "error", "message": "A control lease is required" });
+            }
+            let ok = state.manager.send_paste(session_id, &text).is_ok();
+            serde_json::json!({ "type": "ack", "action": "paste", "ok": ok })
+        }
+        WsClientMessage::Mouse { lease_id, event } => {
+            if validate_lease(state, session_id, client_id, &lease_id, true).is_err() {
+                return serde_json::json!({ "type": "error", "message": "A control lease is required" });
+            }
+            let ok = state.manager.mouse_event(session_id, &event).is_ok();
+            serde_json::json!({ "type": "ack", "action": "mouse", "ok": ok })
         }
         WsClientMessage::Resize {
             lease_id,
@@ -999,11 +1028,33 @@ fn handle_ws_message(
             let ok = state.manager.resize(session_id, rows, cols, 0, 0).is_ok();
             serde_json::json!({ "type": "ack", "action": "resize", "ok": ok })
         }
+        WsClientMessage::Viewport { stable_row } => {
+            let ok = state
+                .manager
+                .set_viewport_top(session_id, stable_row)
+                .is_ok();
+            serde_json::json!({ "type": "ack", "action": "viewport", "ok": ok })
+        }
         WsClientMessage::Interrupt { lease_id, confirm } => {
             if !confirm || validate_lease(state, session_id, client_id, &lease_id, true).is_err() {
                 return serde_json::json!({ "type": "error", "message": "Confirmation and a control lease are required" });
             }
-            let ok = state.manager.write(session_id, b"\x03").is_ok();
+            let ok = state
+                .manager
+                .key_down(
+                    session_id,
+                    &TerminalKeyEvent {
+                        key: "c".into(),
+                        code: Some("KeyC".into()),
+                        location: 0,
+                        num_lock: false,
+                        shift: false,
+                        alt: false,
+                        ctrl: true,
+                        meta: false,
+                    },
+                )
+                .is_ok();
             audit(state, peer, client_id, session_id, "ws.interrupt", ok);
             serde_json::json!({ "type": "ack", "action": "interrupt", "ok": ok })
         }
@@ -1324,15 +1375,7 @@ fn is_tailscale_ip(ip: IpAddr) -> bool {
     }
 }
 
-const XTERM_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/xterm.js"));
-const XTERM_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/xterm.css"));
-const XTERM_ADDON_FIT_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/xterm-addon-fit.js"));
-const XTERM_ADDON_IMAGE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/xterm-addon-image.js"));
-const XTERM_ADDON_UNICODE_GRAPHEMES_JS: &str = include_str!(concat!(
-    env!("OUT_DIR"),
-    "/xterm-addon-unicode-graphemes.js"
-));
-
+const REMOTE_RENDERER_JS: &str = include_str!("remote_renderer.js");
 const MOBILE_PAGE: &str = include_str!("remote_page.html");
 
 #[cfg(test)]
@@ -1417,14 +1460,44 @@ mod tests {
     fn mobile_page_includes_resilient_control_protocol() {
         assert!(MOBILE_PAGE.contains("CONTROL_RENEW_MS"));
         assert!(MOBILE_PAGE.contains(r#"type: "resize", lease_id: leaseId"#));
+        assert!(MOBILE_PAGE.contains(r#"type: "key", lease_id: leaseId"#));
+        assert!(MOBILE_PAGE.contains(r#"type: "viewport", stable_row: stableRow"#));
         assert!(MOBILE_PAGE.contains("crypto.randomUUID"));
         assert!(MOBILE_PAGE.contains("crypto.getRandomValues"));
+        assert!(MOBILE_PAGE.contains("ProjectTerminalRemoteRenderer"));
+        assert!(!MOBILE_PAGE.contains("/xterm"));
         assert!(MOBILE_PAGE.contains(r#"type: "release", lease_id: leaseId"#));
         assert!(MOBILE_PAGE.contains(r#"if (!isReadOnly()) send({ type: "acquire" });"#));
         assert!(MOBILE_PAGE.contains(r#"method: "POST""#));
         assert!(MOBILE_PAGE.contains(r#"id="newTerminal""#));
         assert!(!MOBILE_PAGE.contains(r#"id="takeControl""#));
         assert!(!MOBILE_PAGE.contains(r#"id="inputForm""#));
+    }
+
+    #[test]
+    fn websocket_input_protocol_is_semantic() {
+        assert!(matches!(
+            serde_json::from_str::<WsClientMessage>(
+                r#"{"type":"key","lease_id":"lease","event":{"key":"ArrowUp","code":"ArrowUp","location":0,"numLock":false,"shift":false,"alt":false,"ctrl":false,"meta":false}}"#,
+            ),
+            Ok(WsClientMessage::Key { .. })
+        ));
+        assert!(matches!(
+            serde_json::from_str::<WsClientMessage>(
+                r#"{"type":"text","lease_id":"lease","text":"中文"}"#,
+            ),
+            Ok(WsClientMessage::Text { .. })
+        ));
+        assert!(matches!(
+            serde_json::from_str::<WsClientMessage>(
+                r#"{"type":"paste","lease_id":"lease","text":"echo hi\r\n"}"#,
+            ),
+            Ok(WsClientMessage::Paste { .. })
+        ));
+        assert!(matches!(
+            serde_json::from_str::<WsClientMessage>(r#"{"type":"viewport","stable_row":-12}"#,),
+            Ok(WsClientMessage::Viewport { stable_row: -12 })
+        ));
     }
 
     #[tokio::test]

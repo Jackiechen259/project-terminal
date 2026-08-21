@@ -8,7 +8,6 @@
     />
     <meta name="theme-color" content="#090d14" />
     <title>Project Terminal Remote</title>
-    <link rel="stylesheet" href="/xterm.css" />
     <style>
       :root {
         color-scheme: dark;
@@ -296,15 +295,30 @@
         background: var(--terminal);
       }
       #terminal {
+        position: relative;
         width: 100%;
         height: 100%;
       }
-      #terminal .xterm {
+      #terminal .remote-terminal-canvas {
+        display: block;
+        width: 100%;
         height: 100%;
-        padding: 8px 8px 3px;
+        outline: none;
       }
-      #terminal .xterm-viewport {
-        background: var(--terminal) !important;
+      #terminal .remote-terminal-input {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        border: 0;
+        opacity: 0;
+        pointer-events: none;
+        resize: none;
+      }
+      #terminal.remote-terminal-bell {
+        box-shadow: inset 0 0 0 2px rgba(104, 163, 255, 0.72);
       }
 
       .empty-state {
@@ -629,9 +643,6 @@
         .empty-state {
           padding: 1.25rem;
         }
-        #terminal .xterm {
-          padding: 3px 3px 1px;
-        }
         .controlbar {
           min-height: 86px;
           padding: 0.35rem 0.45rem
@@ -927,32 +938,28 @@
 
     <div id="notice" class="notice" role="status"></div>
 
-    <script src="/xterm.js"></script>
-    <script src="/xterm-addon-fit.js"></script>
-    <script src="/xterm-addon-image.js"></script>
-    <script src="/xterm-addon-unicode-graphemes.js"></script>
+    <script src="/remote-renderer.js"></script>
     <script>
       const $ = (id) => document.getElementById(id);
       const CONTROL_RENEW_MS = 10000;
       const RECONNECT_DELAY_MS = 1800;
       const SPECIAL_KEYS = {
-        esc: "\u001b",
-        tab: "\t",
-        up: "\u001b[A",
-        down: "\u001b[B",
-        right: "\u001b[C",
-        left: "\u001b[D",
+        esc: { key: "Escape", code: "Escape" },
+        tab: { key: "Tab", code: "Tab" },
+        up: { key: "ArrowUp", code: "ArrowUp" },
+        down: { key: "ArrowDown", code: "ArrowDown" },
+        right: { key: "ArrowRight", code: "ArrowRight" },
+        left: { key: "ArrowLeft", code: "ArrowLeft" },
       };
 
       let socket = null;
       let terminal = null;
-      let fitAddon = null;
       let leaseId = null;
       let leaseTimer = null;
       let reconnectTimer = null;
       let resizeTimer = null;
       let noticeTimer = null;
-      let pendingOutput = [];
+      let pendingFrames = [];
       let authenticated = false;
       let intentionalClose = false;
 
@@ -974,15 +981,6 @@
       const isReadOnly = () => $("viewMode").classList.contains("active");
       const hasControl = () =>
         Boolean(leaseId && socket?.readyState === WebSocket.OPEN);
-
-      function decodeBase64(value) {
-        try {
-          const binary = atob(value);
-          return Uint8Array.from(binary, (char) => char.charCodeAt(0));
-        } catch {
-          return new Uint8Array();
-        }
-      }
 
       function setConnection(text, state = "") {
         $("connectionText").textContent = text;
@@ -1048,7 +1046,7 @@
         document.querySelectorAll(".key-button").forEach((button) => {
           button.disabled = !controlled;
         });
-        if (terminal) terminal.options.disableStdin = !controlled;
+        terminal?.setInputEnabled(controlled);
       }
 
       function clearLease(message = null) {
@@ -1073,7 +1071,7 @@
         startLeaseHeartbeat();
         updateControls("control");
         try {
-          fitAddon?.fit();
+          terminal?.fit(true);
           terminal?.focus();
         } catch {}
       }
@@ -1081,56 +1079,24 @@
       function initTerminal() {
         if (terminal) return true;
         try {
-          terminal = new Terminal({
-            allowProposedApi: true,
-            convertEol: false,
-            cursorBlink: true,
-            cursorStyle: "bar",
-            disableStdin: true,
-            fontFamily:
-              '"Cascadia Mono", "SFMono-Regular", Consolas, ui-monospace, monospace',
-            fontSize: window.innerWidth < 540 ? 12 : 13,
-            lineHeight: 1.12,
-            scrollback: 5000,
-            theme: {
-              background: "#05070b",
-              foreground: "#dce6f3",
-              cursor: "#75aaff",
-              selectionBackground: "#244b80",
-              black: "#111827",
-              brightBlack: "#66758a",
-              blue: "#68a3ff",
-              brightBlue: "#8ab8ff",
-              cyan: "#56c7d9",
-              brightCyan: "#78dbea",
-              green: "#4ed7a0",
-              brightGreen: "#72e5b7",
-              magenta: "#bc91f4",
-              brightMagenta: "#d0adff",
-              red: "#ff7b84",
-              brightRed: "#ff9ba2",
-              white: "#dce6f3",
-              brightWhite: "#ffffff",
-              yellow: "#f7c766",
-              brightYellow: "#ffdb85",
-            },
-          });
-          fitAddon = new FitAddon.FitAddon();
-          terminal.loadAddon(fitAddon);
-          // Character widths, matching the desktop. Without it the same PTY
-          // bytes render at different widths here, so CJK and emoji columns
-          // stop lining up the moment a session is taken over mid-command.
-          terminal.loadAddon(
-            new UnicodeGraphemesAddon.UnicodeGraphemesAddon(),
-          );
-          // Sixel/IIP rendering, loaded before open() because the addon wraps
-          // the core's open and renderer hooks. Phones are memory-tight, so the
-          // image cache stays well below the 128 MB default.
-          terminal.loadAddon(new ImageAddon.ImageAddon({ storageLimit: 16 }));
+          terminal = new ProjectTerminalRemoteRenderer();
           terminal.open($("terminal"));
-          terminal.onData((data) => {
-            if (hasControl() && data)
-              send({ type: "input", lease_id: leaseId, data });
+          terminal.onText((text) => {
+            if (hasControl() && text)
+              send({ type: "text", lease_id: leaseId, text });
+          });
+          terminal.onKey((event) => {
+            if (hasControl()) send({ type: "key", lease_id: leaseId, event });
+          });
+          terminal.onPaste((text) => {
+            if (hasControl() && text)
+              send({ type: "paste", lease_id: leaseId, text });
+          });
+          terminal.onMouse((event) => {
+            if (hasControl()) send({ type: "mouse", lease_id: leaseId, event });
+          });
+          terminal.onViewport((stableRow) => {
+            send({ type: "viewport", stable_row: stableRow });
           });
           terminal.onResize(({ cols, rows }) => {
             if (!hasControl()) return;
@@ -1140,17 +1106,12 @@
                 send({ type: "resize", lease_id: leaseId, cols, rows });
             }, 160);
           });
-          new ResizeObserver(() => {
-            try {
-              fitAddon?.fit();
-            } catch {}
-          }).observe($("terminal"));
-          for (const bytes of pendingOutput) terminal.write(bytes);
-          pendingOutput = [];
+          for (const frame of pendingFrames) terminal.renderFrame(frame);
+          pendingFrames = [];
+          terminal.setInputEnabled(hasControl());
           return true;
         } catch (error) {
           terminal = null;
-          fitAddon = null;
           setEmpty(
             "Terminal unavailable",
             error?.message || "The terminal renderer could not start.",
@@ -1165,15 +1126,13 @@
         // with mouse tracking or bracketed paste on, keeps those modes
         // through a clear and mis-renders everything that follows.
         if (terminal) terminal.reset();
-        pendingOutput = [];
+        pendingFrames = [];
         clearLease();
       }
 
-      function writeOutput(encoded) {
-        const bytes = decodeBase64(encoded);
-        if (!bytes.length) return;
-        if (terminal) terminal.write(bytes);
-        else pendingOutput.push(bytes);
+      function writeFrame(frame) {
+        if (terminal) terminal.renderFrame(frame);
+        else pendingFrames.push(frame);
       }
 
       async function api(path, options = {}) {
@@ -1377,7 +1336,7 @@
           if (!isReadOnly()) send({ type: "acquire" });
           setTimeout(() => {
             try {
-              fitAddon?.fit();
+              terminal?.fit(true);
             } catch {}
           }, 60);
         };
@@ -1391,10 +1350,21 @@
             return;
           }
 
-          if (message.type === "snapshot") {
-            writeOutput(message.data);
-          } else if (message.type === "output" && message.event?.data) {
-            writeOutput(message.event.data);
+          if (message.type === "frame") {
+            writeFrame(message.frame);
+          } else if (message.type === "control") {
+            if (message.event?.type === "bell") terminal?.pulseBell();
+            if (message.event?.type === "titleChanged" && message.event.title)
+              document.title = message.event.title;
+          } else if (message.type === "status") {
+            if (message.status !== "running")
+              showNotice(
+                message.exitCode == null
+                  ? "Terminal exited"
+                  : "Terminal exited with code " + message.exitCode,
+              );
+          } else if (message.type === "lagged") {
+            showNotice("Renderer resynchronizing…");
           } else if (message.type === "lease") {
             acceptLease(message.lease);
           } else if (
@@ -1458,7 +1428,7 @@
         button.title = focused ? "Show session controls" : "Expand terminal";
         setTimeout(() => {
           try {
-            fitAddon?.fit();
+            terminal?.fit(true);
           } catch {}
         }, 40);
       }
@@ -1509,16 +1479,16 @@
       });
       document.querySelectorAll(".key-button").forEach((button) => {
         button.addEventListener("click", () => {
-          const data = SPECIAL_KEYS[button.dataset.key];
-          if (hasControl() && data) {
-            send({ type: "input", lease_id: leaseId, data });
+          const event = SPECIAL_KEYS[button.dataset.key];
+          if (hasControl() && event) {
+            send({ type: "key", lease_id: leaseId, event });
             terminal?.focus();
           }
         });
       });
       window.addEventListener("resize", () => {
         try {
-          fitAddon?.fit();
+          terminal?.fit(true);
         } catch {}
       });
       window.addEventListener("keydown", (event) => {
