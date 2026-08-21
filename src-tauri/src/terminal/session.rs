@@ -791,6 +791,13 @@ impl TerminalSession {
         (subscription, status_receiver)
     }
 
+    /// Number of renderer frame subscribers currently attached to this
+    /// session. This is intentionally diagnostic-only; PTY/model lifetime is
+    /// independent from this count.
+    pub fn renderer_count(&self) -> usize {
+        self.frame_hub.renderer_count()
+    }
+
     pub fn request_render_snapshot(&self) {
         self.terminal_engine.lock().request_full_snapshot();
         self.frame_hub.notify();

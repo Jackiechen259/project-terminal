@@ -172,6 +172,10 @@ impl TerminalManager {
         Ok((info, subscription, status_receiver))
     }
 
+    pub fn renderer_count(&self, session_id: &str) -> AppResult<usize> {
+        Ok(self.get(session_id)?.renderer_count())
+    }
+
     pub fn detach(&self, session_id: &str, client_id: &str) -> AppResult<()> {
         self.get(session_id)?.detach(client_id);
         Ok(())
@@ -396,6 +400,89 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].session_id, id);
         assert_eq!(listed[0].project_id, "project-1");
+        manager.close_all();
+    }
+
+    #[test]
+    #[ignore = "Windows multi-session stress probe; run with --ignored --nocapture"]
+    fn ten_sessions_keep_background_models_live_with_one_active_renderer() {
+        use crate::terminal_engine::{TerminalSearchDirection, TerminalSearchQuery};
+
+        let manager = TerminalManager::new();
+        let started = Instant::now();
+        let ids = (0..10)
+            .map(|index| {
+                let id = format!("multi-session-{index}");
+                manager.create(cmd_spawn(&id)).expect("spawn session");
+                manager.mark_running(&id).expect("mark running");
+                id
+            })
+            .collect::<Vec<_>>();
+
+        let (_, mut active_frames, _active_status) = manager
+            .attach_renderer(&ids[0], "active-renderer".into())
+            .expect("attach active renderer");
+        assert_eq!(manager.renderer_count(&ids[0]).unwrap(), 1);
+        for id in &ids[1..] {
+            assert_eq!(manager.renderer_count(id).unwrap(), 0);
+        }
+
+        for (index, id) in ids.iter().enumerate() {
+            manager
+                .write(id, format!("echo PT_MULTI_{index}\r\n").as_bytes())
+                .expect("write session output");
+        }
+
+        let query = |id: &str| {
+            manager.search(
+                id,
+                &TerminalSearchQuery {
+                    query: format!(
+                        "PT_MULTI_{}",
+                        ids.iter().position(|value| value == id).unwrap()
+                    ),
+                    case_sensitive: true,
+                    direction: TerminalSearchDirection::Forward,
+                    start: None,
+                },
+            )
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut all_models_ready = false;
+        let mut active_frame_ready = false;
+        while Instant::now() < deadline {
+            all_models_ready = ids.iter().all(|id| !query(id).unwrap().is_empty());
+            while let Ok(frame) = active_frames.frames.try_recv() {
+                active_frame_ready |= frame.full_snapshot
+                    || frame.dirty_rows.iter().any(|row| {
+                        row.cells
+                            .iter()
+                            .any(|cell| cell.text.contains("PT_MULTI_0"))
+                    });
+            }
+            if all_models_ready && active_frame_ready {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        assert!(
+            all_models_ready,
+            "all ten terminal models did not parse output"
+        );
+        assert!(
+            active_frame_ready,
+            "the active renderer did not receive a model frame"
+        );
+        assert!(
+            ids.iter()
+                .all(|id| manager.info(id).unwrap().status == SessionStatus::Running),
+            "a background session stopped while parsing output"
+        );
+        println!(
+            "terminal_multi_session_benchmark sessions=10 active_renderers=1 background_renderers=9 elapsed_ms={}",
+            started.elapsed().as_millis(),
+        );
         manager.close_all();
     }
 }

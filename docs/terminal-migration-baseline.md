@@ -48,18 +48,18 @@ encoding.
 
 ## Responsibility map
 
-| Concern | Authoritative owner | Notes |
-| --- | --- | --- |
-| ConPTY, process spawn, stdin/stdout, resize, kill | portable-pty and TerminalSession | The PTY boundary is unchanged. |
-| VT/ANSI parsing, screen, alternate screen, cursor, modes | wezterm-term through WeztermTerminalEngine | One model per terminal session. |
-| Scrollback and stable rows | wezterm-term | The old raw ring is compatibility/debug only. |
-| Keyboard, mouse, paste, and IME encoding | WeztermTerminalEngine | Frontend sends semantic events. |
-| OSC title, cwd, command markers, bell | engine control event queue | Only changes are sent; not repeated per frame. |
-| Render transport | TerminalFrameHub and typed Tauri frames | Dirty rows, sequence numbers, and full snapshots. |
-| Cell drawing and metrics | replaceable Canvas2D/WebGL2 renderer | No React element per cell. |
-| Search and selection | Rust model queries | Results use stable rows and cell columns. |
-| React project/tab/split lifecycle | React and Zustand | Detaching a renderer never kills the session. |
-| Remote terminal | Rust render frames plus remote_renderer.js | Semantic input and the same model-owned frame contract. |
+| Concern                                                  | Authoritative owner                        | Notes                                                   |
+| -------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------- |
+| ConPTY, process spawn, stdin/stdout, resize, kill        | portable-pty and TerminalSession           | The PTY boundary is unchanged.                          |
+| VT/ANSI parsing, screen, alternate screen, cursor, modes | wezterm-term through WeztermTerminalEngine | One model per terminal session.                         |
+| Scrollback and stable rows                               | wezterm-term                               | The old raw ring is compatibility/debug only.           |
+| Keyboard, mouse, paste, and IME encoding                 | WeztermTerminalEngine                      | Frontend sends semantic events.                         |
+| OSC title, cwd, command markers, bell                    | engine control event queue                 | Only changes are sent; not repeated per frame.          |
+| Render transport                                         | TerminalFrameHub and typed Tauri frames    | Dirty rows, sequence numbers, and full snapshots.       |
+| Cell drawing and metrics                                 | replaceable Canvas2D/WebGL2 renderer       | No React element per cell.                              |
+| Search and selection                                     | Rust model queries                         | Results use stable rows and cell columns.               |
+| React project/tab/split lifecycle                        | React and Zustand                          | Detaching a renderer never kills the session.           |
+| Remote terminal                                          | Rust render frames plus remote_renderer.js | Semantic input and the same model-owned frame contract. |
 
 ## Migration invariants
 
@@ -99,10 +99,11 @@ The current branch has deterministic coverage for:
 
 Desktop renderer choices are replaceable through TerminalRenderer. Canvas2D
 is the correctness fallback. The WebGL2 path uses a bounded Canvas2D-rasterized
-glyph atlas, GPU-batched cell backgrounds and glyph quads, and a transparent
-Canvas2D overlay for image protocols, combining/decorative details, links,
-selection treatment, and cursor drawing. Atlas exhaustion restores the complete
-Canvas2D path rather than dropping text.
+glyph atlas, preserves browser-rasterized color glyphs such as emoji, batches
+cell backgrounds and glyph quads on the GPU, and uses a transparent Canvas2D
+overlay for image protocols, combining/decorative details, links, selection
+treatment, and cursor drawing. Atlas exhaustion restores the complete Canvas2D
+path rather than dropping text.
 
 ## Dependency state
 
@@ -125,8 +126,9 @@ Deterministic checks run during migration:
 ```text
 Frontend: tsc -b, Vite production build, ESLint, Prettier check, and Vitest
 (37 files, 240 tests).
-Rust: cargo fmt, cargo check, cargo clippy, and cargo test (324 passed, 2
-ignored stress/profiling probes).
+Rust: cargo fmt, cargo check, cargo clippy, and cargo test (324 passed, 3
+ignored stress/profiling probes). The 10-session probe was also run separately
+with `--ignored` and passed.
 ```
 
 The real PowerShell handshake probe uses the inbox `powershell.exe` explicitly
@@ -140,13 +142,13 @@ GUI startup, prompt time, CPU, RAM, renderer FPS, input latency, and IPC volume
 must be measured on Windows rather than inferred from unit tests. The required
 matrix is:
 
-| Case | Required measurements |
-| --- | --- |
-| PowerShell, cmd, optional WSL | create-to-prompt, first input latency |
-| Synthetic large output and real build/log output | throughput, CPU, RAM, frame count, IPC bytes |
-| 1, 5, and 10 sessions | active/background CPU and RAM |
-| Four visible split panes | frame rate, queue depth, input latency |
-| 100+ rapid resizes | final PTY/model/renderer grid dimensions and latency |
+| Case                                             | Required measurements                                |
+| ------------------------------------------------ | ---------------------------------------------------- |
+| PowerShell, cmd, optional WSL                    | create-to-prompt, first input latency                |
+| Synthetic large output and real build/log output | throughput, CPU, RAM, frame count, IPC bytes         |
+| 1, 5, and 10 sessions                            | active/background CPU and RAM                        |
+| Four visible split panes                         | frame rate, queue depth, input latency               |
+| 100+ rapid resizes                               | final PTY/model/renderer grid dimensions and latency |
 
 The ignored Rust stress fixtures cover parser/scrollback bounds and render-frame
 serialization. They are repeatable correctness/throughput probes, not a claim
@@ -161,17 +163,41 @@ for frame extraction, 0.4 ms for JSON serialization, four dirty rows, a
 repeatability check for the Rust model only; it is not a desktop GUI baseline.
 
 The release-profile harness was rerun on 2026-08-22 after the renderer cleanup.
-Across its two Cargo test targets it reported 455--494 ms for parsing, 26--29
-us for frame extraction, 75--83 us for JSON serialization, four dirty rows,
-the same 6,411-byte frame, and the same 10,000-row scrollback. The duplicate
-lines are the repository's intentional lib/integration-test target layout.
+Across its two Cargo test targets it reported 462--467 ms for parsing, 20 us
+for frame extraction, 41--45 us for JSON serialization, four dirty rows, the
+same 6,411-byte frame, and the same 10,000-row scrollback. The duplicate lines
+are the repository's intentional lib/integration-test target layout.
+
+The standalone browser renderer harness at
+`scripts/terminal-renderer-benchmark.html` was run in Chrome/WebView-compatible
+Chromium 151 on the same Windows build. With a 601 x 320 CSS-pixel surface,
+96 columns, 18 rows, dirty updates, CJK, combining marks, emoji, selection, and
+decorations, WebGL2 stayed enabled for 3.004 s, processed 180 input frames and
+180 browser frames (60 FPS), and spent 0.60 ms in scheduled WebGL render calls
+versus 0.10 ms for Canvas2D. The screenshot was visually compared with the
+Canvas2D fallback; color emoji and the selected/search-highlighted cells
+remained visible in both paths. This is a renderer-only measurement and does
+not claim PTY or Tauri GUI coverage.
+
+The ignored Windows multi-session probe spawned ten independent `cmd.exe`
+sessions, attached one frame subscriber, left nine sessions without renderer
+subscribers, and wrote/search-verified a distinct marker in every model. All
+ten stayed running and the probe completed in 484 ms with
+`active_renderers=1 background_renderers=9`. It verifies session/model
+isolation and background parsing, but it does not replace the GUI CPU/RAM
+matrix.
+
+The 100MiB scrollback stress probe was rerun with a 24 x 80 terminal so its
+final marker remains on one physical row. It passed in 219.87 s, kept the
+scrollback at the configured bound, and found the final marker through the
+Rust-owned search path.
 
 ## Remaining acceptance work
 
 - Collect the Windows GUI performance matrix above against the historical
-  xterm/WebGL baseline.
-- Profile the WebGL2 glyph-atlas path against the historical WebGL baseline and
-  tune atlas size, batch bytes, and fallback thresholds for real workloads.
+  xterm/WebGL baseline in an interactive Tauri desktop session. The current
+  managed desktop session creates the Rust process but no visible WebView
+  window, so this matrix cannot be inferred from the standalone harness.
 - Run a signed release build when TAURI_SIGNING_PRIVATE_KEY is available.
 - Keep the xterm terminology in this document only where it identifies the
   historical baseline or the required comparison.

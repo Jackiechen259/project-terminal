@@ -12,6 +12,8 @@ export interface GlyphRecord {
   u1: number;
   v1: number;
   padding: number;
+  /** Browser-rasterized color glyphs, such as emoji, must not be tinted. */
+  color: boolean;
 }
 
 const ATLAS_SIZE = 1024;
@@ -111,6 +113,16 @@ export class GlyphAtlas {
     context.globalAlpha = 1;
     context.fillText(text, x + padding, y + padding + this.baseline * this.dpr);
     const pixels = context.getImageData(x, y, width, height);
+    let color = false;
+    for (let index = 0; index < pixels.data.length; index += 4) {
+      if (
+        pixels.data[index] !== pixels.data[index + 1] ||
+        pixels.data[index + 1] !== pixels.data[index + 2]
+      ) {
+        color = true;
+        break;
+      }
+    }
 
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, this.texture);
@@ -128,10 +140,11 @@ export class GlyphAtlas {
 
     const record: GlyphRecord = {
       u0: x / ATLAS_SIZE,
-      v0: 1 - (y + height) / ATLAS_SIZE,
+      v0: y / ATLAS_SIZE,
       u1: (x + width) / ATLAS_SIZE,
-      v1: 1 - y / ATLAS_SIZE,
+      v1: (y + height) / ATLAS_SIZE,
       padding,
+      color,
     };
     this.records.set(key, record);
     this.cursorX += width;

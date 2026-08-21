@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--THEME_TOKENS-->
+    <title>Project Terminal renderer benchmark</title>
+    <style>
+      :root {
+        color: #d6deeb;
+        background: #0b0f14;
+        font:
+          13px/1.4 system-ui,
+          sans-serif;
+      }
+
+      body {
+        margin: 0;
+        padding: 16px;
+      }
+
+      h1 {
+        font-size: 16px;
+        margin: 0 0 8px;
+      }
+
+      p {
+        color: #8d9aad;
+        margin: 0 0 12px;
+      }
+
+      button {
+        background: #1b2735;
+        border: 1px solid #40546c;
+        border-radius: 5px;
+        color: inherit;
+        cursor: pointer;
+        padding: 6px 10px;
+      }
+
+      button:hover {
+        background: #26384d;
+      }
+
+      #status {
+        color: #9fe3b1;
+        min-height: 20px;
+        white-space: pre-wrap;
+      }
+
+      .grid {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        margin-top: 12px;
+      }
+
+      .panel {
+        background: #111820;
+        border: 1px solid #273646;
+        border-radius: 6px;
+        min-width: 0;
+        padding: 8px;
+      }
+
+      .panel h2 {
+        font-size: 12px;
+        font-weight: 600;
+        margin: 0 0 6px;
+      }
+
+      .surface {
+        background: #0f141b;
+        height: 320px;
+        position: relative;
+        width: 100%;
+      }
+
+      canvas {
+        display: block;
+        height: 100%;
+        position: absolute;
+        width: 100%;
+      }
+
+      @media (max-width: 900px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Project Terminal renderer benchmark</h1>
+    <p>
+      Synthetic 96-column / 18-row frames exercise dirty-row updates, ANSI
+      palette colors, wide CJK cells, combining marks, emoji, selection, and
+      underline/decorations. This page does not start a PTY.
+    </p>
+    <button id="run" type="button">Run 3-second benchmark</button>
+    <div id="status">Ready.</div>
+    <div class="grid">
+      <section class="panel">
+        <h2>WebGL2 glyph atlas</h2>
+        <div class="surface"><canvas id="webgl"></canvas></div>
+      </section>
+      <section class="panel">
+        <h2>Canvas2D fallback</h2>
+        <div class="surface"><canvas id="canvas"></canvas></div>
+      </section>
+    </div>
+
+    <script type="module">
+      import { CanvasRenderer } from "/src/components/terminal/wezterm/renderer/CanvasRenderer.ts";
+      import { WebGLRenderer } from "/src/components/terminal/wezterm/renderer/WebGLRenderer.ts";
+
+      const rows = 18;
+      const cols = 96;
+      const durationMs = 3_000;
+      const status = document.querySelector("#status");
+      const button = document.querySelector("#run");
+      const theme = {
+        background: "#0f141b",
+        foreground: "#d6deeb",
+        cursor: "#d6deeb",
+        selectionBackground: "#31577d",
+        minimumContrast: 1.15,
+        black: "#101820",
+        red: "#f07178",
+        green: "#c3e88d",
+        yellow: "#ffcb6b",
+        blue: "#82aaff",
+        magenta: "#c792ea",
+        cyan: "#89ddff",
+        white: "#d6deeb",
+        brightBlack: "#526277",
+        brightRed: "#ff8b92",
+        brightGreen: "#ddffa7",
+        brightYellow: "#ffe3a3",
+        brightBlue: "#b2c9ff",
+        brightMagenta: "#e1bfff",
+        brightCyan: "#b4f2ff",
+        brightWhite: "#ffffff",
+      };
+      const font = {
+        family: "Cascadia Mono, Consolas, monospace",
+        size: 14,
+        weight: 400,
+        weightBold: 700,
+        lineHeight: 1.2,
+        letterSpacing: 0,
+      };
+      const paletteValues = [7, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15];
+      const glyphs = ["A", "界", "🙂", "e\u0301", "⚡", "λ", "█", "·"];
+
+      function color(value) {
+        return { kind: "palette", value };
+      }
+
+      function cell(column, text, width, index, phase) {
+        const accented = (index + phase) % 9 === 0;
+        return {
+          column,
+          width,
+          text,
+          foreground: color(
+            paletteValues[(index + phase) % paletteValues.length],
+          ),
+          background: accented
+            ? { kind: "rgba", value: [38, 54, 72, 255] }
+            : { kind: "default" },
+          underlineColor: color(11),
+          intensity: (index + phase) % 13 === 0 ? "bold" : "normal",
+          underline: (index + phase) % 17 === 0 ? "single" : "none",
+          italic: (index + phase) % 19 === 0,
+          reverse: false,
+          strikethrough: (index + phase) % 23 === 0,
+          invisible: false,
+          hyperlink: index === 3 ? "https://example.com" : null,
+          images: [],
+        };
+      }
+
+      function row(stableRow, phase) {
+        const cells = [];
+        let column = 0;
+        let index = 0;
+        while (column < cols) {
+          const text = glyphs[(index + phase + stableRow) % glyphs.length];
+          const width = text === "界" || text === "🙂" ? 2 : 1;
+          if (column + width > cols) break;
+          cells.push(cell(column, text, width, index, phase));
+          column += width;
+          index += 1;
+        }
+        return { stableRow, cells };
+      }
+
+      function frame(sequence, phase, dirtyRows, fullSnapshot = false) {
+        return {
+          sequence,
+          rows,
+          cols,
+          dirtyRows,
+          cursor: {
+            column: (sequence * 3) % cols,
+            row: sequence % rows,
+            shape: "steady-block",
+            visibility: "visible",
+          },
+          scrollbackLength: 2_000,
+          viewportTop: 0,
+          viewportBottom: rows - 1,
+          alternateScreen: false,
+          mouseReporting: false,
+          fullSnapshot,
+        };
+      }
+
+      function makeRenderer(Renderer, canvas) {
+        const renderer = new Renderer();
+        renderer.mount(canvas);
+        const surface = canvas.parentElement;
+        const width = surface.clientWidth;
+        const height = surface.clientHeight;
+        renderer.setTheme(theme);
+        renderer.setFont(font);
+        renderer.setCursorStyle("block", "outline");
+        renderer.resize(width, height, rows, cols);
+        renderer.setSelection({
+          anchor: { stableRow: 1, column: 2 },
+          focus: { stableRow: 1, column: 12 },
+        });
+        renderer.setSearchMatch({ stableRow: 4, startColumn: 2, endColumn: 8 });
+        return renderer;
+      }
+
+      let webglAvailable = true;
+      let webgl;
+      try {
+        webgl = makeRenderer(WebGLRenderer, document.querySelector("#webgl"));
+      } catch (error) {
+        webglAvailable = false;
+        webgl = makeRenderer(CanvasRenderer, document.querySelector("#webgl"));
+        status.textContent = `WebGL2 unavailable; using Canvas2D in the left panel. ${error}`;
+      }
+      const canvas = makeRenderer(
+        CanvasRenderer,
+        document.querySelector("#canvas"),
+      );
+      const renderers = [webgl, canvas];
+      let sequence = 0;
+      let phase = 0;
+
+      function initialFrame() {
+        sequence += 1;
+        const dirtyRows = Array.from({ length: rows }, (_, stableRow) =>
+          row(stableRow, phase),
+        );
+        return frame(sequence, phase, dirtyRows, true);
+      }
+
+      function updateFrame() {
+        sequence += 1;
+        phase = (phase + 1) % glyphs.length;
+        const dirtyRows = [row(sequence % rows, phase)];
+        return frame(sequence, phase, dirtyRows);
+      }
+
+      function render(frameValue, timings) {
+        renderers.forEach((renderer, index) => {
+          const started = performance.now();
+          renderer.render(frameValue);
+          if (timings) timings[index] += performance.now() - started;
+        });
+      }
+
+      render(initialFrame());
+      async function runBenchmark() {
+        button.disabled = true;
+        status.textContent = "Running...";
+        const started = performance.now();
+        let calls = 0;
+        let animationFrames = 0;
+        const rendererCallMs = [0, 0];
+        let lastFrame = started;
+        while (performance.now() - started < durationMs) {
+          const now = performance.now();
+          const next = updateFrame();
+          render(next, rendererCallMs);
+          calls += 1;
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+          animationFrames += 1;
+          lastFrame = now;
+        }
+        const elapsed = performance.now() - started;
+        const result = {
+          userAgent: navigator.userAgent,
+          webgl2: webglAvailable,
+          elapsedMs: Math.round(elapsed),
+          inputFrames: calls,
+          browserAnimationFrames: animationFrames,
+          inputFps: Math.round((calls * 1_000) / elapsed),
+          browserFps: Math.round((animationFrames * 1_000) / elapsed),
+          rendererCallMs: {
+            webgl: Number(rendererCallMs[0].toFixed(2)),
+            canvas: Number(rendererCallMs[1].toFixed(2)),
+          },
+          lastFrameAgeMs: Number((performance.now() - lastFrame).toFixed(2)),
+        };
+        status.textContent = JSON.stringify(result, null, 2);
+        window.__terminalRendererBenchmark = result;
+        button.disabled = false;
+        return result;
+      }
+
+      button.addEventListener("click", () => void runBenchmark());
+      window.__runTerminalRendererBenchmark = runBenchmark;
+    </script>
+  </body>
+</html>

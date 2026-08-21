@@ -748,11 +748,11 @@ mod tests {
         }
     }
 
-    fn engine() -> WeztermTerminalEngine {
+    fn engine_with_size(rows: usize, cols: usize) -> WeztermTerminalEngine {
         WeztermTerminalEngine::new(
             TerminalSize {
-                rows: 4,
-                cols: 12,
+                rows,
+                cols,
                 pixel_width: 0,
                 pixel_height: 0,
                 dpi: 96,
@@ -760,6 +760,10 @@ mod tests {
             WeztermTerminalConfig::default(),
             Box::new(NoopWriter),
         )
+    }
+
+    fn engine() -> WeztermTerminalEngine {
+        engine_with_size(4, 12)
     }
 
     fn capture_engine() -> (WeztermTerminalEngine, Arc<Mutex<Vec<u8>>>) {
@@ -1081,7 +1085,7 @@ mod tests {
     #[test]
     #[ignore = "large-output stress test; run with cargo test -- --ignored"]
     fn bounds_scrollback_after_one_hundred_megabytes_of_output() {
-        let mut engine = engine();
+        let mut engine = engine_with_size(24, 80);
         let _ = engine.take_render_frame();
 
         let line = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\r\n";

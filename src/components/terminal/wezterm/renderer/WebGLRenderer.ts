@@ -88,15 +88,18 @@ const GLYPH_VERTEX_SHADER = [
   "in vec2 aPosition;",
   "in vec2 aTexCoord;",
   "in vec4 aColor;",
+  "in float aColorGlyph;",
   "uniform vec2 uResolution;",
   "out vec2 vTexCoord;",
   "out vec4 vColor;",
+  "out float vColorGlyph;",
   "void main() {",
   "  vec2 zeroToOne = aPosition / uResolution;",
   "  vec2 clipSpace = zeroToOne * 2.0 - 1.0;",
   "  gl_Position = vec4(clipSpace * vec2(1.0, -1.0), 0.0, 1.0);",
   "  vTexCoord = aTexCoord;",
   "  vColor = aColor;",
+  "  vColorGlyph = aColorGlyph;",
   "}",
 ].join("\n");
 
@@ -106,10 +109,15 @@ const GLYPH_FRAGMENT_SHADER = [
   "uniform sampler2D uAtlas;",
   "in vec2 vTexCoord;",
   "in vec4 vColor;",
+  "in float vColorGlyph;",
   "out vec4 outColor;",
   "void main() {",
-  "  float alpha = texture(uAtlas, vTexCoord).a;",
-  "  outColor = vec4(vColor.rgb, vColor.a * alpha);",
+  "  vec4 glyph = texture(uAtlas, vTexCoord);",
+  "  if (vColorGlyph > 0.5) {",
+  "    outColor = vec4(glyph.rgb, glyph.a * vColor.a);",
+  "  } else {",
+  "    outColor = vec4(vColor.rgb, vColor.a * glyph.a);",
+  "  }",
   "}",
 ].join("\n");
 
@@ -321,6 +329,7 @@ export class WebGLRenderer implements TerminalRenderer {
   private glyphPositionLocation = -1;
   private glyphTexCoordLocation = -1;
   private glyphColorLocation = -1;
+  private glyphColorGlyphLocation = -1;
   private solidResolutionLocation: WebGLUniformLocation | null = null;
   private glyphResolutionLocation: WebGLUniformLocation | null = null;
   private glyphAtlasLocation: WebGLUniformLocation | null = null;
@@ -399,6 +408,10 @@ export class WebGLRenderer implements TerminalRenderer {
       "aTexCoord",
     );
     this.glyphColorLocation = gl.getAttribLocation(this.glyphProgram, "aColor");
+    this.glyphColorGlyphLocation = gl.getAttribLocation(
+      this.glyphProgram,
+      "aColorGlyph",
+    );
     this.glyphResolutionLocation = gl.getUniformLocation(
       this.glyphProgram,
       "uResolution",
@@ -624,7 +637,20 @@ export class WebGLRenderer implements TerminalRenderer {
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
     gl.bufferData(
       gl.ARRAY_BUFFER,
-      new Float32Array([0, 0, width, 0, 0, height]),
+      new Float32Array([
+        0,
+        0,
+        width,
+        0,
+        0,
+        height,
+        0,
+        height,
+        width,
+        0,
+        width,
+        height,
+      ]),
       gl.STREAM_DRAW,
     );
     gl.enableVertexAttribArray(this.solidPositionLocation);
@@ -646,7 +672,7 @@ export class WebGLRenderer implements TerminalRenderer {
       alpha / 255,
     );
     gl.uniform2f(this.solidResolutionLocation, width, height);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 
   private drawCellBackgrounds(frame: TerminalRenderFrame) {
@@ -747,7 +773,7 @@ export class WebGLRenderer implements TerminalRenderer {
     gl.useProgram(program);
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(values), gl.STREAM_DRAW);
-    const stride = 8 * Float32Array.BYTES_PER_ELEMENT;
+    const stride = 9 * Float32Array.BYTES_PER_ELEMENT;
     gl.enableVertexAttribArray(this.glyphPositionLocation);
     gl.vertexAttribPointer(
       this.glyphPositionLocation,
@@ -775,11 +801,20 @@ export class WebGLRenderer implements TerminalRenderer {
       stride,
       4 * Float32Array.BYTES_PER_ELEMENT,
     );
+    gl.enableVertexAttribArray(this.glyphColorGlyphLocation);
+    gl.vertexAttribPointer(
+      this.glyphColorGlyphLocation,
+      1,
+      gl.FLOAT,
+      false,
+      stride,
+      8 * Float32Array.BYTES_PER_ELEMENT,
+    );
     gl.uniform2f(this.glyphResolutionLocation, width, height);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, atlas.getTexture());
     gl.uniform1i(this.glyphAtlasLocation, 0);
-    gl.drawArrays(gl.TRIANGLES, 0, values.length / 8);
+    gl.drawArrays(gl.TRIANGLES, 0, values.length / 9);
     return true;
   }
 
@@ -838,14 +873,14 @@ export class WebGLRenderer implements TerminalRenderer {
     const bottom = (y + height + padding) * this.dpr;
     const [u0, v0, u1, v1] = [record.u0, record.v0, record.u1, record.v1];
     const vertex = (px: number, py: number, u: number, v: number) => {
-      values.push(px, py, u, v, ...color);
+      values.push(px, py, u, v, ...color, record.color ? 1 : 0);
     };
-    vertex(left, top, u0, v1);
-    vertex(right, top, u1, v1);
-    vertex(left, bottom, u0, v0);
-    vertex(left, bottom, u0, v0);
-    vertex(right, top, u1, v1);
-    vertex(right, bottom, u1, v0);
+    vertex(left, top, u0, v0);
+    vertex(right, top, u1, v0);
+    vertex(left, bottom, u0, v1);
+    vertex(left, bottom, u0, v1);
+    vertex(right, top, u1, v0);
+    vertex(right, bottom, u1, v1);
   }
 
   private cellColors(
