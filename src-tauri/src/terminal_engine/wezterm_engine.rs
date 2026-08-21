@@ -350,14 +350,15 @@ impl TerminalEngine for WeztermTerminalEngine {
                 },
             );
         }
-        if self.last_cwd.is_some() {
-            push_control_event(
-                &self.control_events,
-                TerminalControlEvent::CwdChanged {
-                    cwd: self.last_cwd.clone(),
-                },
-            );
-        }
+        // `None` is also state: it clears a cwd that a detached renderer may
+        // still have cached from an earlier OSC 7 notification. Replaying the
+        // explicit absence makes attach/resync deterministic.
+        push_control_event(
+            &self.control_events,
+            TerminalControlEvent::CwdChanged {
+                cwd: self.last_cwd.clone(),
+            },
+        );
     }
 
     fn set_viewport_top(&mut self, stable_row: i64) {
@@ -826,6 +827,27 @@ mod tests {
                 TerminalControlEvent::Bell | TerminalControlEvent::CommandFinished { .. }
             )
         }));
+    }
+
+    #[test]
+    fn full_snapshot_replays_an_explicitly_cleared_cwd() {
+        let mut engine = engine();
+        let _ = engine.take_render_frame();
+        let _ = engine.drain_control_events();
+
+        engine.feed(b"\x1b]7;file:///C:/work\x07");
+        let _ = engine.drain_control_events();
+        engine.feed(b"\x1b]7;\x07");
+        assert!(engine
+            .drain_control_events()
+            .iter()
+            .any(|event| { matches!(event, TerminalControlEvent::CwdChanged { cwd: None }) }));
+
+        engine.request_full_snapshot();
+        assert!(engine
+            .drain_control_events()
+            .iter()
+            .any(|event| { matches!(event, TerminalControlEvent::CwdChanged { cwd: None }) }));
     }
 
     #[test]
