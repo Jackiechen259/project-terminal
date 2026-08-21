@@ -179,6 +179,13 @@ Canvas2D fallback; color emoji and the selected/search-highlighted cells
 remained visible in both paths. This is a renderer-only measurement and does
 not claim PTY or Tauri GUI coverage.
 
+An elevated release-build GUI smoke probe was also run on 2026-08-22. The
+Tauri window was visible with the restored project title, retained a valid
+window handle and remained responsive for 30 seconds. During a 10-second idle
+sample, the process plus its WebView2 child used approximately 184.1 MiB and
+consumed 0.016 CPU seconds. This validates startup/window stability and idle
+resource behavior only; it is not the active/background terminal matrix.
+
 The formal Windows release build was rerun with the Tauri `custom-protocol`
 feature on 2026-08-22. `pnpm tauri build --bundles nsis --no-sign` completed
 and produced the current exe and NSIS installer. A normal elevated
@@ -206,10 +213,10 @@ Rust-owned search path.
 ## Remaining acceptance work
 
 - Collect the Windows GUI performance matrix above against the historical
-  xterm/WebGL baseline in an interactive Tauri desktop session. The current
-  managed desktop session creates the Rust process but WebView2 fails during
-  creation with `0x800700AA` (resource in use), leaving no visible window; the
-  matrix therefore cannot be inferred from the standalone harness.
+  xterm/WebGL baseline in an interactive Tauri desktop session, including
+  active/background sessions and real PTY output. The non-elevated managed
+  desktop session still fails WebView2 creation with `0x800700AA` (resource in
+  use), while the elevated smoke probe validates only startup and idle.
 - Run a signed release build when TAURI_SIGNING_PRIVATE_KEY is available.
 - Keep the xterm terminology in this document only where it identifies the
   historical baseline or the required comparison.
