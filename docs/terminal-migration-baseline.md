@@ -114,8 +114,9 @@ Frontend: tsc -b, ESLint, CanvasRenderer tests, and the full Vitest suite pass.
 Rust: 316 standard tests passed in the latest run, including live `cmd.exe`
 renderer attachment, status delivery, background-model, and semantic text
 input tests. The existing real PowerShell handshake probe timed out in that
-run (it passed in an earlier run); the 100MB stress fixture is intentionally
-ignored in the standard suite and requires a separate profiling run.
+parallel run, but passes when rerun with `--test-threads=1`; the 100MB stress
+fixture is intentionally ignored in the standard suite and requires a
+separate profiling run.
 ```
 
 ### Runtime performance

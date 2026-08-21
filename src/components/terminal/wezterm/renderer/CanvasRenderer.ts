@@ -359,6 +359,7 @@ export class CanvasRenderer implements TerminalRenderer {
   setFocused(focused: boolean) {
     if (this.focused === focused) return;
     this.focused = focused;
+    this.cursorBlinkVisible = true;
     this.redrawVisibleRows();
   }
 
@@ -685,6 +686,7 @@ export class CanvasRenderer implements TerminalRenderer {
         context.fillRect(x, y, 2, height);
         break;
       case "block":
+        context.globalAlpha = visible ? 0.35 : 0;
         context.fillRect(x, y, width, height);
         break;
       case "outline":
