@@ -173,6 +173,9 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       fontWeightBold: state.terminalFontWeightBold,
       lineHeight: state.terminalLineHeight,
       letterSpacing: state.terminalLetterSpacing,
+      cursorStyle: state.terminalCursorStyle,
+      cursorInactiveStyle: state.terminalCursorInactiveStyle,
+      cursorBlink: state.cursorBlink,
       padding: state.terminalPadding,
       minimumContrast: state.terminalMinimumContrast,
     })),
@@ -630,7 +633,22 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     if (!renderer) return;
     renderer.setTheme(rendererTheme);
     renderer.setFont(font);
-  }, [font, rendererTheme]);
+    renderer.setCursorStyle(
+      typography.cursorStyle,
+      typography.cursorInactiveStyle,
+    );
+    renderer.setCursorBlink(typography.cursorBlink);
+  }, [
+    font,
+    rendererTheme,
+    typography.cursorBlink,
+    typography.cursorInactiveStyle,
+    typography.cursorStyle,
+  ]);
+
+  useEffect(() => {
+    rendererRef.current?.setFocused(focused);
+  }, [focused]);
 
   const resizeSurface = useCallback(() => {
     const surface = surfaceRef.current;

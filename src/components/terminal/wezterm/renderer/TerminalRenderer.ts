@@ -39,6 +39,14 @@ export interface TerminalFontOptions {
   letterSpacing: number;
 }
 
+export type TerminalCursorStyle = "block" | "bar" | "underline";
+export type TerminalCursorInactiveStyle =
+  | "outline"
+  | "block"
+  | "bar"
+  | "underline"
+  | "none";
+
 export interface TerminalSelectionPoint {
   stableRow: number;
   column: number;
@@ -56,6 +64,12 @@ export interface TerminalRenderer {
   render(frame: TerminalRenderFrame): void;
   setTheme(theme: TerminalRendererTheme): void;
   setFont(font: TerminalFontOptions): void;
+  setCursorStyle(
+    style: TerminalCursorStyle,
+    inactiveStyle: TerminalCursorInactiveStyle,
+  ): void;
+  setCursorBlink(enabled: boolean): void;
+  setFocused(focused: boolean): void;
   setSelection(selection: TerminalSelection | null): void;
   setSearchMatch(match: TerminalSearchMatch | null): void;
   selectionText(

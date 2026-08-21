@@ -100,8 +100,8 @@ Implemented in this checkpoint:
 - Renderer attachments use a status-only lifecycle channel; they do not
   subscribe to the legacy raw-output broadcast while rendering.
 - Canvas2D text/attribute/cursor/selection rendering with DPR-aware metrics,
-  image cache loading, plain-link detection, minimum-contrast handling, and
-  frame coalescing.
+  image cache loading, plain-link detection, minimum-contrast handling,
+  configurable cursor styles/blink, and frame coalescing.
 
 The following are intentionally still open: WebGL renderer, remote terminal
 protocol migration, full viewport virtualization, performance measurements,

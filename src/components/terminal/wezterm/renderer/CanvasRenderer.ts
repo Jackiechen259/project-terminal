@@ -12,6 +12,8 @@ import type {
   TerminalSelection,
   TerminalSelectionPoint,
   TerminalRenderer,
+  TerminalCursorInactiveStyle,
+  TerminalCursorStyle,
   TerminalRendererTheme,
 } from "./TerminalRenderer";
 
@@ -199,6 +201,12 @@ export class CanvasRenderer implements TerminalRenderer {
     lineHeight: 1.2,
     letterSpacing: 0,
   };
+  private cursorStyle: TerminalCursorStyle = "block";
+  private inactiveCursorStyle: TerminalCursorInactiveStyle = "outline";
+  private cursorBlink = false;
+  private cursorBlinkVisible = true;
+  private cursorBlinkTimer: number | null = null;
+  private focused = true;
   private dpr = 1;
   private width = 0;
   private height = 0;
@@ -322,6 +330,38 @@ export class CanvasRenderer implements TerminalRenderer {
     }
   }
 
+  setCursorStyle(
+    style: TerminalCursorStyle,
+    inactiveStyle: TerminalCursorInactiveStyle,
+  ) {
+    this.cursorStyle = style;
+    this.inactiveCursorStyle = inactiveStyle;
+    this.redrawVisibleRows();
+  }
+
+  setCursorBlink(enabled: boolean) {
+    if (this.cursorBlink === enabled) return;
+    this.cursorBlink = enabled;
+    this.cursorBlinkVisible = true;
+    if (this.cursorBlinkTimer !== null) {
+      window.clearInterval(this.cursorBlinkTimer);
+      this.cursorBlinkTimer = null;
+    }
+    if (enabled) {
+      this.cursorBlinkTimer = window.setInterval(() => {
+        this.cursorBlinkVisible = !this.cursorBlinkVisible;
+        this.redrawVisibleRows();
+      }, 500);
+    }
+    this.redrawVisibleRows();
+  }
+
+  setFocused(focused: boolean) {
+    if (this.focused === focused) return;
+    this.focused = focused;
+    this.redrawVisibleRows();
+  }
+
   setSelection(selection: TerminalSelection | null) {
     this.selection = selection;
     if (!this.frame) return;
@@ -392,6 +432,10 @@ export class CanvasRenderer implements TerminalRenderer {
     if (this.frameRequest !== null) {
       window.cancelAnimationFrame(this.frameRequest);
       this.frameRequest = null;
+    }
+    if (this.cursorBlinkTimer !== null) {
+      window.clearInterval(this.cursorBlinkTimer);
+      this.cursorBlinkTimer = null;
     }
     this.pendingFrame = null;
     this.canvas = null;
@@ -615,7 +659,15 @@ export class CanvasRenderer implements TerminalRenderer {
 
   private paintCursor(frame: TerminalRenderFrame, visible: boolean) {
     const context = this.context;
-    if (!context || frame.cursor.visibility === "hidden") return;
+    if (
+      !context ||
+      frame.cursor.visibility === "hidden" ||
+      (this.cursorBlink && !this.cursorBlinkVisible)
+    ) {
+      return;
+    }
+    const style = this.focused ? this.cursorStyle : this.inactiveCursorStyle;
+    if (style === "none") return;
     const x = frame.cursor.column * this.cellWidth;
     const y = frame.cursor.row * this.cellHeight;
     const width = this.cellWidth;
@@ -625,16 +677,17 @@ export class CanvasRenderer implements TerminalRenderer {
     context.strokeStyle = this.theme.cursor ?? this.theme.foreground;
     context.fillStyle = this.theme.cursor ?? this.theme.foreground;
     context.globalAlpha = visible ? 0.9 : 0;
-    switch (frame.cursor.shape) {
-      case "blinking-underline":
-      case "steady-underline":
+    switch (style) {
+      case "underline":
         context.fillRect(x, y + height - 2, width, 2);
         break;
-      case "blinking-bar":
-      case "steady-bar":
+      case "bar":
         context.fillRect(x, y, 2, height);
         break;
-      default:
+      case "block":
+        context.fillRect(x, y, width, height);
+        break;
+      case "outline":
         context.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1);
         break;
     }
