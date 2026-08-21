@@ -725,7 +725,17 @@ impl TerminalSession {
         // Serialize the model resize with the ConPTY resize. The reader only
         // holds the model lock while applying one output chunk, so this keeps
         // the two dimensions in the same order without a global terminal lock.
+        let requested_size = wezterm_term::TerminalSize {
+            rows: rows as usize,
+            cols: cols as usize,
+            pixel_width: pixel_width as usize,
+            pixel_height: pixel_height as usize,
+            dpi: 96,
+        };
         let mut engine = self.terminal_engine.lock();
+        if engine.terminal().get_size() == requested_size {
+            return Ok(());
+        }
         let guard = self.inner.lock();
         // Hold the output hub across the OS resize so reader bytes triggered
         // by SIGWINCH/ConPTY cannot overtake the replay resize marker.
@@ -740,13 +750,7 @@ impl TerminalSession {
             })
             .map_err(|e| AppError::PtyCreationFailed(format!("resize: {e}")))?;
         hub.scrollback.resize(rows, cols);
-        engine.resize(wezterm_term::TerminalSize {
-            rows: rows as usize,
-            cols: cols as usize,
-            pixel_width: pixel_width as usize,
-            pixel_height: pixel_height as usize,
-            dpi: 96,
-        });
+        engine.resize(requested_size);
         drop(hub);
         drop(guard);
         self.frame_hub.notify();
@@ -1183,6 +1187,7 @@ mod tests {
         let (session, _rx) = make_session("cmd.exe", &["/Q"]);
         // Resize up then down; both must succeed.
         session.resize(30, 120, 960, 660).expect("resize up");
+        session.resize(30, 120, 960, 660).expect("duplicate resize");
         session.resize(10, 40, 320, 220).expect("resize down");
         let replay = session
             .attach("resize-history".into(), ScrollbackSnapshotFormat::Replay)

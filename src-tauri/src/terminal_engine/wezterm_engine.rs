@@ -336,6 +336,12 @@ impl TerminalEngine for WeztermTerminalEngine {
     fn request_full_snapshot(&mut self) {
         self.force_full_snapshot = true;
         self.known_image_keys.clear();
+        // Title/cwd are stateful and are re-enqueued below. Bell and command
+        // completion are edge-triggered; replaying events that accumulated
+        // while a renderer was detached would make a newly attached view act
+        // on stale history, so discard the old control queue during a full
+        // resync.
+        self.control_events.lock().unwrap().clear();
         if !self.last_title.is_empty() {
             push_control_event(
                 &self.control_events,
@@ -797,6 +803,29 @@ mod tests {
             .iter()
             .any(|event| matches!(event, TerminalControlEvent::Bell)));
         assert!(engine.take_render_frame().is_none());
+    }
+
+    #[test]
+    fn full_snapshot_resync_drops_stale_transient_control_events() {
+        let mut engine = engine();
+        let _ = engine.take_render_frame();
+        let _ = engine.drain_control_events();
+
+        engine.feed(b"\x07\x1b]133;D;7\x07");
+        assert!(engine
+            .drain_control_events()
+            .iter()
+            .any(|event| matches!(event, TerminalControlEvent::Bell)));
+
+        engine.feed(b"\x07\x1b]133;D;8\x07");
+        engine.request_full_snapshot();
+        let events = engine.drain_control_events();
+        assert!(!events.iter().any(|event| {
+            matches!(
+                event,
+                TerminalControlEvent::Bell | TerminalControlEvent::CommandFinished { .. }
+            )
+        }));
     }
 
     #[test]
