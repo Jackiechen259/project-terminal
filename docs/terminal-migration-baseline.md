@@ -181,11 +181,12 @@ not claim PTY or Tauri GUI coverage.
 
 The formal Windows release build was rerun with the Tauri `custom-protocol`
 feature on 2026-08-22. `pnpm tauri build --bundles nsis --no-sign` completed
-and produced the current exe and NSIS installer. The normal MSI `light` step
-still fails in this managed environment with WiX LGHT0217 for ICE01--ICE07 and
-LGHT0216/0x643 for ICE09 because the Windows Installer Service cannot be
-accessed. A current MSI was produced separately with WiX `light -sval` only as
-a diagnostic artifact; it must not be treated as the normal ICE-validated MSI.
+and produced the current exe and NSIS installer. A normal elevated
+`pnpm tauri bundle --bundles msi --verbose --no-sign` run also completed: WiX
+ICE validation passed with the expected ICE03/ICE40/ICE57/ICE61 warnings and
+produced the current MSI installer. A prior non-elevated run failed with WiX
+LGHT0217/LGHT0216 because the managed Windows Installer Service could not be
+accessed; that diagnostic failure is not a project packaging failure.
 No updater signatures were generated because `TAURI_SIGNING_PRIVATE_KEY` and
 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` are unavailable in the environment.
 
