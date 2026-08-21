@@ -264,13 +264,22 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
 
   const copySelection = useCallback(async () => {
     const current = selectionRef.current;
-    const renderer = rendererRef.current;
-    if (!current || !renderer) return;
-    const text = renderer.selectionText(current.anchor, current.focus);
+    if (!current) return;
+    const text = await terminalService.selectionText(
+      sessionId,
+      {
+        stableRow: current.anchor.stableRow,
+        column: current.anchor.column,
+      },
+      {
+        stableRow: current.focus.stableRow,
+        column: current.focus.column,
+      },
+    );
     if (text) await navigator.clipboard.writeText(text);
     updateSelection(null);
     focusInput();
-  }, [focusInput, updateSelection]);
+  }, [focusInput, sessionId, updateSelection]);
 
   const pasteText = useCallback(
     async (text: string) => {

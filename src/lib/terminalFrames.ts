@@ -93,6 +93,11 @@ export interface TerminalSearchPosition {
 
 export type TerminalSearchDirection = "forward" | "backward";
 
+export interface TerminalSelectionPoint {
+  stableRow: number;
+  column: number;
+}
+
 export interface TerminalSearchQuery {
   query: string;
   caseSensitive?: boolean;

@@ -13,6 +13,7 @@ use super::render_frame::{
 use super::search::{
     TerminalSearchDirection, TerminalSearchMatch, TerminalSearchPosition, TerminalSearchQuery,
 };
+use super::selection::TerminalSelectionPoint;
 use super::TerminalEngine;
 
 const CONTROL_EVENT_CAPACITY: usize = 256;
@@ -466,6 +467,106 @@ impl TerminalEngine for WeztermTerminalEngine {
     fn search(&self, query: &TerminalSearchQuery) -> Vec<TerminalSearchMatch> {
         search_screen(self.terminal.screen(), query)
     }
+
+    fn selection_text(
+        &self,
+        anchor: &TerminalSelectionPoint,
+        focus: &TerminalSelectionPoint,
+    ) -> String {
+        selection_text_screen(self.terminal.screen(), anchor, focus)
+    }
+}
+
+fn selection_text_screen(
+    screen: &wezterm_term::Screen,
+    anchor: &TerminalSelectionPoint,
+    focus: &TerminalSelectionPoint,
+) -> String {
+    if anchor.stable_row == focus.stable_row && anchor.column == focus.column {
+        return String::new();
+    }
+
+    let (start, end) = if anchor.stable_row < focus.stable_row
+        || (anchor.stable_row == focus.stable_row && anchor.column <= focus.column)
+    {
+        (*anchor, *focus)
+    } else {
+        (*focus, *anchor)
+    };
+
+    let first_row = screen.phys_to_stable_row_index(0) as i64;
+    let last_row = (screen.visible_row_to_stable_row(0) as i64)
+        .saturating_add(screen.physical_rows as i64)
+        .saturating_sub(1);
+    let start_row = start.stable_row.clamp(first_row, last_row);
+    let end_row = end.stable_row.clamp(first_row, last_row);
+    let mut lines = Vec::new();
+
+    for stable_row in start_row..=end_row {
+        let from = if stable_row == start_row {
+            usize::from(start.column)
+        } else {
+            0
+        };
+        let to = if stable_row == end_row {
+            usize::from(end.column)
+        } else {
+            screen.physical_cols
+        };
+
+        let text = screen
+            .stable_row_to_phys(stable_row as isize)
+            .and_then(|phys_row| {
+                screen
+                    .lines_in_phys_range(phys_row..phys_row.saturating_add(1))
+                    .pop()
+            })
+            .map(|line| selected_line_text(&line, from, to))
+            .unwrap_or_default();
+        lines.push(text);
+    }
+
+    lines.join("\n")
+}
+
+fn selected_line_text(line: &wezterm_term::Line, from: usize, to: usize) -> String {
+    if from >= to {
+        return String::new();
+    }
+
+    let mut text = String::new();
+    let mut cursor = from;
+    for cell in line.visible_cells() {
+        let cell_start = cell.cell_index();
+        let cell_end = cell_start.saturating_add(cell.width().max(1));
+        if cell_end <= from {
+            continue;
+        }
+        if cell_start >= to {
+            break;
+        }
+
+        let visible_start = cell_start.max(from);
+        let visible_end = cell_end.min(to);
+        if visible_start > cursor {
+            text.extend(std::iter::repeat(' ').take(visible_start - cursor));
+        }
+        let value = cell.str().to_string();
+        if value.is_empty() {
+            text.extend(std::iter::repeat(' ').take(visible_end - visible_start));
+        } else {
+            // Terminal cells are the unit of selection. Keeping a wide or
+            // combining grapheme intact is preferable to slicing UTF-8/UTF-16
+            // text at a browser code-unit boundary.
+            text.push_str(&value);
+        }
+        cursor = cursor.max(visible_end);
+        if cursor >= to {
+            break;
+        }
+    }
+
+    text.trim_end().to_string()
 }
 
 fn search_screen(
@@ -1098,5 +1199,24 @@ mod tests {
         });
         assert_eq!(backward[0].stable_row, 0);
         assert_eq!(backward[0].start_column, 4);
+    }
+
+    #[test]
+    fn extracts_selection_text_from_stable_rows_and_wide_cells() {
+        let mut engine = engine();
+        let _ = engine.take_render_frame();
+        engine.feed("one two\r\n界 alpha\r\nlast".as_bytes());
+
+        let selected = engine.selection_text(
+            &super::super::TerminalSelectionPoint {
+                stable_row: 1,
+                column: 8,
+            },
+            &super::super::TerminalSelectionPoint {
+                stable_row: 0,
+                column: 0,
+            },
+        );
+        assert_eq!(selected, "one two\n界 alpha");
     }
 }

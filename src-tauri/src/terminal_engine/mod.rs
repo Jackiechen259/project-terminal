@@ -11,6 +11,7 @@ mod config;
 mod input;
 mod render_frame;
 mod search;
+mod selection;
 mod wezterm_engine;
 
 pub use config::{
@@ -27,6 +28,7 @@ pub use render_frame::{
 pub use search::{
     TerminalSearchDirection, TerminalSearchMatch, TerminalSearchPosition, TerminalSearchQuery,
 };
+pub use selection::TerminalSelectionPoint;
 pub use wezterm_engine::WeztermTerminalEngine;
 
 use wezterm_term::TerminalSize;
@@ -83,4 +85,12 @@ pub trait TerminalEngine: Send {
     /// Search the authoritative terminal model, including its Rust-owned
     /// scrollback. Results are returned in the requested traversal order.
     fn search(&self, query: &TerminalSearchQuery) -> Vec<TerminalSearchMatch>;
+
+    /// Extract selected text from the authoritative stable-row model rather
+    /// than relying on whichever viewport rows a renderer currently caches.
+    fn selection_text(
+        &self,
+        anchor: &TerminalSelectionPoint,
+        focus: &TerminalSelectionPoint,
+    ) -> String;
 }

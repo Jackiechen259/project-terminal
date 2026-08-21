@@ -129,6 +129,15 @@ impl TerminalManager {
         Ok(self.get(session_id)?.search(query))
     }
 
+    pub fn selection_text(
+        &self,
+        session_id: &str,
+        anchor: &crate::terminal_engine::TerminalSelectionPoint,
+        focus: &crate::terminal_engine::TerminalSelectionPoint,
+    ) -> AppResult<String> {
+        Ok(self.get(session_id)?.selection_text(anchor, focus))
+    }
+
     pub fn set_viewport_top(&self, session_id: &str, stable_row: i64) -> AppResult<()> {
         self.get(session_id)?.set_viewport_top(stable_row);
         Ok(())

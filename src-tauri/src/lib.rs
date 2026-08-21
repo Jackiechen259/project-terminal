@@ -260,6 +260,7 @@ pub fn run() {
                 commands::terminal::terminal_paste,
                 commands::terminal::terminal_bracketed_paste_enabled,
                 commands::terminal::terminal_search,
+                commands::terminal::terminal_selection_text,
                 commands::terminal::terminal_set_viewport,
                 commands::terminal::resize_terminal,
                 commands::terminal::close_terminal,

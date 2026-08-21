@@ -8,6 +8,7 @@ import { Channel, invoke as tauriInvoke } from "@tauri-apps/api/core";
 
 import type {
   TerminalRenderMessage,
+  TerminalSelectionPoint,
   TerminalSearchMatch,
   TerminalSearchQuery,
   TerminalSessionFrame,
@@ -263,6 +264,7 @@ export interface CreateTerminalRequest {
 export type {
   TerminalControlFrame,
   TerminalRenderMessage,
+  TerminalSelectionPoint,
   TerminalSearchMatch,
   TerminalSearchQuery,
   TerminalSessionFrame,
@@ -609,6 +611,16 @@ export const terminalService = {
     invokeOrThrow<TerminalSearchMatch[]>("terminal_search", {
       sessionId,
       query,
+    }),
+  selectionText: (
+    sessionId: string,
+    anchor: TerminalSelectionPoint,
+    focus: TerminalSelectionPoint,
+  ) =>
+    invokeOrThrow<string>("terminal_selection_text", {
+      sessionId,
+      anchor,
+      focus,
     }),
   setViewport: (sessionId: string, stableRow: number) =>
     invokeOrThrow<void>("terminal_set_viewport", {

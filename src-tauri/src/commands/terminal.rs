@@ -20,7 +20,7 @@ use crate::terminal::{
     resolve_local_shell, SessionInfo, SessionSpawn, TerminalEventPayload, TerminalManager,
 };
 use crate::terminal_engine::{
-    RenderFrame, TerminalControlEvent, TerminalKeyEvent, TerminalMouseEvent,
+    RenderFrame, TerminalControlEvent, TerminalKeyEvent, TerminalMouseEvent, TerminalSelectionPoint,
 };
 
 use super::ListResponse;
@@ -957,6 +957,21 @@ pub fn terminal_search(
     query: crate::terminal_engine::TerminalSearchQuery,
 ) -> AppResult<Vec<crate::terminal_engine::TerminalSearchMatch>> {
     terminal.manager.search(&session_id, &query)
+}
+
+/// Extract selected text from the Rust-owned model. The frontend sends only
+/// stable coordinates; it does not need to retain all scrollback rows just to
+/// support copy after a viewport move.
+#[tauri::command]
+pub fn terminal_selection_text(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+    anchor: TerminalSelectionPoint,
+    focus: TerminalSelectionPoint,
+) -> AppResult<String> {
+    terminal
+        .manager
+        .selection_text(&session_id, &anchor, &focus)
 }
 
 #[tauri::command]

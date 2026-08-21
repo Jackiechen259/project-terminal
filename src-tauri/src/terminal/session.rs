@@ -651,6 +651,14 @@ impl TerminalSession {
         self.terminal_engine.lock().search(query)
     }
 
+    pub fn selection_text(
+        &self,
+        anchor: &crate::terminal_engine::TerminalSelectionPoint,
+        focus: &crate::terminal_engine::TerminalSelectionPoint,
+    ) -> String {
+        self.terminal_engine.lock().selection_text(anchor, focus)
+    }
+
     pub fn set_viewport_top(&self, stable_row: i64) {
         self.terminal_engine.lock().set_viewport_top(stable_row);
         self.frame_hub.notify();
