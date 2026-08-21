@@ -179,6 +179,16 @@ Canvas2D fallback; color emoji and the selected/search-highlighted cells
 remained visible in both paths. This is a renderer-only measurement and does
 not claim PTY or Tauri GUI coverage.
 
+The formal Windows release build was rerun with the Tauri `custom-protocol`
+feature on 2026-08-22. `pnpm tauri build --bundles nsis --no-sign` completed
+and produced the current exe and NSIS installer. The normal MSI `light` step
+still fails in this managed environment with WiX LGHT0217 for ICE01--ICE07 and
+LGHT0216/0x643 for ICE09 because the Windows Installer Service cannot be
+accessed. A current MSI was produced separately with WiX `light -sval` only as
+a diagnostic artifact; it must not be treated as the normal ICE-validated MSI.
+No updater signatures were generated because `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` are unavailable in the environment.
+
 The ignored Windows multi-session probe spawned ten independent `cmd.exe`
 sessions, attached one frame subscriber, left nine sessions without renderer
 subscribers, and wrote/search-verified a distinct marker in every model. All
