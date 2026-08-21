@@ -18,7 +18,7 @@ use crate::error::{AppError, AppResult};
 use super::frame_scheduler::TerminalFrameSubscription;
 use super::scrollback::ScrollbackSnapshotFormat;
 use super::session::{
-    SessionSpawn, SessionStatus, SessionSubscription, TerminalEvent, TerminalSession,
+    SessionSpawn, SessionStatus, SessionSubscription, TerminalSession, TerminalStatusEvent,
 };
 use crate::terminal_engine::{TerminalKeyEvent, TerminalMouseEvent};
 
@@ -151,7 +151,7 @@ impl TerminalManager {
     ) -> AppResult<(
         SessionInfo,
         TerminalFrameSubscription,
-        tokio::sync::broadcast::Receiver<TerminalEvent>,
+        tokio::sync::broadcast::Receiver<TerminalStatusEvent>,
     )> {
         let session = self.get(session_id)?;
         let (subscription, status_receiver) = session.attach_renderer(client_id);

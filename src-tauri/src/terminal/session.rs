@@ -152,6 +152,17 @@ pub enum SessionStatus {
     Error,
 }
 
+/// Lifecycle-only event stream for typed renderer attachments.
+///
+/// The legacy `TerminalEvent` bus intentionally still carries raw output for
+/// the old desktop/remote clients. New renderers must not subscribe to that
+/// stream just to filter out every `Output` event during a large-output burst.
+#[derive(Debug, Clone, Copy)]
+pub struct TerminalStatusEvent {
+    pub status: SessionStatus,
+    pub exit_code: Option<i32>,
+}
+
 struct SessionInner {
     master: Box<dyn MasterPty + Send>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
@@ -332,6 +343,7 @@ pub struct TerminalSession {
     inner: Arc<Mutex<SessionInner>>,
     ready_watcher: Arc<Mutex<ReadyWatcher>>,
     event_hub: Arc<Mutex<EventHub>>,
+    status_sender: broadcast::Sender<TerminalStatusEvent>,
     terminal_engine: Arc<Mutex<WeztermTerminalEngine>>,
     frame_hub: Arc<TerminalFrameHub>,
     attachments: Mutex<HashMap<String, watch::Sender<bool>>>,
@@ -449,6 +461,7 @@ impl TerminalSession {
         // bursts. Scale the event count down proportionally so a stalled
         // subscriber still retains roughly the same 4 MiB raw-data ceiling.
         let (event_tx, _) = broadcast::channel(LIVE_OUTPUT_BUFFER_EVENTS);
+        let (status_sender, _) = broadcast::channel(16);
         let mut scrollback =
             OutputRingBuffer::new(spawn.scrollback_bytes.max(DEFAULT_SCROLLBACK_BYTES / 4));
         scrollback.resize(spawn.rows, spawn.cols);
@@ -520,6 +533,7 @@ impl TerminalSession {
         let inner_for_wait = inner.clone();
         let watcher_for_wait = ready_watcher.clone();
         let hub_for_wait = Arc::clone(&event_hub);
+        let status_for_wait = status_sender.clone();
         let sid_for_wait = Arc::clone(&shared_id);
         let mut child_for_wait = child;
         thread::spawn(move || match child_for_wait.wait() {
@@ -532,6 +546,10 @@ impl TerminalSession {
                 drop(guard);
                 if !closing {
                     watcher_for_wait.lock().process_exited(Some(code));
+                    let _ = status_for_wait.send(TerminalStatusEvent {
+                        status: SessionStatus::Exited,
+                        exit_code: Some(code),
+                    });
                     let _ = hub_for_wait.lock().sender.send(TerminalEvent::status(
                         sid_for_wait,
                         SessionStatus::Exited,
@@ -546,6 +564,10 @@ impl TerminalSession {
                 drop(guard);
                 if !closing {
                     watcher_for_wait.lock().process_exited(None);
+                    let _ = status_for_wait.send(TerminalStatusEvent {
+                        status: SessionStatus::Error,
+                        exit_code: None,
+                    });
                     let _ = hub_for_wait.lock().sender.send(TerminalEvent::status(
                         sid_for_wait,
                         SessionStatus::Error,
@@ -565,6 +587,7 @@ impl TerminalSession {
             inner,
             ready_watcher,
             event_hub,
+            status_sender,
             terminal_engine,
             frame_hub,
             attachments: Mutex::new(HashMap::new()),
@@ -727,10 +750,10 @@ impl TerminalSession {
         client_id: String,
     ) -> (
         TerminalFrameSubscription,
-        broadcast::Receiver<TerminalEvent>,
+        broadcast::Receiver<TerminalStatusEvent>,
     ) {
         let mut subscription = self.frame_hub.subscribe();
-        let status_receiver = self.event_hub.lock().sender.subscribe();
+        let status_receiver = self.status_sender.subscribe();
         let (cancel_tx, cancel_rx) = watch::channel(false);
         if let Some(previous) = self.attachments.lock().insert(client_id, cancel_tx) {
             let _ = previous.send(true);
@@ -1004,6 +1027,104 @@ mod tests {
             start: None,
         });
         assert!(!matches.is_empty(), "model search missed command output");
+        session.close();
+    }
+
+    #[test]
+    fn renderer_status_subscription_skips_raw_output_and_reports_process_exit() {
+        let session = TerminalSession::spawn(SessionSpawn {
+            session_id: "render-status-session".to_string(),
+            project_id: "test-project".to_string(),
+            profile_id: "test-profile".to_string(),
+            workspace_id: None,
+            window_id: None,
+            program: "cmd.exe".to_string(),
+            args: vec!["/Q".to_string()],
+            cwd: None,
+            env: vec![],
+            env_remove: Vec::new(),
+            readiness_marker: None,
+            rows: 8,
+            cols: 40,
+            scrollback_bytes: DEFAULT_SCROLLBACK_BYTES,
+        })
+        .expect("spawn session");
+        let (_subscription, mut status) = session.attach_renderer("status-client".into());
+        session.mark_running();
+        session.send_paste("exit 7\r\n").expect("send exit command");
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let event = loop {
+            assert!(Instant::now() < deadline, "timed out waiting for status");
+            match status.try_recv() {
+                Ok(event) => break event,
+                Err(broadcast::error::TryRecvError::Empty) => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(broadcast::error::TryRecvError::Lagged(_)) => {
+                    panic!("status-only renderer channel unexpectedly lagged")
+                }
+                Err(broadcast::error::TryRecvError::Closed) => {
+                    panic!("status-only renderer channel closed")
+                }
+            }
+        };
+
+        assert_eq!(event.status, SessionStatus::Exited);
+        assert_eq!(event.exit_code, Some(7));
+        session.close();
+    }
+
+    #[test]
+    fn detaching_renderer_keeps_the_rust_model_live_without_a_frame_subscriber() {
+        let session = TerminalSession::spawn(SessionSpawn {
+            session_id: "background-render-session".to_string(),
+            project_id: "test-project".to_string(),
+            profile_id: "test-profile".to_string(),
+            workspace_id: None,
+            window_id: None,
+            program: "cmd.exe".to_string(),
+            args: vec!["/Q".to_string()],
+            cwd: None,
+            env: vec![],
+            env_remove: Vec::new(),
+            readiness_marker: None,
+            rows: 8,
+            cols: 40,
+            scrollback_bytes: DEFAULT_SCROLLBACK_BYTES,
+        })
+        .expect("spawn session");
+        session.mark_running();
+        let (subscription, status) = session.attach_renderer("background-client".into());
+        drop(subscription);
+        drop(status);
+        session.detach("background-client");
+        assert_eq!(session.frame_hub.renderer_count(), 0);
+
+        session
+            .send_paste("echo PT_BACKGROUND_OK\r\n")
+            .expect("send background paste");
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut matches = Vec::new();
+        while Instant::now() < deadline {
+            matches = session.search(&crate::terminal_engine::TerminalSearchQuery {
+                query: "PT_BACKGROUND_OK".into(),
+                case_sensitive: true,
+                direction: crate::terminal_engine::TerminalSearchDirection::Forward,
+                start: None,
+            });
+            if !matches.is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert!(
+            !matches.is_empty(),
+            "background model stopped parsing output"
+        );
+        assert_eq!(session.status(), SessionStatus::Running);
         session.close();
     }
 

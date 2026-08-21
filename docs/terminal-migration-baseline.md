@@ -96,6 +96,8 @@ Implemented in this checkpoint:
   OSC title/cwd, and the minimal OSC 133 command-finished side channel.
 - Stable-row viewport requests, Rust-owned search results, dirty-row frames,
   full-snapshot recovery, and renderer attachment independent of PTY lifetime.
+- Renderer attachments use a status-only lifecycle channel; they do not
+  subscribe to the legacy raw-output broadcast while rendering.
 - Canvas2D text/attribute/cursor/selection rendering with DPR-aware metrics,
   image cache loading, and frame coalescing.
 
@@ -107,7 +109,8 @@ Current deterministic checks:
 
 ```text
 Frontend: tsc -b, ESLint, CanvasRenderer tests, and the full Vitest suite pass.
-Rust: the full 308-test suite passes, including the PowerShell handshake probe.
+Rust: the full 316-test suite passes, including the PowerShell handshake probe,
+live `cmd.exe` renderer attachment, status delivery, and background-model tests.
 ```
 
 ### Runtime performance

@@ -1245,7 +1245,6 @@ pub fn session_attach_render(
     client_id: String,
     on_frame: Channel<InvokeResponseBody>,
 ) -> AppResult<RenderSessionAttachment> {
-    use crate::terminal::TerminalEventPayload;
     use tokio::sync::broadcast::error::RecvError;
 
     let (info, subscription, mut status_receiver) = terminal
@@ -1297,11 +1296,10 @@ pub fn session_attach_render(
                 }
                 event = status_receiver.recv() => {
                     let body = match event {
-                        Ok(event) => match event.payload {
-                            TerminalEventPayload::Status { status, exit_code } =>
-                                DesktopRenderFrame::Status { status, exit_code }.into_body(),
-                            TerminalEventPayload::Output(_) => None,
-                        },
+                        Ok(event) => DesktopRenderFrame::Status {
+                            status: event.status,
+                            exit_code: event.exit_code,
+                        }.into_body(),
                         Err(RecvError::Lagged(_)) => DesktopRenderFrame::Lagged.into_body(),
                         Err(RecvError::Closed) => break,
                     };
