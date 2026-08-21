@@ -925,7 +925,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
   return (
     <div
       ref={rootRef}
-      className="relative h-full w-full"
+      className="terminal-renderer relative h-full w-full"
       style={{
         padding: `${typography.padding}px`,
         background: rendererTheme.background,
@@ -933,7 +933,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
           ? "inset 0 0 0 2px rgba(250, 204, 21, 0.78)"
           : undefined,
         transition: "box-shadow 160ms ease-out",
-        // Read the setting so the renderer and the xterm path keep the same
+        // Read the setting so the renderer and app chrome keep the same
         // contrast contract while the Canvas implementation is independent.
         color: resolvedContrast > 1 ? rendererTheme.foreground : undefined,
       }}

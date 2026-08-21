@@ -11,7 +11,6 @@ import type {
   TerminalSelectionPoint,
   TerminalSearchMatch,
   TerminalSearchQuery,
-  TerminalSessionFrame,
 } from "@/lib/terminalFrames";
 import type {
   PlatformInfo,
@@ -152,8 +151,9 @@ export interface WindowsTerminalScanResult {
 /**
  * A colour scheme the user imported, as stored by the backend.
  *
- * Flat rather than an xterm `ITheme` because that is the shape both Windows
- * Terminal and the on-disk file use; `toTerminalColorScheme` reshapes it.
+ * Flat rather than a nested renderer theme because that is the shape both
+ * Windows Terminal and the on-disk file use; `toTerminalColorScheme` reshapes
+ * it.
  */
 export interface StoredColorScheme {
   id: string;
@@ -262,12 +262,10 @@ export interface CreateTerminalRequest {
 }
 
 export type {
-  TerminalControlFrame,
   TerminalRenderMessage,
   TerminalSelectionPoint,
   TerminalSearchMatch,
   TerminalSearchQuery,
-  TerminalSessionFrame,
 } from "@/lib/terminalFrames";
 
 export interface SessionInfo {
@@ -277,18 +275,6 @@ export interface SessionInfo {
   status: "starting" | "running" | "exited" | "error";
   exitCode?: number;
   createdAt: string;
-}
-
-export interface SessionAttachment {
-  session: SessionInfo;
-  /** base64-encoded raw PTY history captured before live events. */
-  scrollback?: string;
-  /** Output and historical grid changes in their original order. */
-  replay?: Array<
-    | { type: "output"; data: string }
-    | { type: "resize"; rows: number; cols: number }
-  >;
-  truncated: boolean;
 }
 
 export interface RenderSessionAttachment {
@@ -368,30 +354,6 @@ async function invokeOrThrow<T>(
       message: typeof e === "string" ? e : "Unexpected error",
     } satisfies FrontendError;
   }
-}
-
-/**
- * Decode a base64 string into bytes the frontend can hand to xterm.write.
- *
- * Only attach replay still travels as base64; live output crosses the IPC
- * boundary as raw bytes. WebView2 has no `Uint8Array.fromBase64` yet, so the
- * per-byte fallback is the live path today and the native branch takes over
- * for free once it ships.
- */
-function decodeBase64(b64: string): Uint8Array {
-  const nativeDecoder = (
-    Uint8Array as typeof Uint8Array & {
-      fromBase64?: (value: string) => Uint8Array;
-    }
-  ).fromBase64;
-  if (nativeDecoder) {
-    return nativeDecoder.call(Uint8Array, b64);
-  }
-
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
 }
 
 export const projectService = {
@@ -547,19 +509,6 @@ export const terminalService = {
   readClipboardText: () => invokeOrThrow<string>("read_clipboard_text"),
   create: (request: CreateTerminalRequest): Promise<string> =>
     invokeOrThrow<string>("create_terminal", { request }),
-  attach: async (
-    sessionId: string,
-    clientId: string,
-    onFrame: (frame: TerminalSessionFrame) => void,
-  ): Promise<SessionAttachment> => {
-    const channel = new Channel<TerminalSessionFrame>();
-    channel.onmessage = onFrame;
-    return invokeOrThrow<SessionAttachment>("session_attach", {
-      onOutput: channel,
-      sessionId,
-      clientId,
-    });
-  },
   attachRender: async (
     sessionId: string,
     clientId: string,
@@ -591,12 +540,6 @@ export const terminalService = {
     invokeOrThrow<SessionInfo>("session_get", { sessionId }),
   write: (sessionId: string, data: string) =>
     invokeOrThrow<void>("write_terminal", { sessionId, data }),
-  // xterm's `onBinary` payload is not text; it must not be UTF-8 encoded.
-  writeBinary: (sessionId: string, data: Uint8Array) =>
-    invokeOrThrow<void>("write_terminal_binary", {
-      sessionId,
-      data: Array.from(data),
-    }),
   keyDown: (sessionId: string, event: TerminalKeyEvent) =>
     invokeOrThrow<void>("terminal_key_down", { sessionId, event }),
   textInput: (sessionId: string, text: string) =>
@@ -645,7 +588,6 @@ export const terminalService = {
     invokeOrThrow<void>("close_terminal", { sessionId }),
   restart: (sessionId: string): Promise<string> =>
     invokeOrThrow<string>("restart_terminal", { sessionId }),
-  decodeBase64,
   /**
    * Open a link from terminal output in the user's browser. The backend
    * re-validates the scheme; never navigate the WebView to it.

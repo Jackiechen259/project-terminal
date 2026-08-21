@@ -91,7 +91,7 @@ struct WindowsTerminalSettings {
 /// A `schemes[]` entry.
 ///
 /// Windows Terminal names the sixth ANSI colour `purple`; every other terminal
-/// and xterm.js itself call it magenta. It has no `cursorAccent` and no
+/// and terminal palettes call it magenta. It has no `cursorAccent` and no
 /// separate selection foreground.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -3,7 +3,7 @@
  *
  * Tabs and recursive pane layouts are indexed by project. Switching projects
  * only changes `activeProjectId`: tabs stay mounted, PTY readers keep running,
- * and xterm instances are not disposed.
+ * and terminal sessions are not disposed.
  *
  * Workspace scoping: the store instance is keyed by workspace id, which is
  * `main` in the single-window architecture (each WebView runs its own JS

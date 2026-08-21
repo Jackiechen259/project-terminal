@@ -1108,6 +1108,60 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "performance probe; run with cargo test -- --ignored --nocapture"]
+    fn render_frame_benchmark_reports_metrics() {
+        use std::time::Instant;
+
+        let mut engine = engine();
+        let _ = engine.take_render_frame();
+
+        let line = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\r\n";
+        let mut chunk = Vec::with_capacity(16 * 1024);
+        while chunk.len() < 16 * 1024 {
+            chunk.extend_from_slice(line);
+        }
+        let target_bytes = 8 * 1024 * 1024;
+        let mut fed_bytes = 0usize;
+        let parse_started = Instant::now();
+        while fed_bytes < target_bytes {
+            engine.feed(&chunk);
+            fed_bytes = fed_bytes.saturating_add(chunk.len());
+        }
+        engine.feed(b"PT_BENCH\r\n");
+        let parse_elapsed = parse_started.elapsed();
+
+        let snapshot_started = Instant::now();
+        let frame = engine.take_render_frame().expect("benchmark frame");
+        let snapshot_elapsed = snapshot_started.elapsed();
+
+        let serialization_started = Instant::now();
+        let serialized = serde_json::to_vec(&frame).expect("serialize benchmark frame");
+        let serialization_elapsed = serialization_started.elapsed();
+
+        let search_results = engine.search(&TerminalSearchQuery {
+            query: "PT_BENCH".into(),
+            case_sensitive: true,
+            direction: TerminalSearchDirection::Forward,
+            start: None,
+        });
+        assert!(frame.scrollback_length <= DEFAULT_SCROLLBACK_LINES);
+        assert!(!frame.dirty_rows.is_empty());
+        assert!(!serialized.is_empty());
+        assert!(!search_results.is_empty());
+
+        println!(
+            "terminal_benchmark input_bytes={} parse_ms={:.2} snapshot_us={} serialize_us={} dirty_rows={} frame_bytes={} scrollback_rows={}",
+            fed_bytes,
+            parse_elapsed.as_secs_f64() * 1_000.0,
+            snapshot_elapsed.as_micros(),
+            serialization_elapsed.as_micros(),
+            frame.dirty_rows.len(),
+            serialized.len(),
+            frame.scrollback_length,
+        );
+    }
+
+    #[test]
     fn resize_requests_a_full_snapshot_and_deduplicates_same_size() {
         let mut engine = engine();
         let _ = engine.take_render_frame();

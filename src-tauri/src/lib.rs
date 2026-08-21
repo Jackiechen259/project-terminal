@@ -245,7 +245,6 @@ pub fn run() {
                 commands::ssh::read_ssh_host_fingerprint,
                 // Terminal (plan §12.3)
                 commands::terminal::create_terminal,
-                commands::terminal::session_attach,
                 commands::terminal::session_attach_render,
                 commands::terminal::session_detach,
                 commands::terminal::session_list,
@@ -253,7 +252,6 @@ pub fn run() {
                 commands::terminal::list_workspace_sessions,
                 commands::terminal::close_workspace_sessions,
                 commands::terminal::write_terminal,
-                commands::terminal::write_terminal_binary,
                 commands::terminal::terminal_key_down,
                 commands::terminal::terminal_text_input,
                 commands::terminal::terminal_mouse_event,

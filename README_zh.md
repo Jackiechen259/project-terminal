@@ -152,26 +152,27 @@ remote-config.json    远程网关偏好设置与局域网访问控制
 ```text
 React / TypeScript UI 前端
         │
-        │ Tauri 命令与通道 (Channels)
+        │ Tauri 命令、RenderFrame 与语义化输入
         ▼
 Rust 应用后端
         │
         ├── 项目 (Project)、配置 (Profile)、SSH 与设置存储仓 (Repositories)
         ├── Shell 与开发环境解析器
         ├── 桌面进程唯一持有的终端会话管理器
+        │       ├── Rust wezterm-term 终端模型
+        │       └── portable-pty / ConPTY
         ├── 经身份验证的远程 HTTP/WebSocket 网关
-        └── portable-pty
-                │
-                ├── PowerShell / CMD / Git Bash
-                ├── WSL
-                └── 系统内置 OpenSSH 客户端
+        └── PowerShell / CMD / Git Bash / WSL / 系统内置 OpenSSH 客户端
 ```
 
 ### 终端会话 (Terminal Sessions)
 
-每个终端标签页都在 Rust 后端通过 `portable-pty` 创建并拥有独立的 PTY。前端向后端发送输入字节流，并通过与会话 ID 绑定的 Tauri Channel 实时接收终端输出。
+每个终端标签页都在 Rust 后端通过 `portable-pty` 创建独立 PTY，并拥有独立
+的 `wezterm-term` 终端模型。前端发送语义化的按键、文本、鼠标、粘贴、调整
+大小与视口事件；Rust 负责编码终端输入，并通过 Tauri Channel 返回带 dirty
+row 的 RenderFrame 与控制事件。
 
-桌面进程是实时 PTY 的唯一所有者。Tauri 命令适配器与可选远程网关共享同一个终端管理器，因此本地端与远程端的会话生命周期和状态不会产生分歧。隐藏窗口会保持该进程运行；完全退出应用时会停止全部 PTY。
+桌面进程是实时 PTY 与终端模型的唯一所有者。Tauri 命令适配器与可选远程网关共享同一个终端管理器，因此本地端与远程端的会话生命周期和状态不会产生分歧。隐藏或后台 renderer 被卸载时不会暂停或杀掉会话；完全退出应用时会停止全部 PTY。
 
 ### 终端内嵌图片 (Inline Images)
 
@@ -204,7 +205,7 @@ Profile 作为项目的一等资源进行存储。Rust 后端会根据已保存�
 - 未保存的密码与私钥口令直接在 PTY 终端内输入，不会持久化或记录日志。用户明确保存的密码由 Windows 凭据管理器保护，并通过应用内受限的 askpass 辅助入口提供给 OpenSSH。
 - 绝不存储任何私钥文件内容。
 - Shell 及 SSH 参数以参数数组形式传递，严禁使用拼接字符串。
-- 终端输入进行逐字节转发，不对内容进行解析或记录。
+- 终端输入以语义化事件发送，由 Rust 终端模型编码；输入内容不会被解析用于日志，也不会被记录。
 - Tauri 权限 (Capabilities) 严格限制为应用所需的最少权限。
 - 配置文件写入具备原子性保护，损坏文件自动保留以供恢复。
 
@@ -217,7 +218,8 @@ Profile 作为项目的一等资源进行存储。Rust 后端会根据已保存�
 | 前端 | React 18, TypeScript, Vite |
 | UI | Tailwind CSS, Radix UI, shadcn/ui, Lucide |
 | 状态管理 | Zustand |
-| 终端渲染 | xterm.js |
+| 终端模拟核心 | Rust 中的 `wezterm-term` |
+| 终端渲染 | Canvas2D，并可使用 WebGL2 加速/回退 |
 | PTY 后端 | portable-pty |
 | 持久化 | JSON 文件 |
 | SSH | 系统内置 OpenSSH 客户端 |
@@ -257,16 +259,11 @@ pnpm dev
 
 纯前端模式适用于 UI 开发，但 PTY、本地文件持久化、SSH 等 Tauri 原生能力需要运行完整的桌面应用。
 
-### Terminal Engine 迁移路径
+### 终端渲染器
 
-可以通过以下开发环境变量体验 Rust/WezTerm 终端路径：
-
-```powershell
-$env:VITE_TERMINAL_ENGINE = "wezterm"
-pnpm dev
-```
-
-该开关只用于迁移期间的兼容性与性能验证；默认构建仍使用现有 xterm 路径。
+Rust/WezTerm 终端引擎现在是默认实现。可在「设置 › 外观」中选择 renderer：
+`auto` 会在可用时选择 WebGL2，否则回退到 Canvas2D；`dom` 是为已有设置保留
+的软件 renderer 持久化名称。
 
 ### 构建安装包
 

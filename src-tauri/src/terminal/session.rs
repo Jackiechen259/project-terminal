@@ -666,7 +666,7 @@ impl TerminalSession {
 
     /// Wait for a shell-generated marker line before injecting initialization
     /// commands. The marker output is consumed by the reader and never sent
-    /// to xterm.
+    /// to the terminal model.
     pub fn wait_for_ready(&self, marker: &str, command: &str, timeout: Duration) -> AppResult<()> {
         let (sender, receiver) = mpsc::channel();
         {

@@ -249,9 +249,8 @@ export function AppearanceSettingsPanel() {
 /**
  * The rest of the terminal's typography.
  *
- * Every one of these is applied to the live terminal by assignment - xterm
- * only requires a rebuild for `allowTransparency` and `allowProposedApi` - so
- * the effect is immediate and nothing is torn down.
+ * Every one of these is applied to the live renderer by assignment, so the
+ * effect is immediate and the PTY/model session is never torn down.
  */
 function TypographyControls() {
   const { t } = useTranslation();
@@ -378,7 +377,7 @@ function TypographyControls() {
             {t("Automatic (hardware when available)")}
           </option>
           <option value="webgl">{t("Hardware (WebGL)")}</option>
-          <option value="dom">{t("Software (DOM)")}</option>
+          <option value="dom">{t("Software (Canvas2D)")}</option>
         </select>
       </Labelled>
       <Labelled

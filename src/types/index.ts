@@ -275,8 +275,8 @@ export type HostOs = "windows" | "linux" | "macos" | "other";
 export interface PlatformInfo {
   os: HostOs;
   /**
-   * Windows build number, `null` elsewhere. xterm needs it to model ConPTY's
-   * resize behaviour; see `resolveWindowsPty`.
+   * Windows build number, `null` elsewhere. The ConPTY compatibility layer
+   * uses it to model resize behaviour; see `resolveWindowsPty`.
    */
   windowsBuild: number | null;
   /** True only on Windows. Gates the WSL project type, shell, and picker. */

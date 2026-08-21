@@ -16,9 +16,10 @@
  *
  * SIL Open Font License 1.1; the licence text ships beside the file.
  *
- * `font-display: block` rather than `swap`: xterm measures its character cell
- * once at construction and caches the result, so a face swapped in afterwards
- * would leave the grid sized for the fallback for the rest of the session.
+ * `font-display: block` rather than `swap`: the terminal renderer measures its
+ * character cell once at construction and caches the result, so a face swapped
+ * in afterwards would leave the grid sized for the fallback for the rest of
+ * the session.
  */
 @font-face {
   font-family: "Cascadia Mono NF";
@@ -70,15 +71,13 @@
     }
   }
 
-  /* A restrained scrollbar treatment for app chrome and xterm's viewport. */
-  .app-scrollbar,
-  .xterm .xterm-viewport {
+  /* A restrained scrollbar treatment for app chrome. */
+  .app-scrollbar {
     scrollbar-width: thin;
     scrollbar-color: hsl(var(--scrollbar)) transparent;
   }
 
-  .app-scrollbar::-webkit-scrollbar,
-  .xterm .xterm-viewport::-webkit-scrollbar {
+  .app-scrollbar::-webkit-scrollbar {
     width: 10px;
     height: 10px;
   }
@@ -89,13 +88,11 @@
     height: 0;
   }
 
-  .app-scrollbar::-webkit-scrollbar-track,
-  .xterm .xterm-viewport::-webkit-scrollbar-track {
+  .app-scrollbar::-webkit-scrollbar-track {
     background: transparent;
   }
 
-  .app-scrollbar::-webkit-scrollbar-thumb,
-  .xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  .app-scrollbar::-webkit-scrollbar-thumb {
     min-height: 36px;
     border: 3px solid transparent;
     border-radius: 999px;
@@ -103,13 +100,11 @@
     background-clip: padding-box;
   }
 
-  .app-scrollbar::-webkit-scrollbar-thumb:hover,
-  .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  .app-scrollbar::-webkit-scrollbar-thumb:hover {
     background-color: hsl(var(--scrollbar-hover) / 0.9);
   }
 
-  .app-scrollbar::-webkit-scrollbar-corner,
-  .xterm .xterm-viewport::-webkit-scrollbar-corner {
+  .app-scrollbar::-webkit-scrollbar-corner {
     background: transparent;
   }
 
@@ -122,14 +117,6 @@
   .terminal-tab-scrollbar::-webkit-scrollbar-thumb {
     border-width: 1px;
   }
-}
-
-/* xterm.js sizing - terminal fills its container. */
-.xterm {
-  height: 100%;
-}
-.xterm .xterm-viewport {
-  background-color: transparent !important;
 }
 
 /* A subtle top edge gives the borderless desktop shell a finished frame.

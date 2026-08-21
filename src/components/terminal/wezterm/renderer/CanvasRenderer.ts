@@ -56,7 +56,7 @@ const DEFAULT_ANSI = [
 ] as const;
 const IMAGE_CACHE_CAPACITY = 256;
 
-function xterm256(index: number): string {
+function ansi256(index: number): string {
   if (index < 16) return DEFAULT_ANSI[index] ?? "#cccccc";
   if (index < 232) {
     const color = index - 16;
@@ -82,7 +82,7 @@ function cssColor(
   }
   const themeKey = ANSI_THEME_KEYS[color.value];
   const themed = themeKey ? theme[themeKey] : undefined;
-  return themed ?? xterm256(color.value);
+  return themed ?? ansi256(color.value);
 }
 
 type Rgb = [number, number, number];
@@ -99,9 +99,7 @@ function parseRgb(color: string): Rgb | null {
   const rgb = color.match(
     /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*[\d.]+)?\s*\)$/iu,
   );
-  return rgb
-    ? [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])]
-    : null;
+  return rgb ? [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])] : null;
 }
 
 function luminance([red, green, blue]: Rgb) {
@@ -111,7 +109,9 @@ function luminance([red, green, blue]: Rgb) {
       ? normalized / 12.92
       : ((normalized + 0.055) / 1.055) ** 2.4;
   };
-  return 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue);
+  return (
+    0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
+  );
 }
 
 function contrastRatio(foreground: Rgb, background: Rgb) {
@@ -151,8 +151,7 @@ function ensureContrast(
     [255, 255, 255],
   ];
   const target = candidates.reduce((best, candidate) =>
-    contrastRatio(candidate, backgroundRgb) >
-    contrastRatio(best, backgroundRgb)
+    contrastRatio(candidate, backgroundRgb) > contrastRatio(best, backgroundRgb)
       ? candidate
       : best,
   );
@@ -164,7 +163,10 @@ function ensureContrast(
   let high = 1;
   for (let iteration = 0; iteration < 12; iteration++) {
     const midpoint = (low + high) / 2;
-    if (contrastRatio(mix(foregroundRgb, target, midpoint), backgroundRgb) >= minimumContrast) {
+    if (
+      contrastRatio(mix(foregroundRgb, target, midpoint), backgroundRgb) >=
+      minimumContrast
+    ) {
       high = midpoint;
     } else {
       low = midpoint;
@@ -225,6 +227,8 @@ export class CanvasRenderer implements TerminalRenderer {
   private pendingFrame: TerminalRenderFrame | null = null;
   private frameRequest: number | null = null;
   private transparentBackground = false;
+  private textVisible = true;
+  private cellBackgroundVisible = true;
 
   mount(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -239,6 +243,20 @@ export class CanvasRenderer implements TerminalRenderer {
    */
   setBackgroundVisible(visible: boolean) {
     this.transparentBackground = !visible;
+    if (this.frame) this.redrawVisibleRows();
+  }
+
+  /** Used by WebGLRenderer while the GPU owns glyphs and cell backgrounds. */
+  setTextVisible(visible: boolean) {
+    if (this.textVisible === visible) return;
+    this.textVisible = visible;
+    if (this.frame) this.redrawVisibleRows();
+  }
+
+  /** Used by WebGLRenderer while the GPU owns cell background quads. */
+  setCellBackgroundVisible(visible: boolean) {
+    if (this.cellBackgroundVisible === visible) return;
+    this.cellBackgroundVisible = visible;
     if (this.frame) this.redrawVisibleRows();
   }
 
@@ -485,8 +503,12 @@ export class CanvasRenderer implements TerminalRenderer {
     if (!context) return;
     context.save();
     context.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    context.fillStyle = this.theme.background;
-    context.fillRect(0, 0, this.width, this.height);
+    if (this.transparentBackground) {
+      context.clearRect(0, 0, this.width, this.height);
+    } else {
+      context.fillStyle = this.theme.background;
+      context.fillRect(0, 0, this.width, this.height);
+    }
     context.restore();
   }
 
@@ -548,7 +570,7 @@ export class CanvasRenderer implements TerminalRenderer {
       cell.reverse ||
       this.cellIsSelected(stableRow, cell) ||
       this.cellIsSearchMatched(stableRow, cell);
-    if (paintsDefaultBackground) {
+    if (paintsDefaultBackground && this.cellBackgroundVisible) {
       context.fillStyle = background;
       context.fillRect(x, y, cellWidth, this.cellHeight);
     }
@@ -567,15 +589,17 @@ export class CanvasRenderer implements TerminalRenderer {
       this.cellHeight,
       -1,
     );
-    context.globalAlpha = cell.intensity === "half" ? 0.5 : 1;
-    context.font = fontFor(cell, this.font);
-    context.fillStyle = foreground;
-    context.textBaseline = "alphabetic";
-    context.fillText(
-      cell.text,
-      x + this.font.letterSpacing / 2,
-      y + this.baseline,
-    );
+    if (this.textVisible) {
+      context.globalAlpha = cell.intensity === "half" ? 0.5 : 1;
+      context.font = fontFor(cell, this.font);
+      context.fillStyle = foreground;
+      context.textBaseline = "alphabetic";
+      context.fillText(
+        cell.text,
+        x + this.font.letterSpacing / 2,
+        y + this.baseline,
+      );
+    }
 
     const underline = cell.underline !== "none";
     if (underline || cell.strikethrough) {
@@ -660,11 +684,19 @@ export class CanvasRenderer implements TerminalRenderer {
     void decodeImage(image)
       .then((source) => {
         if (source) {
-          if (!this.imageCache.has(image.cacheKey) && this.imageCache.size >= IMAGE_CACHE_CAPACITY) {
-            const oldest = this.imageCache.keys().next().value as string | undefined;
+          if (
+            !this.imageCache.has(image.cacheKey) &&
+            this.imageCache.size >= IMAGE_CACHE_CAPACITY
+          ) {
+            const oldest = this.imageCache.keys().next().value as
+              string | undefined;
             if (oldest) {
               const evicted = this.imageCache.get(oldest);
-              if (evicted && "close" in evicted && typeof evicted.close === "function") {
+              if (
+                evicted &&
+                "close" in evicted &&
+                typeof evicted.close === "function"
+              ) {
                 evicted.close();
               }
               this.imageCache.delete(oldest);

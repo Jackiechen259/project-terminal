@@ -2,171 +2,176 @@
 
 Date: 2026-08-22 (Australia/Sydney)
 
-Branch: `refactor/wezterm-term-engine`
+Branch: refactor/wezterm-term-engine
 
-Baseline commit: `d4bb44c`
+Historical comparison checkpoint: bcd2a41 (before runtime cleanup)
 
-## Current data flow
+## Historical pre-migration architecture
+
+The following records the baseline architecture reviewed before the Rust-owned
+terminal model was enabled. It is retained to define the comparison surface;
+it is not the architecture shipped by this branch.
 
 ```text
-portable-pty / ConPTY
-  -> TerminalSession reader thread
+ConPTY
+  -> portable-pty
+  -> TerminalSession reader
   -> TerminalEvent::Output(Bytes)
-  -> tokio broadcast channel
-  -> Tauri Channel<InvokeResponseBody>
-  -> TerminalOutputQueue
-  -> xterm.write()
-  -> xterm parser + buffer + scrollback
+  -> Tauri Channel
+  -> frontend output queue
+  -> xterm parser, buffer, and scrollback
   -> DOM/WebGL addon renderer
 ```
 
-The backend already keeps the PTY and reader alive without an attachment. It
-also keeps bounded raw-byte scrollback and resize boundaries, and sends a
-`lagged` control frame when a frontend subscriber falls behind. The terminal
-model, VT parser, screen buffer, search, selection, OSC handling, image state,
-and renderer still belong to xterm.js.
+At that point VT parsing, screen state, alternate-screen state, selection,
+search, and cell rendering were owned by the JavaScript terminal runtime.
+
+## Current authoritative architecture
+
+```text
+ConPTY / remote SSH or WSL process
+  -> portable-pty
+  -> TerminalSession
+  -> WeztermTerminalEngine
+       (wezterm-term parser, screen, scrollback, modes, images)
+  -> TerminalFrameHub, coalesced at approximately 16 ms
+  -> typed RenderFrame and ControlEvent messages
+  -> Tauri Channel
+  -> Canvas2D or WebGL2 renderer
+  -> React UI attachment
+```
+
+The frontend no longer parses ANSI/VT bytes and does not maintain a second
+screen buffer. React owns tabs, panes, settings, and attachment lifecycle;
+Rust owns the PTY, terminal model, scrollback, control events, and input
+encoding.
 
 ## Responsibility map
 
-| Concern | Current owner | Migration destination |
+| Concern | Authoritative owner | Notes |
 | --- | --- | --- |
-| ConPTY, process spawn, stdin/stdout, resize, kill | `portable-pty` and `terminal/session.rs` | Keep unchanged at the PTY boundary |
-| Raw transport, attachment, status, lag recovery | `TerminalSession`, `TerminalManager`, `commands/terminal.rs` | Typed render/control transport; session lifecycle remains backend-owned |
-| VT/ANSI parsing, screen, alternate screen, cursor, scrollback | xterm.js | `wezterm-term` inside Rust |
-| OSC 7/133/title and hyperlink events | xterm parser callbacks plus frontend helpers | WezTerm terminal notifications plus a minimal side channel only where required |
-| Search and selection | xterm addons/core | Rust engine queries and renderer coordinates |
-| Cell drawing and font metrics | xterm DOM/WebGL | Replacable Canvas2D/WebGL renderer |
-| React tab/split/project lifecycle | React/Zustand | Keep; renderer attachment must stay separate from PTY session |
-| Remote mobile terminal | bundled xterm assets in `src-tauri/src/remote` | Separate migration surface; do not remove until a compatible remote protocol/renderer exists |
+| ConPTY, process spawn, stdin/stdout, resize, kill | portable-pty and TerminalSession | The PTY boundary is unchanged. |
+| VT/ANSI parsing, screen, alternate screen, cursor, modes | wezterm-term through WeztermTerminalEngine | One model per terminal session. |
+| Scrollback and stable rows | wezterm-term | The old raw ring is compatibility/debug only. |
+| Keyboard, mouse, paste, and IME encoding | WeztermTerminalEngine | Frontend sends semantic events. |
+| OSC title, cwd, command markers, bell | engine control event queue | Only changes are sent; not repeated per frame. |
+| Render transport | TerminalFrameHub and typed Tauri frames | Dirty rows, sequence numbers, and full snapshots. |
+| Cell drawing and metrics | replaceable Canvas2D/WebGL2 renderer | No React element per cell. |
+| Search and selection | Rust model queries | Results use stable rows and cell columns. |
+| React project/tab/split lifecycle | React and Zustand | Detaching a renderer never kills the session. |
+| Remote terminal | Rust render frames plus remote_renderer.js | Semantic input and the same model-owned frame contract. |
 
-## Pre-migration baseline verification
+## Migration invariants
 
-### Rust
+- portable-pty and the Windows ConPTY path remain the process boundary.
+- WeztermTerminalEngine is the only authoritative terminal model.
+- A PTY read does not imply an IPC message; dirty state is frame-batched.
+- A frame contains only changed rows unless a full snapshot is requested.
+- Renderer attachment is independent of PTY/model lifetime.
+- A background session keeps reading, parsing, and bounded scrollback, but has
+  no continuous frame subscriber.
+- The model sequence used for dirty-row extraction is separate from the
+  monotonic IPC sequence used for resync ordering.
+- Render/control transport is distinct from status, exit, bell, title, cwd,
+  and command-finished events.
+- Raw OutputRingBuffer and raw session subscriptions remain only for backend
+  startup probes, diagnostics, and comparison tests; no frontend terminal
+  renderer consumes them.
 
-Command:
+## Implemented compatibility surface
 
-```text
-cargo test --manifest-path src-tauri/Cargo.toml
-```
+The current branch has deterministic coverage for:
 
-Result: compilation succeeded; 296 of 297 unit/integration tests passed. The
-single failure was the existing real PowerShell handshake probe:
+- PowerShell and cmd process/session lifecycle paths, including resize and
+  exit handling; optional WSL and SSH use the same session/model boundary.
+- ANSI colors, 256-color and truecolor attributes, cursor styles, hyperlinks,
+  wide cells, combining text, CJK, emoji, and Nerd Font glyph measurement.
+- Alternate screen, cursor visibility, mouse reporting, bracketed paste,
+  application cursor/keypad modes, and semantic composition text.
+- OSC 0/2 title, OSC 7 cwd, OSC 8 hyperlinks, OSC 133 command completion,
+  bell control events, and stale-state-safe full snapshots.
+- Rust-owned search and selection text over stable scrollback rows.
+- Dirty-row frames, frame coalescing, sequence-guarded lag recovery, image
+  cache identities, theme/palette conversion, and viewport resync.
+- Remote renderer input/frame protocol without bundled JavaScript terminal
+  parser assets.
+- React unmount/detach behavior that leaves the PTY and Rust model alive.
 
-```text
-commands::terminal::handshake_probe::a_real_powershell_session_shows_no_encoding_command
-EnvironmentInitializationFailed("Timed out waiting for the interactive shell")
-```
+Desktop renderer choices are replaceable through TerminalRenderer. Canvas2D
+is the correctness fallback. The WebGL2 path uses a bounded Canvas2D-rasterized
+glyph atlas, GPU-batched cell backgrounds and glyph quads, and a transparent
+Canvas2D overlay for image protocols, combining/decorative details, links,
+selection treatment, and cursor drawing. Atlas exhaustion restores the complete
+Canvas2D path rather than dropping text.
 
-The failure occurred before any migration changes and should remain a known
-environment-sensitive baseline until it can be reproduced or fixed
-independently.
+## Dependency state
 
-### Frontend
-
-`pnpm test` first stopped because pnpm refused to recreate `node_modules` in a
-non-interactive shell. Retrying with `CI=true` started a dependency rebuild but
-made no progress for more than two minutes and was interrupted. No frontend
-test result was claimed by the original baseline because the dependency tree
-was incomplete at that point. That is a historical note; the current
-migration checkout has since reinstalled dependencies and passed the frontend
-suite.
-
-## Migration checkpoint
-
-The branch now contains a parallel, development-only WezTerm path selected by
-`VITE_TERMINAL_ENGINE=wezterm`. The old path remains the default until feature
-parity and performance acceptance are complete.
-
-The new path is:
-
-```text
-portable-pty / ConPTY
-  -> TerminalSession reader
-  -> wezterm-term Terminal model
-  -> 16 ms Rust frame scheduler
-  -> sequence-numbered dirty RenderFrame / control events
-  -> Tauri Channel
-  -> Canvas2D renderer with requestAnimationFrame coalescing
-```
-
-Implemented in this checkpoint:
-
-- Rust-owned VT parsing, screen, alternate screen, scrollback, cursor,
-  hyperlinks, ANSI attributes, images, keyboard/mouse encoding, paste mode,
-  semantic text/IME input, OSC title/cwd (including clearing a stale cwd), and
-  the minimal OSC 133
-  command-finished side channel.
-- Stable-row viewport requests, Rust-owned search results and selection text,
-  dirty-row frames, sequence-guarded full-snapshot recovery, and renderer
-  attachment independent of PTY lifetime.
-- Desktop session creation now passes the existing visible scrollback-row
-  setting directly to wezterm-term while retaining the raw-byte attach-history
-  budget as a separate compatibility limit.
-- Renderer attachments use a status-only lifecycle channel; they do not
-  subscribe to the legacy raw-output broadcast while rendering.
-- Full-snapshot resyncs replay the current title/cwd state (including explicit
-  empty values), not stale detached-session bell or command-completion edges;
-  backend resize requests are deduplicated across grid and pixel dimensions.
-- WezTerm's internal sequence used for dirty-row queries is separate from the
-  monotonic IPC frame sequence, so a viewport/full-snapshot resync is always
-  newer than a frame that arrived before it.
-- Canvas2D text/attribute/cursor/selection rendering with DPR-aware metrics,
-  image cache loading, plain-link detection, minimum-contrast handling,
-  configurable cursor styles/blink, frame coalescing, and a transient visual
-  bell for the typed bell control event.
-
-The following are intentionally still open: WebGL renderer, remote terminal
-protocol migration, full viewport virtualization, performance measurements,
-and removal of xterm runtime dependencies.
-
-Current deterministic checks:
-
-```text
-Frontend: tsc -b, ESLint, CanvasRenderer tests, and the full Vitest suite pass.
-Rust: the latest serial run had 324 passed, one existing real PowerShell
-handshake probe timeout, and one intentionally ignored 100MB stress fixture;
-the isolated PowerShell probe passes on rerun. This includes live `cmd.exe`
-renderer attachment, status delivery, background-model, semantic text input,
-Rust-owned selection, and scrollback-setting tests. The 100MB fixture still
-requires a separate profiling run.
-```
-
-### Runtime performance
-
-No GUI terminal session was launched in this environment, so startup prompt
-time, CPU, RAM, renderer FPS, input latency, and IPC volume are intentionally
-recorded as **not measured**, not guessed. The migration must add a repeatable
-measurement harness before performance acceptance is declared. Required cases
-are PowerShell, cmd, optional WSL, synthetic large output, and 1/5/10 session
-foreground/background configurations.
-
-## Upstream dependency check
-
-The upstream `wezterm-term` package is currently a git workspace crate named
-`wezterm-term`, version `0.1.0`, licensed MIT. Its public entry point exposes
-`Terminal::new`, `advance_bytes`, `TerminalState`, `Screen`, `Line`,
-`SequenceNo`, keyboard/mouse encoding, scrollback, sixel, iTerm2 images,
-OSC 8 hyperlinks, and terminal cell attributes. It does not own a GUI or PTY.
-
-The checked upstream main revision is pinned for this migration to:
+- All @xterm/* runtime dependencies and frontend xterm-specific queues/addons
+  are removed.
+- The Rust dependency is wezterm-term from the exact pinned revision:
 
 ```text
 770d8e1a7519a9a698090cd7d717d0c64aa0a755
 ```
 
-The upstream build documentation states Rust 1.71 or later is required; this
-repository's declared MSRV remains Rust 1.77.2 until a local dependency build
-proves otherwise. The available local toolchain is Rust 1.96.0. If Cargo or CI
-shows that this exact revision requires a newer MSRV, the `rust-version` field
-will not be changed silently.
+- Rust MSRV remains 1.77.2. The local verification toolchain is Rust 1.96.
+- wezterm-term and the directly used upstream crates are MIT licensed; the
+  repository attribution is recorded in THIRD_PARTY_NOTICES.
 
-## Migration guardrails
+## Verification status
 
-- `portable-pty` and the existing ConPTY path remain the process boundary.
-- The old xterm path remains available during comparison, but it cannot remain
-  a second authoritative model after the WezTerm engine is enabled by default.
-- PTY reader rate is not allowed to dictate IPC frame rate; render frames must
-  be sequence-numbered, dirty-row based, and frame-batched.
-- Detaching a renderer must not kill or pause the PTY/model session.
-- Existing shell, TUI, image, search, clipboard, theme, IME, remote, and split
-  pane behavior must be covered before deleting xterm runtime dependencies.
+Deterministic checks run during migration:
+
+```text
+Frontend: tsc -b, Vite production build, ESLint, Prettier check, and Vitest
+(37 files, 240 tests).
+Rust: cargo fmt, cargo check, cargo clippy, and cargo test (324 passed, 2
+ignored stress/profiling probes).
+```
+
+The real PowerShell handshake probe uses the inbox `powershell.exe` explicitly
+so a managed-environment PATH shim cannot replace the shell under test. It
+passes in the current Windows environment; a slow shell remains an
+environment-sensitive integration boundary.
+
+## Performance measurement status
+
+GUI startup, prompt time, CPU, RAM, renderer FPS, input latency, and IPC volume
+must be measured on Windows rather than inferred from unit tests. The required
+matrix is:
+
+| Case | Required measurements |
+| --- | --- |
+| PowerShell, cmd, optional WSL | create-to-prompt, first input latency |
+| Synthetic large output and real build/log output | throughput, CPU, RAM, frame count, IPC bytes |
+| 1, 5, and 10 sessions | active/background CPU and RAM |
+| Four visible split panes | frame rate, queue depth, input latency |
+| 100+ rapid resizes | final PTY/model/renderer grid dimensions and latency |
+
+The ignored Rust stress fixtures cover parser/scrollback bounds and render-frame
+serialization. They are repeatable correctness/throughput probes, not a claim
+that GUI acceptance has already been measured. Results should be appended to
+the migration benchmark record with OS build, commit, renderer preference,
+font, rows/columns, and whether the session was active or background.
+
+The first local engine probe on commit bcd2a41 used the debug profile and an
+8 MiB synthetic stream. It reported approximately 33.1 s for parsing, 150 us
+for frame extraction, 0.4 ms for JSON serialization, four dirty rows, a
+6,411-byte frame, and a bounded 10,000-row scrollback. This is useful as a
+repeatability check for the Rust model only; it is not a desktop GUI baseline.
+
+The release-profile harness was rerun on 2026-08-22 after the renderer cleanup.
+Across its two Cargo test targets it reported 455--494 ms for parsing, 26--29
+us for frame extraction, 75--83 us for JSON serialization, four dirty rows,
+the same 6,411-byte frame, and the same 10,000-row scrollback. The duplicate
+lines are the repository's intentional lib/integration-test target layout.
+
+## Remaining acceptance work
+
+- Collect the Windows GUI performance matrix above against the historical
+  xterm/WebGL baseline.
+- Profile the WebGL2 glyph-atlas path against the historical WebGL baseline and
+  tune atlas size, batch bytes, and fallback thresholds for real workloads.
+- Run a signed release build when TAURI_SIGNING_PRIVATE_KEY is available.
+- Keep the xterm terminology in this document only where it identifies the
+  historical baseline or the required comparison.

@@ -48,7 +48,7 @@
     );
   }
 
-  function xtermPalette(index) {
+  function ansi256Palette(index) {
     if (index < 16) return ANSI[index] || ANSI[0];
     if (index >= 232) {
       const level = 8 + (index - 232) * 10;
@@ -75,7 +75,7 @@
     if (value.kind === "rgba") return rgba(value.value, fallback);
     if (value.kind === "palette") {
       const index = Number(value.value);
-      return palette?.[index] || xtermPalette(index);
+      return palette?.[index] || ansi256Palette(index);
     }
     return fallback;
   }

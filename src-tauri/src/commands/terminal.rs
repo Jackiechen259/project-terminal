@@ -16,9 +16,7 @@ use tauri::{Manager, State};
 
 use crate::error::{AppError, AppResult};
 use crate::state::{new_id, AppState};
-use crate::terminal::{
-    resolve_local_shell, SessionInfo, SessionSpawn, TerminalEventPayload, TerminalManager,
-};
+use crate::terminal::{resolve_local_shell, SessionInfo, SessionSpawn, TerminalManager};
 use crate::terminal_engine::{
     RenderFrame, TerminalControlEvent, TerminalKeyEvent, TerminalMouseEvent, TerminalSelectionPoint,
 };
@@ -881,24 +879,10 @@ pub fn write_terminal(
     session_id: String,
     data: String,
 ) -> AppResult<()> {
-    // The frontend sends a UTF-8 string (xterm.js `onData`). We forward the
-    // raw bytes into the PTY. We do NOT parse, log, or interpret the input.
+    // This command remains for raw command execution initiated by the UI
+    // (for example memo automation). Terminal key/text input uses the
+    // semantic model-owned commands below.
     terminal.manager.write(&session_id, data.as_bytes())
-}
-
-/// Byte-transparent counterpart of [`write_terminal`].
-///
-/// xterm.js splits terminal input across two events: `onData` carries UTF-8
-/// text, while `onBinary` carries bytes that are not text at all - most
-/// visibly the mouse reports of the default (non-SGR) encoding, whose
-/// coordinates are raw byte values that UTF-8 encoding would corrupt.
-#[tauri::command]
-pub fn write_terminal_binary(
-    terminal: State<'_, TerminalState>,
-    session_id: String,
-    data: Vec<u8>,
-) -> AppResult<()> {
-    terminal.manager.write(&session_id, &data)
 }
 
 /// Semantic key path for the wezterm renderer. The backend, not the browser,
@@ -1057,193 +1041,15 @@ pub async fn restart_terminal_inner(
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SessionAttachment {
-    pub session: SessionInfo,
-    /// Base64-encoded raw PTY bytes captured before the live subscription.
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub scrollback: String,
-    /// Ordered output and grid changes required to faithfully reconstruct a
-    /// cursor-addressed terminal after reattaching.
-    pub replay: Vec<SessionReplayEvent>,
-    pub truncated: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum SessionReplayEvent {
-    Output { data: String },
-    Resize { rows: u16, cols: u16 },
-}
-
-/// Merge each run of consecutive output chunks into one replay event.
-///
-/// A 4 MiB scrollback is retained as ~256 chunks of 16 KiB. Sending them
-/// individually costs the frontend one sequential `term.write` round-trip
-/// each. Resize boundaries must survive, so runs are only merged between
-/// them, which preserves replay ordering exactly.
-fn coalesce_replay(
-    events: Vec<crate::terminal::scrollback::ScrollbackReplayEvent>,
-) -> Vec<SessionReplayEvent> {
-    use crate::terminal::scrollback::ScrollbackReplayEvent;
-    use base64::Engine;
-
-    let mut out: Vec<SessionReplayEvent> = Vec::new();
-    let mut run: Vec<bytes::Bytes> = Vec::new();
-
-    fn flush(run: &mut Vec<bytes::Bytes>, out: &mut Vec<SessionReplayEvent>) {
-        if run.is_empty() {
-            return;
-        }
-        let total = run.iter().map(|chunk| chunk.len()).sum();
-        let mut merged = Vec::with_capacity(total);
-        for chunk in run.drain(..) {
-            merged.extend_from_slice(&chunk);
-        }
-        out.push(SessionReplayEvent::Output {
-            data: base64::engine::general_purpose::STANDARD.encode(merged),
-        });
-    }
-
-    for event in events {
-        match event {
-            ScrollbackReplayEvent::Output(bytes) => run.push(bytes),
-            ScrollbackReplayEvent::Resize { rows, cols } => {
-                flush(&mut run, &mut out);
-                out.push(SessionReplayEvent::Resize { rows, cols });
-            }
-        }
-    }
-    flush(&mut run, &mut out);
-    out
-}
-
-/// Control frames on the desktop session channel.
-///
-/// Output travels as `InvokeResponseBody::Raw` on the same channel; the JS
-/// `Channel` reorders by index, so raw and JSON frames stay in sequence.
-/// The session id is omitted because a channel is per-attachment.
-// `rename_all` on an enum renames variants, not their fields, so
-// `rename_all_fields` is what actually gets `exitCode` to the frontend.
-#[derive(Debug, Serialize)]
-#[serde(
-    tag = "type",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
-enum DesktopSessionFrame {
-    Status {
-        status: crate::terminal::session::SessionStatus,
-        exit_code: Option<i32>,
-    },
-    /// The client fell too far behind and output was dropped; it must
-    /// re-attach to resynchronize from a fresh snapshot.
-    Lagged,
-}
-
-impl DesktopSessionFrame {
-    fn into_body(self) -> Option<InvokeResponseBody> {
-        serde_json::to_string(&self)
-            .ok()
-            .map(InvokeResponseBody::Json)
-    }
-}
-
-/// Attach one frontend client to an existing PTY without changing its
-/// lifecycle. Scrollback is returned in the command response and later output
-/// is delivered through the bounded broadcast receiver.
-#[tauri::command]
-pub fn session_attach(
-    terminal: State<'_, TerminalState>,
-    session_id: String,
-    client_id: String,
-    on_output: Channel<InvokeResponseBody>,
-) -> AppResult<SessionAttachment> {
-    use base64::Engine;
-    use tokio::sync::broadcast::error::RecvError;
-
-    let (info, subscription) = terminal.manager.attach(
-        &session_id,
-        client_id.clone(),
-        crate::terminal::scrollback::ScrollbackSnapshotFormat::Replay,
-    )?;
-    let crate::terminal::scrollback::ScrollbackSnapshot {
-        bytes,
-        replay,
-        truncated,
-    } = subscription.snapshot;
-    let replay = coalesce_replay(replay);
-    // Avoid sending the same potentially multi-megabyte history twice. The
-    // flat field remains only as a compatibility fallback for snapshots that
-    // predate resize-aware replay events.
-    let scrollback = if replay.is_empty() {
-        base64::engine::general_purpose::STANDARD.encode(bytes)
-    } else {
-        String::new()
-    };
-    let attachment = SessionAttachment {
-        session: info,
-        scrollback,
-        replay,
-        truncated,
-    };
-
-    let manager = terminal.manager.clone_handle();
-    tauri::async_runtime::spawn(async move {
-        let mut receiver = subscription.receiver;
-        let mut cancellation = subscription.cancellation;
-        loop {
-            tokio::select! {
-                changed = cancellation.changed() => {
-                    if changed.is_err() || *cancellation.borrow() {
-                        break;
-                    }
-                }
-                event = receiver.recv() => {
-                    let body = match event {
-                        Ok(event) => match event.payload {
-                            // Raw bytes: no base64, no JSON escape scan. The
-                            // copy is unavoidable because `Raw` owns its Vec
-                            // and the scrollback still holds the `Bytes`.
-                            TerminalEventPayload::Output(bytes) => {
-                                Some(InvokeResponseBody::Raw(bytes.to_vec()))
-                            }
-                            TerminalEventPayload::Status { status, exit_code } => {
-                                DesktopSessionFrame::Status { status, exit_code }.into_body()
-                            }
-                        },
-                        Err(RecvError::Lagged(_)) => {
-                            // The PTY reader and other clients must keep
-                            // flowing. Tell this client so it can re-attach
-                            // and pull the latest bounded snapshot.
-                            DesktopSessionFrame::Lagged.into_body()
-                        }
-                        Err(RecvError::Closed) => break,
-                    };
-                    if let Some(body) = body {
-                        if on_output.send(body).is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        let _ = manager.detach(&session_id, &client_id);
-    });
-
-    Ok(attachment)
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct RenderSessionAttachment {
     pub session: SessionInfo,
 }
 
 /// Typed render/control transport for the Rust-owned terminal engine.
 ///
-/// Unlike `session_attach`, this command never replays raw PTY bytes to the
-/// frontend. The initial full frame and all subsequent dirty-row frames come
-/// from the session's persistent wezterm-term model.
+/// This command never replays raw PTY bytes to the frontend. The initial full
+/// frame and all subsequent dirty-row frames come from the session's persistent
+/// wezterm-term model.
 #[derive(Debug, Serialize)]
 #[serde(
     tag = "type",
@@ -1450,28 +1256,8 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
-    fn replay_data(event: &SessionReplayEvent) -> &str {
-        match event {
-            SessionReplayEvent::Output { data } => data,
-            SessionReplayEvent::Resize { .. } => panic!("expected an output event"),
-        }
-    }
-
     #[test]
     fn desktop_control_frames_use_the_camel_case_keys_the_frontend_reads() {
-        let status = serde_json::to_string(&DesktopSessionFrame::Status {
-            status: crate::terminal::session::SessionStatus::Exited,
-            exit_code: Some(7),
-        })
-        .unwrap();
-        assert_eq!(
-            status,
-            r#"{"type":"status","status":"exited","exitCode":7}"#
-        );
-        assert_eq!(
-            serde_json::to_string(&DesktopSessionFrame::Lagged).unwrap(),
-            r#"{"type":"lagged"}"#
-        );
         assert_eq!(
             serde_json::to_string(&DesktopRenderFrame::Control {
                 event: TerminalControlEvent::Bell,
@@ -1479,62 +1265,6 @@ mod tests {
             .unwrap(),
             r#"{"type":"control","event":{"type":"bell"}}"#
         );
-    }
-
-    #[test]
-    fn coalesce_replay_merges_output_runs_between_resizes() {
-        use crate::terminal::scrollback::ScrollbackReplayEvent as Event;
-        use base64::Engine;
-
-        let merged = coalesce_replay(vec![
-            Event::Resize { rows: 24, cols: 80 },
-            Event::Output(bytes::Bytes::from_static(b"one")),
-            Event::Output(bytes::Bytes::from_static(b"two")),
-            Event::Resize {
-                rows: 40,
-                cols: 120,
-            },
-            Event::Output(bytes::Bytes::from_static(b"three")),
-        ]);
-
-        assert_eq!(merged.len(), 4);
-        assert!(matches!(
-            merged[0],
-            SessionReplayEvent::Resize { rows: 24, cols: 80 }
-        ));
-        assert_eq!(
-            base64::engine::general_purpose::STANDARD
-                .decode(replay_data(&merged[1]))
-                .unwrap(),
-            b"onetwo"
-        );
-        assert!(matches!(
-            merged[2],
-            SessionReplayEvent::Resize {
-                rows: 40,
-                cols: 120
-            }
-        ));
-        assert_eq!(
-            base64::engine::general_purpose::STANDARD
-                .decode(replay_data(&merged[3]))
-                .unwrap(),
-            b"three"
-        );
-    }
-
-    #[test]
-    fn coalesce_replay_collapses_a_resize_free_history_into_one_event() {
-        use crate::terminal::scrollback::ScrollbackReplayEvent as Event;
-
-        let merged = coalesce_replay(
-            (0..8)
-                .map(|_| Event::Output(bytes::Bytes::from_static(b"chunk")))
-                .collect(),
-        );
-
-        assert_eq!(merged.len(), 1);
-        assert_eq!(coalesce_replay(Vec::new()).len(), 0);
     }
 
     #[test]
@@ -2521,7 +2251,12 @@ mod handshake_probe {
             return;
         }
         let manager = TerminalManager::new();
-        let profile = default_powershell_profile("p".into(), "proj".into());
+        let mut profile = default_powershell_profile("p".into(), "proj".into());
+        // The managed test environment can put a non-interactive PowerShell
+        // shim ahead of the system shell on PATH. Exercise the real inbox
+        // Windows PowerShell here so a PATH change cannot turn this probe into
+        // a ten-second orphaned child-process timeout.
+        profile.shell_executable = Some("powershell.exe".into());
         let (program, args) = crate::terminal::resolve_local_shell(&profile).unwrap();
         let session_id = "handshake-probe";
         let marker = format!("__PROJECT_TERMINAL_READY_{session_id}__");
@@ -2557,7 +2292,10 @@ mod handshake_probe {
             String::from_utf8_lossy(&subscription.snapshot.bytes).to_string()
         };
 
-        wait_for_interactive_shell(&manager, &profile, session_id).unwrap();
+        if let Err(error) = wait_for_interactive_shell(&manager, &profile, session_id) {
+            manager.close_all();
+            panic!("{error}");
+        }
         let after_handshake = visible_now();
 
         // What the fix is worth: sending the same command a moment later -

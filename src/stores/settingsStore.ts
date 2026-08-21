@@ -62,7 +62,7 @@ export interface GeneralSettings {
   /** Padding between the terminal grid and its container, in pixels. */
   terminalPadding: number;
   /**
-   * Contrast xterm enforces between text and background.
+   * Contrast the terminal renderer enforces between text and background.
    *
    * `0` means derive it from the colour scheme's background, which is the
    * right answer almost always. The override exists because agent output
@@ -71,9 +71,9 @@ export interface GeneralSettings {
    */
   terminalMinimumContrast: number;
   /**
-   * Which renderer to draw with. `auto` starts on the DOM renderer and
-   * upgrades to WebGL when it works, which is what almost everyone wants;
-   * `dom` exists for machines where WebGL is unstable rather than absent.
+   * Which renderer to draw with. `auto` chooses WebGL2 when available and
+   * falls back to Canvas2D; `dom` is the persisted compatibility name for the
+   * software renderer.
    */
   terminalRenderer: "auto" | "webgl" | "dom";
   /**

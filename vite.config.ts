@@ -92,15 +92,6 @@ export default defineConfig(async () => ({
       output: {
         manualChunks: {
           "react-vendor": ["react", "react-dom", "zustand"],
-          "terminal-vendor": [
-            "@xterm/xterm",
-            "@xterm/addon-fit",
-            "@xterm/addon-image",
-            "@xterm/addon-search",
-            "@xterm/addon-unicode-graphemes",
-            "@xterm/addon-web-links",
-          ],
-          "terminal-webgl": ["@xterm/addon-webgl"],
           "ui-vendor": [
             "@radix-ui/react-dialog",
             "@radix-ui/react-dropdown-menu",

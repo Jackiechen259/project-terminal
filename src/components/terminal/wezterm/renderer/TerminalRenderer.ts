@@ -41,11 +41,7 @@ export interface TerminalFontOptions {
 
 export type TerminalCursorStyle = "block" | "bar" | "underline";
 export type TerminalCursorInactiveStyle =
-  | "outline"
-  | "block"
-  | "bar"
-  | "underline"
-  | "none";
+  "outline" | "block" | "bar" | "underline" | "none";
 
 export interface TerminalSelectionPoint {
   stableRow: number;
