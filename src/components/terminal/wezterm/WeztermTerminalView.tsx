@@ -265,17 +265,24 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
   const copySelection = useCallback(async () => {
     const current = selectionRef.current;
     if (!current) return;
-    const text = await terminalService.selectionText(
-      sessionId,
-      {
-        stableRow: current.anchor.stableRow,
-        column: current.anchor.column,
-      },
-      {
-        stableRow: current.focus.stableRow,
-        column: current.focus.column,
-      },
-    );
+    let text: string;
+    try {
+      text = await terminalService.selectionText(
+        sessionId,
+        {
+          stableRow: current.anchor.stableRow,
+          column: current.anchor.column,
+        },
+        {
+          stableRow: current.focus.stableRow,
+          column: current.focus.column,
+        },
+      );
+    } catch {
+      // Copy can race an explicit session close; there is no user-visible
+      // action left to perform once the authoritative model is gone.
+      return;
+    }
     if (text) await navigator.clipboard.writeText(text);
     updateSelection(null);
     focusInput();
