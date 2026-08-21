@@ -1,8 +1,9 @@
 //! Terminal manager: holds all live sessions keyed by session id.
 //!
-//! Phase 3 wires local shells. The manager is process-wide state shared via
-//! Tauri's `manage()`. Closing a session kills the child process so it does
-//! not leak when the user closes the tab or quits the app.
+//! The manager owns all local, WSL, and interactive SSH sessions. It is
+//! process-wide state shared via Tauri's `manage()`. Closing a session kills
+//! the child process so it does not leak when the user closes the tab or quits
+//! the app.
 //!
 //! The sessions map lives behind an `Arc<RwLock<...>>` so independent
 //! lookups can proceed concurrently while the exit handler's `clone_handle()`

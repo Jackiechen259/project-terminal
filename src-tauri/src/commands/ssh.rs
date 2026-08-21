@@ -5,8 +5,9 @@
 //! `validate_ssh_connection`, `test_ssh_connection`, `detect_ssh_client`,
 //! `read_ssh_host_fingerprint`.
 //!
-//! Phase 5 also provides OpenSSH discovery and a bounded non-interactive
-//! connection test. Interactive terminals remain Phase 6 work.
+//! Phase 5 provides OpenSSH discovery and bounded non-interactive connection
+//! tests; interactive SSH sessions are launched by the terminal commands with
+//! the same portable-pty/model boundary as local sessions.
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -284,8 +285,8 @@ pub fn test_ssh_connection_inner(state: &AppState, id: &str) -> AppResult<String
         .spawn()
         .map_err(|error| AppError::SshConnectionFailed(error.to_string()))?;
     // A connection test must not leave the UI waiting for an unreachable host
-    // forever. Interactive sessions use the saved timeout in Phase 6; the
-    // diagnostic probe is deliberately capped at 30 seconds.
+    // forever. Interactive PTY sessions use OpenSSH's configured keepalive;
+    // this diagnostic probe is deliberately capped at 30 seconds.
     let timeout = Duration::from_secs(u64::from(connection.connect_timeout_seconds.min(30)) + 2);
     let deadline = Instant::now() + timeout;
     loop {

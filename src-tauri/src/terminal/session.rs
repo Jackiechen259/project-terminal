@@ -1,9 +1,8 @@
 //! Terminal session: owns one PTY plus a reader thread, bounded scrollback,
 //! and a Rust-owned render/control stream.
 //!
-//! Phase 3 supports local shells only. SSH (`ssh.exe`) sessions arrive in
-//! Phase 6. The session intentionally has no knowledge of profiles or
-//! projects - the manager constructs it from resolved config.
+//! The session intentionally has no knowledge of profiles or projects - the
+//! manager constructs it from resolved local, WSL, or SSH configuration.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};

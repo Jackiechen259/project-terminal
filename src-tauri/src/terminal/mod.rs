@@ -1,8 +1,8 @@
-//! Terminal module: PTY sessions, manager, shell escaping.
+//! Terminal module: PTY sessions, manager, shell escaping, and the
+//! portable-pty boundary shared by local, WSL, and interactive SSH sessions.
 //!
-//! Phase 3 supports local PowerShell/CMD/custom-shell sessions. SSH
-//! (`ssh.exe`) sessions arrive in Phase 6; environment initialization
-//! (Conda/venv/Poetry/uv) arrives in Phase 3.6/3.7.
+//! Environment initialization (Conda/venv/Poetry/uv) is resolved before local
+//! and remote shells become ready.
 
 pub mod conda;
 pub mod escaping;

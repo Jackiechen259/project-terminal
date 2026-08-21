@@ -1,5 +1,6 @@
 //! SSH module: connection configuration, client discovery, and safe argv
-//! construction. Interactive SSH sessions are intentionally added in Phase 6.
+//! construction. Interactive sessions use the same portable-pty and
+//! wezterm-term path as local shells.
 
 pub mod client;
 pub mod command_builder;

@@ -757,12 +757,10 @@ fn execute_startup_commands(
         }
     }
 
-    // Per plan Â§22 (Wait until interactive shell is available): portable-pty
-    // buffers writes until the shell reads them. A true prompt-sync handshake
-    // (waiting for the shell's PS1 or native ready marker) is a complex
-    // feature that we defer out of MVP scope. We write the commands to the PTY
-    // immediately, which works for fast-starting shells but races heavy
-    // initializations.
+    // The readiness handshake has completed for local shells before this
+    // function runs. WSL startup is intentionally buffered until its shell
+    // accepts input; SSH startup is embedded in the remote command because
+    // authentication and host-key prompts must remain visible in the PTY.
     for cmd in &profile.startup_commands {
         let line = shell_command_line(profile.shell_type, cmd);
         if let Err(e) = manager.write(session_id, line.as_bytes()) {

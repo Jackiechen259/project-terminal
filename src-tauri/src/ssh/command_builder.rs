@@ -11,7 +11,7 @@ pub struct SshCommand {
 }
 
 #[cfg(test)]
-/// Build the arguments used by a future interactive SSH terminal.
+/// Build the arguments used by an interactive SSH terminal.
 pub fn build_ssh_argv(connection: &SshConnection) -> SshCommand {
     build_ssh_argv_with_remote_command(connection, None)
 }
