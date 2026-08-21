@@ -291,6 +291,7 @@ src-tauri/target/release/bundle/
 | `pnpm format` | 使用 Prettier 格式化前端代码 |
 | `pnpm format:check` | 检查前端代码格式 |
 | `pnpm bump` | 自动升级并同步项目版本号 (package.json / Tauri 配置) |
+| `pwsh -NoLogo -NoProfile -File scripts/terminal-gui-performance.ps1 -Counts 1,5,10` | 在 Windows 可见 GUI 中运行真实 PTY 的 active/background 性能矩阵（受限 WebView2 环境需提升权限） |
 
 Rust 代码检查与测试：
 

@@ -186,6 +186,24 @@ sample, the process plus its WebView2 child used approximately 184.1 MiB and
 consumed 0.016 CPU seconds. This validates startup/window stability and idle
 resource behavior only; it is not the active/background terminal matrix.
 
+The repeatable GUI matrix at `scripts/terminal-gui-performance.ps1` then
+created real PTY sessions through the visible Tauri UI with bundled `pwsh`,
+kept the final tab active, and verified one canvas/input attachment while the
+remaining sessions were background models. Each row below uses a 10-second
+idle sample; CPU is reported as a percentage of one logical core and memory is
+the complete Tauri + WebView2 + PTY process tree:
+
+| sessions | shell processes | canvas/input attachments | CPU seconds | CPU % of one core | working set |
+| -------- | --------------- | ------------------------ | ----------- | ----------------- | ----------- |
+| 1        | 1               | 1 / 1                    | 0.219       | 2.19%             | 703.8 MiB  |
+| 5        | 5               | 1 / 1                    | 0.797       | 7.97%             | 1,181.7 MiB|
+| 10       | 10              | 1 / 1                    | 1.141       | 11.41%            | 1,737.1 MiB|
+
+All three cases exited through the application quit flow and returned
+`CleanExit=true`. This completes the current idle active/background matrix;
+historical xterm/WebGL comparison, active output throughput, input latency,
+split-pane, and rapid-resize measurements remain separate acceptance items.
+
 The formal Windows release build was rerun with the Tauri `custom-protocol`
 feature on 2026-08-22. `pnpm tauri build --bundles nsis --no-sign` completed
 and produced the current exe and NSIS installer. A normal elevated
@@ -212,11 +230,11 @@ Rust-owned search path.
 
 ## Remaining acceptance work
 
-- Collect the Windows GUI performance matrix above against the historical
-  xterm/WebGL baseline in an interactive Tauri desktop session, including
-  active/background sessions and real PTY output. The non-elevated managed
-  desktop session still fails WebView2 creation with `0x800700AA` (resource in
-  use), while the elevated smoke probe validates only startup and idle.
+- Compare the measured GUI matrix against the historical xterm/WebGL baseline
+  and add active large-output throughput, input latency, four-pane rendering,
+  and rapid-resize samples. The non-elevated managed desktop session still
+  fails WebView2 creation with `0x800700AA` (resource in use); the matrix was
+  collected in the elevated interactive session.
 - Run a signed release build when TAURI_SIGNING_PRIVATE_KEY is available.
 - Keep the xterm terminology in this document only where it identifies the
   historical baseline or the required comparison.
