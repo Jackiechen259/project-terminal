@@ -62,6 +62,11 @@ pub trait TerminalEngine: Send {
     /// and send it to the PTY writer.
     fn key_down(&mut self, event: &TerminalKeyEvent) -> Result<(), String>;
 
+    /// Encode printable text through the model's keyboard path. This keeps
+    /// IME/composition text out of the browser's raw PTY writer while leaving
+    /// the event itself free of browser-specific escape sequences.
+    fn text_input(&mut self, text: &str) -> Result<(), String>;
+
     /// Encode a mouse event after the model has interpreted its current
     /// mouse-reporting mode.
     fn mouse_event(&mut self, event: &TerminalMouseEvent) -> Result<(), String>;

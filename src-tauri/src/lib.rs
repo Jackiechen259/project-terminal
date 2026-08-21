@@ -255,6 +255,7 @@ pub fn run() {
                 commands::terminal::write_terminal,
                 commands::terminal::write_terminal_binary,
                 commands::terminal::terminal_key_down,
+                commands::terminal::terminal_text_input,
                 commands::terminal::terminal_mouse_event,
                 commands::terminal::terminal_paste,
                 commands::terminal::terminal_bracketed_paste_enabled,

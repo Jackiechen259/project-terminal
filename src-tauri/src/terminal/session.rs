@@ -611,6 +611,13 @@ impl TerminalSession {
             .map_err(AppError::TerminalInputFailed)
     }
 
+    pub fn text_input(&self, text: &str) -> AppResult<()> {
+        self.terminal_engine
+            .lock()
+            .text_input(text)
+            .map_err(AppError::TerminalInputFailed)
+    }
+
     pub fn mouse_event(&self, event: &TerminalMouseEvent) -> AppResult<()> {
         self.terminal_engine
             .lock()

@@ -93,13 +93,15 @@ Implemented in this checkpoint:
 
 - Rust-owned VT parsing, screen, alternate screen, scrollback, cursor,
   hyperlinks, ANSI attributes, images, keyboard/mouse encoding, paste mode,
-  OSC title/cwd, and the minimal OSC 133 command-finished side channel.
+  semantic text/IME input, OSC title/cwd, and the minimal OSC 133
+  command-finished side channel.
 - Stable-row viewport requests, Rust-owned search results, dirty-row frames,
   full-snapshot recovery, and renderer attachment independent of PTY lifetime.
 - Renderer attachments use a status-only lifecycle channel; they do not
   subscribe to the legacy raw-output broadcast while rendering.
 - Canvas2D text/attribute/cursor/selection rendering with DPR-aware metrics,
-  image cache loading, and frame coalescing.
+  image cache loading, plain-link detection, minimum-contrast handling, and
+  frame coalescing.
 
 The following are intentionally still open: WebGL renderer, remote terminal
 protocol migration, full viewport virtualization, performance measurements,
@@ -109,8 +111,11 @@ Current deterministic checks:
 
 ```text
 Frontend: tsc -b, ESLint, CanvasRenderer tests, and the full Vitest suite pass.
-Rust: the full 316-test suite passes, including the PowerShell handshake probe,
-live `cmd.exe` renderer attachment, status delivery, and background-model tests.
+Rust: 316 standard tests passed in the latest run, including live `cmd.exe`
+renderer attachment, status delivery, background-model, and semantic text
+input tests. The existing real PowerShell handshake probe timed out in that
+run (it passed in an earlier run); the 100MB stress fixture is intentionally
+ignored in the standard suite and requires a separate profiling run.
 ```
 
 ### Runtime performance

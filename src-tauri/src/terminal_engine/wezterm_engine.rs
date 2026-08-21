@@ -2,6 +2,7 @@ use std::collections::{HashSet, VecDeque};
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 
+use wezterm_term::input::{KeyCode, KeyModifiers};
 use wezterm_term::{Alert, AlertHandler, Terminal, TerminalConfiguration, TerminalSize};
 
 use super::config::WeztermTerminalConfig;
@@ -422,6 +423,15 @@ impl TerminalEngine for WeztermTerminalEngine {
             .map_err(|error| error.to_string())
     }
 
+    fn text_input(&mut self, text: &str) -> Result<(), String> {
+        for character in text.chars() {
+            self.terminal
+                .key_down(KeyCode::Char(character), KeyModifiers::NONE)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
     fn mouse_event(&mut self, event: &TerminalMouseEvent) -> Result<(), String> {
         self.terminal
             .mouse_event(event.to_wezterm())
@@ -592,7 +602,7 @@ fn rotate_backward(matches: &mut [TerminalSearchMatch], start: TerminalSearchPos
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal_engine::{RenderColor, TerminalEngine};
+    use crate::terminal_engine::{RenderColor, TerminalEngine, DEFAULT_SCROLLBACK_LINES};
 
     #[derive(Clone)]
     struct CaptureWriter {
@@ -667,6 +677,18 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
         Vec::new()
+    }
+
+    fn wait_for_output_len(bytes: &Arc<Mutex<Vec<u8>>>, length: usize) -> Vec<u8> {
+        let mut output = Vec::new();
+        for _ in 0..1_000 {
+            output.extend(take_output(bytes));
+            if output.len() >= length {
+                return output;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        output
     }
 
     fn key_event(key: &str) -> TerminalKeyEvent {
@@ -811,6 +833,17 @@ mod tests {
     }
 
     #[test]
+    fn sends_composed_text_through_the_model_keyboard_path() {
+        let (mut engine, output) = capture_engine();
+        let _ = engine.take_render_frame();
+
+        engine.text_input("A界🙂e\u{301}").unwrap();
+
+        let expected = "A界🙂e\u{301}".as_bytes();
+        assert_eq!(wait_for_output_len(&output, expected.len()), expected);
+    }
+
+    #[test]
     fn encodes_sgr_mouse_reporting_and_exposes_the_active_mode() {
         let (mut engine, output) = capture_engine();
         let _ = engine.take_render_frame();
@@ -849,6 +882,35 @@ mod tests {
         engine.feed(b"\x1b[?1049l");
         let primary = engine.take_render_frame().expect("restored frame");
         assert!(!primary.alternate_screen);
+    }
+
+    #[test]
+    #[ignore = "large-output stress test; run with cargo test -- --ignored"]
+    fn bounds_scrollback_after_one_hundred_megabytes_of_output() {
+        let mut engine = engine();
+        let _ = engine.take_render_frame();
+
+        let line = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\r\n";
+        let mut chunk = Vec::with_capacity(16 * 1024);
+        while chunk.len() < 16 * 1024 {
+            chunk.extend_from_slice(line);
+        }
+        let repeats = (100 * 1024 * 1024 / chunk.len()).max(1);
+        for _ in 0..repeats {
+            engine.feed(&chunk);
+        }
+        engine.feed(b"PT_100MB_LAST_LINE\r\n");
+
+        let frame = engine.take_render_frame().expect("large output frame");
+        assert!(frame.scrollback_length <= DEFAULT_SCROLLBACK_LINES);
+        assert!(!engine
+            .search(&TerminalSearchQuery {
+                query: "PT_100MB_LAST_LINE".into(),
+                case_sensitive: true,
+                direction: TerminalSearchDirection::Forward,
+                start: None,
+            })
+            .is_empty());
     }
 
     #[test]

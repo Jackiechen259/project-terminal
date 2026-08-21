@@ -157,4 +157,19 @@ describe("CanvasRenderer", () => {
     ).toBe("bc");
     renderer.dispose();
   });
+
+  it("detects plain web links without a separate DOM link layer", () => {
+    const renderer = new CanvasRenderer();
+    const canvas = document.createElement("canvas");
+    renderer.mount(canvas);
+    renderer.resize(80, 34, 2, 4);
+    renderer.render(frame([row(0, "界 https://example.com!")], true));
+
+    const [, callback] = [...callbacks.entries()][0];
+    callbacks.clear();
+    callback(16);
+
+    expect(renderer.linkAtPoint(24, 8)).toBe("https://example.com");
+    renderer.dispose();
+  });
 });

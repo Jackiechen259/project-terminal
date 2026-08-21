@@ -7,6 +7,7 @@ import type {
 export interface TerminalRendererTheme {
   background: string;
   foreground: string;
+  minimumContrast?: number;
   cursor?: string;
   cursorAccent?: string;
   selectionBackground?: string;

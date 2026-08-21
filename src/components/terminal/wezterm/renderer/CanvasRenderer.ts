@@ -83,6 +83,94 @@ function cssColor(
   return themed ?? xterm256(color.value);
 }
 
+type Rgb = [number, number, number];
+
+function parseRgb(color: string): Rgb | null {
+  const hex = color.match(/^#([0-9a-f]{6})$/iu);
+  if (hex) {
+    return [
+      parseInt(hex[1].slice(0, 2), 16),
+      parseInt(hex[1].slice(2, 4), 16),
+      parseInt(hex[1].slice(4, 6), 16),
+    ];
+  }
+  const rgb = color.match(
+    /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*[\d.]+)?\s*\)$/iu,
+  );
+  return rgb
+    ? [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])]
+    : null;
+}
+
+function luminance([red, green, blue]: Rgb) {
+  const channel = (value: number) => {
+    const normalized = value / 255;
+    return normalized <= 0.03928
+      ? normalized / 12.92
+      : ((normalized + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue);
+}
+
+function contrastRatio(foreground: Rgb, background: Rgb) {
+  const foregroundLuminance = luminance(foreground);
+  const backgroundLuminance = luminance(background);
+  const lighter = Math.max(foregroundLuminance, backgroundLuminance);
+  const darker = Math.min(foregroundLuminance, backgroundLuminance);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+function mix(from: Rgb, to: Rgb, amount: number): Rgb {
+  return from.map((channel, index) =>
+    Math.round(channel + (to[index] - channel) * amount),
+  ) as Rgb;
+}
+
+function rgbCss([red, green, blue]: Rgb) {
+  return `rgb(${red}, ${green}, ${blue})`;
+}
+
+/** Keep the user-facing minimum-contrast setting active for Canvas2D too. */
+function ensureContrast(
+  foreground: string,
+  background: string,
+  minimumContrast = 1,
+) {
+  if (minimumContrast <= 1) return foreground;
+  const foregroundRgb = parseRgb(foreground);
+  const backgroundRgb = parseRgb(background);
+  if (!foregroundRgb || !backgroundRgb) return foreground;
+  if (contrastRatio(foregroundRgb, backgroundRgb) >= minimumContrast) {
+    return foreground;
+  }
+
+  const candidates: Rgb[] = [
+    [0, 0, 0],
+    [255, 255, 255],
+  ];
+  const target = candidates.reduce((best, candidate) =>
+    contrastRatio(candidate, backgroundRgb) >
+    contrastRatio(best, backgroundRgb)
+      ? candidate
+      : best,
+  );
+  if (contrastRatio(target, backgroundRgb) < minimumContrast) {
+    return rgbCss(target);
+  }
+
+  let low = 0;
+  let high = 1;
+  for (let iteration = 0; iteration < 12; iteration++) {
+    const midpoint = (low + high) / 2;
+    if (contrastRatio(mix(foregroundRgb, target, midpoint), backgroundRgb) >= minimumContrast) {
+      high = midpoint;
+    } else {
+      low = midpoint;
+    }
+  }
+  return rgbCss(mix(foregroundRgb, target, high));
+}
+
 function fontFor(cell: TerminalRenderCell, font: TerminalFontOptions) {
   const style = cell.italic ? "italic " : "";
   const weight = cell.intensity === "bold" ? font.weightBold : font.weight;
@@ -292,17 +380,12 @@ export class CanvasRenderer implements TerminalRenderer {
         point.column >= candidate.column &&
         point.column < candidate.column + Math.max(1, candidate.width),
     );
-    return cell?.hyperlink ?? null;
+    if (cell?.hyperlink) return cell.hyperlink;
+    return row ? plainUrlAtColumn(row, point.column) : null;
   }
 
   rowText(row: TerminalRenderRow) {
-    let text = "";
-    for (const cell of row.cells) {
-      while ([...text].length < cell.column) text += " ";
-      text += cell.text || " ";
-      if (cell.width > 1) text += " ".repeat(cell.width - 1);
-    }
-    return text;
+    return rowTextWithColumns(row).text;
   }
 
   dispose() {
@@ -391,6 +474,12 @@ export class CanvasRenderer implements TerminalRenderer {
     } else if (this.cellIsSearchMatched(stableRow, cell)) {
       background = this.theme.yellow ?? "#a68b00";
       foreground = this.theme.background;
+    } else {
+      foreground = ensureContrast(
+        foreground,
+        background,
+        this.theme.minimumContrast,
+      );
     }
 
     context.fillStyle = background;
@@ -410,6 +499,7 @@ export class CanvasRenderer implements TerminalRenderer {
       this.cellHeight,
       -1,
     );
+    context.globalAlpha = cell.intensity === "half" ? 0.5 : 1;
     context.font = fontFor(cell, this.font);
     context.fillStyle = foreground;
     context.textBaseline = "alphabetic";
@@ -448,6 +538,7 @@ export class CanvasRenderer implements TerminalRenderer {
         context.stroke();
       }
     }
+    context.globalAlpha = 1;
     this.paintImages(context, cell.images, x, y, cellWidth, this.cellHeight, 1);
     context.restore();
   }
@@ -705,4 +796,56 @@ function textForColumns(
     text += value;
   }
   return text;
+}
+
+const PLAIN_URL = /https?:\/\/[^\s<>'"`]+/giu;
+const TRAILING_URL_PUNCTUATION = /[.,!?;:)\]}]+$/u;
+
+function plainUrlAtColumn(row: TerminalRenderRow, column: number) {
+  const { text, columns } = rowTextWithColumns(row);
+  for (const match of text.matchAll(PLAIN_URL)) {
+    const raw = match[0];
+    const url = raw.replace(TRAILING_URL_PUNCTUATION, "");
+    const start = match.index ?? 0;
+    const startColumn = columns[start];
+    const lastUrlColumn = columns[start + url.length - 1];
+    const endColumn = lastUrlColumn === undefined ? 0 : lastUrlColumn + 1;
+    if (
+      url &&
+      startColumn !== undefined &&
+      column >= startColumn &&
+      column < endColumn
+    ) {
+      return url;
+    }
+  }
+  return null;
+}
+
+function rowTextWithColumns(row: TerminalRenderRow) {
+  let text = "";
+  let terminalColumn = 0;
+  const columns: number[] = [];
+  for (const cell of row.cells) {
+    while (terminalColumn < cell.column) {
+      text += " ";
+      columns.push(terminalColumn);
+      terminalColumn += 1;
+    }
+    const value = cell.text || " ";
+    for (const character of value) {
+      text += character;
+      for (let offset = 0; offset < character.length; offset += 1) {
+        columns.push(cell.column);
+      }
+    }
+    const width = Math.max(1, cell.width);
+    for (let offset = 1; offset < width; offset += 1) {
+      // Wide cells occupy one extra terminal column after their grapheme.
+      text += " ";
+      columns.push(cell.column + offset);
+    }
+    terminalColumn = cell.column + width;
+  }
+  return { text, columns };
 }

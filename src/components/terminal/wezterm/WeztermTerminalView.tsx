@@ -201,13 +201,16 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       ).theme,
     [colorSchemeId, importedSchemes, terminalColorScheme, theme],
   );
+  const resolvedContrast =
+    typography.minimumContrast || minimumContrastFor(palette);
   const rendererTheme = useMemo<TerminalRendererTheme>(
     () => ({
       ...palette,
       background: palette.background ?? "#000000",
       foreground: palette.foreground ?? "#ffffff",
+      minimumContrast: resolvedContrast,
     }),
-    [palette],
+    [palette, resolvedContrast],
   );
   const font = useMemo(
     () => ({
@@ -220,9 +223,6 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     }),
     [terminalFontFamily, terminalFontSize, typography],
   );
-  const resolvedContrast =
-    typography.minimumContrast || minimumContrastFor(palette);
-
   const updateSelection = useCallback((next: TerminalSelection | null) => {
     selectionRef.current = next;
     setSelection(next);
@@ -238,7 +238,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     (text: string) => {
       if (!text) return;
       if (inputRef.current) inputRef.current.value = "";
-      void terminalService.write(sessionId, text).catch(() => {
+      void terminalService.textInput(sessionId, text).catch(() => {
         // The status channel owns lifecycle errors; input races during close
         // are expected and should not create an unhandled rejection.
       });

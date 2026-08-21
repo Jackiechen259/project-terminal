@@ -903,6 +903,18 @@ pub fn terminal_key_down(
     terminal.manager.key_down(&session_id, &event)
 }
 
+/// Semantic printable/composition input for the wezterm renderer. The
+/// renderer sends text, not pre-encoded escape sequences; wezterm-term owns
+/// the keyboard output path and the PTY writer remains in Rust.
+#[tauri::command]
+pub fn terminal_text_input(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+    text: String,
+) -> AppResult<()> {
+    terminal.manager.text_input(&session_id, &text)
+}
+
 #[tauri::command]
 pub fn terminal_mouse_event(
     terminal: State<'_, TerminalState>,

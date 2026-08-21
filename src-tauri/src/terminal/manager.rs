@@ -105,6 +105,10 @@ impl TerminalManager {
         self.get(session_id)?.key_down(event)
     }
 
+    pub fn text_input(&self, session_id: &str, text: &str) -> AppResult<()> {
+        self.get(session_id)?.text_input(text)
+    }
+
     pub fn mouse_event(&self, session_id: &str, event: &TerminalMouseEvent) -> AppResult<()> {
         self.get(session_id)?.mouse_event(event)
     }
