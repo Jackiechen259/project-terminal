@@ -260,6 +260,18 @@ pnpm dev
 
 Frontend-only mode is useful for UI development, but PTY, filesystem persistence, SSH, and other native Tauri features require the desktop application.
 
+### Terminal engine migration
+
+The development-only Rust/WezTerm terminal path can be exercised with:
+
+```powershell
+$env:VITE_TERMINAL_ENGINE = "wezterm"
+pnpm dev
+```
+
+The flag is temporary while renderer compatibility and performance are being
+verified; the default build continues to use the existing xterm path.
+
 ### Build installers
 
 ```powershell
@@ -371,6 +383,9 @@ The repository must contain the Actions secret `TAURI_SIGNING_PRIVATE_KEY`. The 
 ## License
 
 Licensed under the [Apache License 2.0](./LICENSE).
+
+Direct WezTerm dependency notices and the pinned revision are recorded in
+[`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md).
 
 ### Bundled fonts
 

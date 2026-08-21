@@ -257,6 +257,17 @@ pnpm dev
 
 纯前端模式适用于 UI 开发，但 PTY、本地文件持久化、SSH 等 Tauri 原生能力需要运行完整的桌面应用。
 
+### Terminal Engine 迁移路径
+
+可以通过以下开发环境变量体验 Rust/WezTerm 终端路径：
+
+```powershell
+$env:VITE_TERMINAL_ENGINE = "wezterm"
+pnpm dev
+```
+
+该开关只用于迁移期间的兼容性与性能验证；默认构建仍使用现有 xterm 路径。
+
 ### 构建安装包
 
 ```powershell
@@ -369,3 +380,6 @@ git push origin v0.3.0
 ## 开源协议
 
 基于 [Apache License 2.0](./LICENSE) 协议开源。
+
+WezTerm 直接依赖、许可证及固定 revision 记录在
+[`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md) 中。
