@@ -1,6 +1,12 @@
 import { whenTerminalFontReady } from "@/lib/terminalFonts";
 
 let terminalViewModule: Promise<typeof import("./TerminalView")> | undefined;
+let weztermTerminalViewModule:
+  Promise<typeof import("./wezterm/WeztermTerminalView")> | undefined;
+
+export function isWeztermTerminalEngineEnabled() {
+  return import.meta.env.VITE_TERMINAL_ENGINE === "wezterm";
+}
 
 export function loadTerminalView() {
   // The font has to be loaded before the first `new Terminal()`, not merely
@@ -17,8 +23,20 @@ export function loadTerminalView() {
 
 /** Overlap xterm's code download with backend PTY process creation. */
 export function preloadTerminalView() {
-  void loadTerminalView().catch(() => {
+  const load = isWeztermTerminalEngineEnabled()
+    ? loadWeztermTerminalView()
+    : loadTerminalView();
+  void load.catch(() => {
     // Let React.lazy retry if an early speculative fetch was interrupted.
     terminalViewModule = undefined;
+    weztermTerminalViewModule = undefined;
   });
+}
+
+export function loadWeztermTerminalView() {
+  weztermTerminalViewModule ??= Promise.all([
+    import("./wezterm/WeztermTerminalView"),
+    whenTerminalFontReady(),
+  ]).then(([module]) => module);
+  return weztermTerminalViewModule;
 }

@@ -6,11 +6,22 @@ import { cn } from "@/lib/utils";
 import { useProfileStore } from "@/stores/profileStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 
-import { loadTerminalView } from "./terminalViewLoader";
+import {
+  loadTerminalView,
+  loadWeztermTerminalView,
+  isWeztermTerminalEngineEnabled,
+} from "./terminalViewLoader";
 
-const LazyTerminalView = lazy(() =>
-  loadTerminalView().then((module) => ({ default: module.TerminalView })),
-);
+const LazyTerminalView = lazy(() => {
+  if (isWeztermTerminalEngineEnabled()) {
+    return loadWeztermTerminalView().then((module) => ({
+      default: module.WeztermTerminalView,
+    }));
+  }
+  return loadTerminalView().then((module) => ({
+    default: module.TerminalView,
+  }));
+});
 
 interface TerminalPaneProps {
   tabId: string;
