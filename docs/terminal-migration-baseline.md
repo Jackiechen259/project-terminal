@@ -107,7 +107,8 @@ Implemented in this checkpoint:
   are deduplicated across grid and pixel dimensions.
 - Canvas2D text/attribute/cursor/selection rendering with DPR-aware metrics,
   image cache loading, plain-link detection, minimum-contrast handling,
-  configurable cursor styles/blink, and frame coalescing.
+  configurable cursor styles/blink, frame coalescing, and a transient visual
+  bell for the typed bell control event.
 
 The following are intentionally still open: WebGL renderer, remote terminal
 protocol migration, full viewport virtualization, performance measurements,

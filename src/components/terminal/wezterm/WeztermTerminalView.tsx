@@ -142,6 +142,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
   const compositionRef = useRef(false);
   const searchOpenRef = useRef(false);
   const reportedExitRef = useRef(false);
+  const bellTimerRef = useRef<number | null>(null);
   const onExitRef = useRef(onExit);
   const onTitleChangeRef = useRef(onTitleChange);
   const onCwdChangeRef = useRef(onCwdChange);
@@ -158,6 +159,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searchIndex, setSearchIndex] = useState(0);
+  const [bellVisible, setBellVisible] = useState(false);
   const searchRequestRef = useRef(0);
   const [, setSelection] = useState<TerminalSelection | null>(null);
   const { t } = useTranslation();
@@ -166,6 +168,17 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
   onTitleChangeRef.current = onTitleChange;
   onCwdChangeRef.current = onCwdChange;
   onCommandFinishedRef.current = onCommandFinished;
+
+  const pulseBell = useCallback(() => {
+    setBellVisible(true);
+    if (bellTimerRef.current !== null) {
+      window.clearTimeout(bellTimerRef.current);
+    }
+    bellTimerRef.current = window.setTimeout(() => {
+      bellTimerRef.current = null;
+      setBellVisible(false);
+    }, 160);
+  }, []);
 
   const typography = useSettingsStore(
     useShallow((state) => ({
@@ -720,7 +733,9 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
         return;
       }
       if (message.type === "control") {
-        if (message.event.type === "titleChanged") {
+        if (message.event.type === "bell") {
+          pulseBell();
+        } else if (message.event.type === "titleChanged") {
           const title = resolveTerminalTabTitle(
             message.event.title,
             defaultTitle,
@@ -779,6 +794,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
   }, [
     active,
     defaultTitle,
+    pulseBell,
     refreshSearch,
     resizeSurface,
     sessionId,
@@ -795,6 +811,15 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
   useEffect(() => {
     searchOpenRef.current = searchOpen;
   }, [searchOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (bellTimerRef.current !== null) {
+        window.clearTimeout(bellTimerRef.current);
+        bellTimerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     setSearchIndex(0);
@@ -868,6 +893,10 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       style={{
         padding: `${typography.padding}px`,
         background: rendererTheme.background,
+        boxShadow: bellVisible
+          ? "inset 0 0 0 2px rgba(250, 204, 21, 0.78)"
+          : undefined,
+        transition: "box-shadow 160ms ease-out",
         // Read the setting so the renderer and the xterm path keep the same
         // contrast contract while the Canvas implementation is independent.
         color: resolvedContrast > 1 ? rendererTheme.foreground : undefined,

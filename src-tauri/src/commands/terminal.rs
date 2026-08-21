@@ -1457,6 +1457,13 @@ mod tests {
             serde_json::to_string(&DesktopSessionFrame::Lagged).unwrap(),
             r#"{"type":"lagged"}"#
         );
+        assert_eq!(
+            serde_json::to_string(&DesktopRenderFrame::Control {
+                event: TerminalControlEvent::Bell,
+            })
+            .unwrap(),
+            r#"{"type":"control","event":{"type":"bell"}}"#
+        );
     }
 
     #[test]
