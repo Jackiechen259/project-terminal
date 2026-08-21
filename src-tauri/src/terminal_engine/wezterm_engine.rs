@@ -594,6 +594,22 @@ mod tests {
     use super::*;
     use crate::terminal_engine::{RenderColor, TerminalEngine};
 
+    #[derive(Clone)]
+    struct CaptureWriter {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Write for CaptureWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.bytes.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
     struct NoopWriter;
 
     impl Write for NoopWriter {
@@ -618,6 +634,52 @@ mod tests {
             WeztermTerminalConfig::default(),
             Box::new(NoopWriter),
         )
+    }
+
+    fn capture_engine() -> (WeztermTerminalEngine, Arc<Mutex<Vec<u8>>>) {
+        let bytes = Arc::new(Mutex::new(Vec::new()));
+        let engine = WeztermTerminalEngine::new(
+            TerminalSize {
+                rows: 4,
+                cols: 12,
+                pixel_width: 0,
+                pixel_height: 0,
+                dpi: 96,
+            },
+            WeztermTerminalConfig::default(),
+            Box::new(CaptureWriter {
+                bytes: bytes.clone(),
+            }),
+        );
+        (engine, bytes)
+    }
+
+    fn take_output(bytes: &Arc<Mutex<Vec<u8>>>) -> Vec<u8> {
+        std::mem::take(&mut *bytes.lock().unwrap())
+    }
+
+    fn wait_for_output(bytes: &Arc<Mutex<Vec<u8>>>) -> Vec<u8> {
+        for _ in 0..1_000 {
+            let output = take_output(bytes);
+            if !output.is_empty() {
+                return output;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        Vec::new()
+    }
+
+    fn key_event(key: &str) -> TerminalKeyEvent {
+        TerminalKeyEvent {
+            key: key.into(),
+            code: None,
+            location: 0,
+            num_lock: false,
+            shift: false,
+            alt: false,
+            ctrl: false,
+            meta: false,
+        }
     }
 
     #[test]
@@ -698,6 +760,95 @@ mod tests {
                 TerminalControlEvent::CommandFinished { exit_code: Some(7) }
             )
         }));
+    }
+
+    #[test]
+    fn reports_bell_without_mixing_it_into_render_rows() {
+        let mut engine = engine();
+        let _ = engine.take_render_frame();
+        let _ = engine.drain_control_events();
+
+        engine.feed(b"\x07");
+
+        assert!(engine
+            .drain_control_events()
+            .iter()
+            .any(|event| matches!(event, TerminalControlEvent::Bell)));
+        assert!(engine.take_render_frame().is_none());
+    }
+
+    #[test]
+    fn preserves_bracketed_paste_and_de_fangs_embedded_markers() {
+        let (mut engine, output) = capture_engine();
+        let _ = engine.take_render_frame();
+
+        engine.feed(b"\x1b[?2004h");
+        assert!(engine.bracketed_paste_enabled());
+        let _ = take_output(&output);
+
+        engine
+            .send_paste("one\ntwo\x1b[200~ignored\x1b[201~")
+            .unwrap();
+
+        assert_eq!(
+            wait_for_output(&output),
+            b"\x1b[200~one\ntwoignored\x1b[201~"
+        );
+    }
+
+    #[test]
+    fn encodes_application_cursor_keys_in_the_terminal_model() {
+        let (mut engine, output) = capture_engine();
+        let _ = engine.take_render_frame();
+
+        engine.feed(b"\x1b[?1h");
+        let _ = engine.take_render_frame();
+        let _ = take_output(&output);
+
+        engine.key_down(&key_event("ArrowUp")).unwrap();
+
+        assert_eq!(wait_for_output(&output), b"\x1bOA");
+    }
+
+    #[test]
+    fn encodes_sgr_mouse_reporting_and_exposes_the_active_mode() {
+        let (mut engine, output) = capture_engine();
+        let _ = engine.take_render_frame();
+
+        engine.feed(b"\x1b[?1000h\x1b[?1006h");
+        let frame = engine.take_render_frame().expect("mouse mode frame");
+        assert!(frame.mouse_reporting);
+        let _ = take_output(&output);
+
+        engine
+            .mouse_event(&TerminalMouseEvent {
+                kind: super::super::TerminalMouseEventKind::Press,
+                button: super::super::TerminalMouseButton::Left,
+                x: 1,
+                y: 2,
+                x_pixel_offset: 0,
+                y_pixel_offset: 0,
+                shift: false,
+                alt: false,
+                ctrl: false,
+            })
+            .unwrap();
+
+        assert_eq!(wait_for_output(&output), b"\x1b[<0;2;3M");
+    }
+
+    #[test]
+    fn tracks_alternate_screen_as_render_state_and_restores_primary_screen() {
+        let mut engine = engine();
+        let _ = engine.take_render_frame();
+
+        engine.feed(b"primary\x1b[?1049halt");
+        let alternate = engine.take_render_frame().expect("alternate frame");
+        assert!(alternate.alternate_screen);
+
+        engine.feed(b"\x1b[?1049l");
+        let primary = engine.take_render_frame().expect("restored frame");
+        assert!(!primary.alternate_screen);
     }
 
     #[test]

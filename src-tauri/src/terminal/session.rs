@@ -920,6 +920,94 @@ mod tests {
     }
 
     #[test]
+    fn renderer_attachment_receives_model_frames_from_a_live_cmd_session() {
+        let session = TerminalSession::spawn(SessionSpawn {
+            session_id: "render-session".to_string(),
+            project_id: "test-project".to_string(),
+            profile_id: "test-profile".to_string(),
+            workspace_id: None,
+            window_id: None,
+            program: "cmd.exe".to_string(),
+            args: vec!["/Q".to_string()],
+            cwd: None,
+            env: vec![],
+            env_remove: Vec::new(),
+            readiness_marker: None,
+            rows: 8,
+            cols: 40,
+            scrollback_bytes: DEFAULT_SCROLLBACK_BYTES,
+        })
+        .expect("spawn session");
+        let (mut subscription, _status) = session.attach_renderer("render-client".into());
+        session.mark_running();
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut saw_full_snapshot = false;
+        while Instant::now() < deadline {
+            match subscription.frames.try_recv() {
+                Ok(frame) => {
+                    if frame.full_snapshot {
+                        saw_full_snapshot = true;
+                        break;
+                    }
+                }
+                Err(broadcast::error::TryRecvError::Empty) => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(broadcast::error::TryRecvError::Lagged(_)) => {
+                    session.request_render_snapshot();
+                }
+                Err(broadcast::error::TryRecvError::Closed) => break,
+            }
+        }
+        assert!(
+            saw_full_snapshot,
+            "renderer never received its initial frame"
+        );
+
+        session
+            .send_paste("echo PT_RENDER_OK\r\n")
+            .expect("send semantic paste");
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut saw_marker = false;
+        while Instant::now() < deadline {
+            match subscription.frames.try_recv() {
+                Ok(frame) => {
+                    saw_marker |= frame.dirty_rows.iter().any(|row| {
+                        let text = row
+                            .cells
+                            .iter()
+                            .map(|cell| cell.text.as_str())
+                            .collect::<String>();
+                        text.contains("PT_RENDER_OK")
+                    });
+                    if saw_marker {
+                        break;
+                    }
+                }
+                Err(broadcast::error::TryRecvError::Empty) => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(broadcast::error::TryRecvError::Lagged(_)) => {
+                    session.request_render_snapshot();
+                }
+                Err(broadcast::error::TryRecvError::Closed) => break,
+            }
+        }
+
+        assert!(saw_marker, "renderer never received command output");
+        let matches = session.search(&crate::terminal_engine::TerminalSearchQuery {
+            query: "PT_RENDER_OK".into(),
+            case_sensitive: true,
+            direction: crate::terminal_engine::TerminalSearchDirection::Forward,
+            start: None,
+        });
+        assert!(!matches.is_empty(), "model search missed command output");
+        session.close();
+    }
+
+    #[test]
     fn ctrl_c_interrupts_long_running_command() {
         // Â§37 Phase 3 acceptance: Ctrl+C normal. Start `ping 127.0.0.1 -t`
         // (infinite), then send Ctrl+C (\x03) and verify the session is
