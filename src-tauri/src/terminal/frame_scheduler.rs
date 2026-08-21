@@ -140,3 +140,80 @@ fn run_scheduler(engine: Arc<Mutex<WeztermTerminalEngine>>, hub: Arc<TerminalFra
         last_frame_at = Some(Instant::now());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::terminal_engine::{TerminalEngine, WeztermTerminalConfig};
+    use std::io::Write;
+    use std::time::Instant;
+    use wezterm_term::TerminalSize;
+
+    struct NoopWriter;
+
+    impl Write for NoopWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn engine() -> WeztermTerminalEngine {
+        WeztermTerminalEngine::new(
+            TerminalSize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+                dpi: 96,
+            },
+            WeztermTerminalConfig::default(),
+            Box::new(NoopWriter),
+        )
+    }
+
+    #[test]
+    fn coalesces_a_burst_before_paint_into_one_frame() {
+        let model = Arc::new(Mutex::new(engine()));
+        let hub = TerminalFrameHub::new(Arc::clone(&model));
+        let mut subscription = hub.subscribe();
+
+        // Hold the model lock while feeding the burst so the scheduler cannot
+        // observe a partial burst. The production reader releases this same
+        // lock for each read, but all notifications within one frame window
+        // must still collapse to the latest model state.
+        {
+            let mut model = model.lock();
+            for index in 0..100 {
+                model.feed(format!("output-{index:03}\r\n").as_bytes());
+            }
+        }
+        hub.notify();
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut frames = Vec::new();
+        while Instant::now() < deadline && frames.is_empty() {
+            match subscription.frames.try_recv() {
+                Ok(frame) => frames.push(frame),
+                Err(broadcast::error::TryRecvError::Empty) => {
+                    thread::sleep(Duration::from_millis(2));
+                }
+                Err(error) => panic!("frame scheduler failed: {error}"),
+            }
+        }
+        assert_eq!(frames.len(), 1, "initial burst was not painted");
+
+        // Allow one additional frame interval. Since no model state changed,
+        // the scheduler may wake, but it must not publish a second frame.
+        thread::sleep(FRAME_INTERVAL + Duration::from_millis(8));
+        while let Ok(frame) = subscription.frames.try_recv() {
+            frames.push(frame);
+        }
+        assert_eq!(frames.len(), 1, "a no-op scheduler tick emitted a frame");
+
+        hub.shutdown();
+    }
+}
