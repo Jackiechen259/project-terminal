@@ -6,6 +6,7 @@
 
 pub mod conda;
 pub mod escaping;
+pub mod frame_scheduler;
 pub mod initializer;
 pub mod manager;
 pub mod scrollback;
@@ -21,6 +22,7 @@ use crate::error::{AppError, AppResult};
 use crate::profile::EnvironmentType;
 use crate::profile::{ShellType, TerminalProfile};
 use crate::project::ProjectType;
+pub use frame_scheduler::TerminalFrameSubscription;
 pub use initializer::{build_activation_script, build_remote_initialization_commands};
 pub use manager::{SessionInfo, TerminalManager};
 use serde::Serialize;

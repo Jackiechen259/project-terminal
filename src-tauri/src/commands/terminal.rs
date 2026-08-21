@@ -19,6 +19,9 @@ use crate::state::{new_id, AppState};
 use crate::terminal::{
     resolve_local_shell, SessionInfo, SessionSpawn, TerminalEventPayload, TerminalManager,
 };
+use crate::terminal_engine::{
+    RenderFrame, TerminalControlEvent, TerminalKeyEvent, TerminalMouseEvent,
+};
 
 use super::ListResponse;
 
@@ -889,6 +892,61 @@ pub fn write_terminal_binary(
     terminal.manager.write(&session_id, &data)
 }
 
+/// Semantic key path for the wezterm renderer. The backend, not the browser,
+/// applies application-cursor, kitty/CSI-u, and modifier encoding.
+#[tauri::command]
+pub fn terminal_key_down(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+    event: TerminalKeyEvent,
+) -> AppResult<()> {
+    terminal.manager.key_down(&session_id, &event)
+}
+
+#[tauri::command]
+pub fn terminal_mouse_event(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+    event: TerminalMouseEvent,
+) -> AppResult<()> {
+    terminal.manager.mouse_event(&session_id, &event)
+}
+
+#[tauri::command]
+pub fn terminal_paste(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+    text: String,
+) -> AppResult<()> {
+    terminal.manager.send_paste(&session_id, &text)
+}
+
+#[tauri::command]
+pub fn terminal_bracketed_paste_enabled(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+) -> AppResult<bool> {
+    terminal.manager.bracketed_paste_enabled(&session_id)
+}
+
+#[tauri::command]
+pub fn terminal_search(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+    query: crate::terminal_engine::TerminalSearchQuery,
+) -> AppResult<Vec<crate::terminal_engine::TerminalSearchMatch>> {
+    terminal.manager.search(&session_id, &query)
+}
+
+#[tauri::command]
+pub fn terminal_set_viewport(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+    stable_row: i64,
+) -> AppResult<()> {
+    terminal.manager.set_viewport_top(&session_id, stable_row)
+}
+
 #[tauri::command]
 pub fn resize_terminal(
     terminal: State<'_, TerminalState>,
@@ -1137,6 +1195,128 @@ pub fn session_attach(
     });
 
     Ok(attachment)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderSessionAttachment {
+    pub session: SessionInfo,
+}
+
+/// Typed render/control transport for the Rust-owned terminal engine.
+///
+/// Unlike `session_attach`, this command never replays raw PTY bytes to the
+/// frontend. The initial full frame and all subsequent dirty-row frames come
+/// from the session's persistent wezterm-term model.
+#[derive(Debug, Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum DesktopRenderFrame {
+    Frame {
+        frame: RenderFrame,
+    },
+    Control {
+        event: TerminalControlEvent,
+    },
+    Status {
+        status: crate::terminal::session::SessionStatus,
+        exit_code: Option<i32>,
+    },
+    Lagged,
+}
+
+impl DesktopRenderFrame {
+    fn into_body(self) -> Option<InvokeResponseBody> {
+        serde_json::to_string(&self)
+            .ok()
+            .map(InvokeResponseBody::Json)
+    }
+}
+
+/// Attach a custom renderer without attaching to the raw PTY output stream.
+/// The PTY and wezterm-term model continue when this renderer detaches.
+#[tauri::command]
+pub fn session_attach_render(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+    client_id: String,
+    on_frame: Channel<InvokeResponseBody>,
+) -> AppResult<RenderSessionAttachment> {
+    use crate::terminal::TerminalEventPayload;
+    use tokio::sync::broadcast::error::RecvError;
+
+    let (info, subscription, mut status_receiver) = terminal
+        .manager
+        .attach_renderer(&session_id, client_id.clone())?;
+    let session = terminal.manager.get(&session_id)?;
+    let manager = terminal.manager.clone_handle();
+
+    tauri::async_runtime::spawn(async move {
+        let mut frames = subscription.frames;
+        let mut controls = subscription.controls;
+        let mut cancellation = subscription.cancellation;
+        loop {
+            tokio::select! {
+                changed = cancellation.changed() => {
+                    if changed.is_err() || *cancellation.borrow() {
+                        break;
+                    }
+                }
+                frame = frames.recv() => {
+                    let body = match frame {
+                        Ok(frame) => DesktopRenderFrame::Frame { frame: (*frame).clone() }.into_body(),
+                        Err(RecvError::Lagged(_)) => {
+                            session.request_render_snapshot();
+                            DesktopRenderFrame::Lagged.into_body()
+                        }
+                        Err(RecvError::Closed) => break,
+                    };
+                    if let Some(body) = body {
+                        if on_frame.send(body).is_err() {
+                            break;
+                        }
+                    }
+                }
+                event = controls.recv() => {
+                    let body = match event {
+                        Ok(event) => DesktopRenderFrame::Control { event: (*event).clone() }.into_body(),
+                        Err(RecvError::Lagged(_)) => {
+                            session.request_render_snapshot();
+                            DesktopRenderFrame::Lagged.into_body()
+                        }
+                        Err(RecvError::Closed) => break,
+                    };
+                    if let Some(body) = body {
+                        if on_frame.send(body).is_err() {
+                            break;
+                        }
+                    }
+                }
+                event = status_receiver.recv() => {
+                    let body = match event {
+                        Ok(event) => match event.payload {
+                            TerminalEventPayload::Status { status, exit_code } =>
+                                DesktopRenderFrame::Status { status, exit_code }.into_body(),
+                            TerminalEventPayload::Output(_) => None,
+                        },
+                        Err(RecvError::Lagged(_)) => DesktopRenderFrame::Lagged.into_body(),
+                        Err(RecvError::Closed) => break,
+                    };
+                    if let Some(body) = body {
+                        if on_frame.send(body).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        let _ = manager.detach(&session_id, &client_id);
+    });
+
+    Ok(RenderSessionAttachment { session: info })
 }
 
 #[tauri::command]
@@ -1916,10 +2096,7 @@ mod tests {
         };
         let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
 
-        let last_askpass = spawn
-            .env
-            .iter()
-            .rfind(|(k, _)| k == "SSH_ASKPASS");
+        let last_askpass = spawn.env.iter().rfind(|(k, _)| k == "SSH_ASKPASS");
         // No SSH connection here, so the profile value is the only one; the
         // ordering guarantee is what the assertion below pins.
         assert_eq!(

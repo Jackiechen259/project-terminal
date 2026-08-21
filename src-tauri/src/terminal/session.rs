@@ -6,6 +6,7 @@
 //! projects - the manager constructs it from resolved config.
 
 use std::collections::HashMap;
+use std::io::{Read, Write};
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Duration;
@@ -16,7 +17,12 @@ use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, Pt
 use tokio::sync::{broadcast, watch};
 
 use crate::error::{AppError, AppResult};
+use crate::terminal_engine::{
+    TerminalEngine, TerminalKeyEvent, TerminalMouseEvent, WeztermTerminalConfig,
+    WeztermTerminalEngine,
+};
 
+use super::frame_scheduler::{TerminalFrameHub, TerminalFrameSubscription};
 use super::scrollback::{
     OutputRingBuffer, ScrollbackSnapshot, ScrollbackSnapshotFormat, DEFAULT_SCROLLBACK_BYTES,
 };
@@ -148,11 +154,28 @@ pub enum SessionStatus {
 
 struct SessionInner {
     master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn std::io::Write + Send>,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     killer: Option<Box<dyn ChildKiller + Send + Sync>>,
     exit_code: Option<i32>,
     status: SessionStatus,
     closing: bool,
+}
+
+/// Adapter used by wezterm-term for terminal-generated responses.  The
+/// explicit input path and the model's response path share one serialized PTY
+/// writer without sharing the terminal/session locks.
+struct SharedPtyWriter {
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+}
+
+impl Write for SharedPtyWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.writer.lock().write(bytes)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.writer.lock().flush()
+    }
 }
 
 /// Backlog, in broadcast events, above which the reader slows down.
@@ -309,6 +332,8 @@ pub struct TerminalSession {
     inner: Arc<Mutex<SessionInner>>,
     ready_watcher: Arc<Mutex<ReadyWatcher>>,
     event_hub: Arc<Mutex<EventHub>>,
+    terminal_engine: Arc<Mutex<WeztermTerminalEngine>>,
+    frame_hub: Arc<TerminalFrameHub>,
     attachments: Mutex<HashMap<String, watch::Sender<bool>>>,
 }
 
@@ -383,6 +408,27 @@ impl TerminalSession {
             .master
             .take_writer()
             .map_err(|e| AppError::PtyCreationFailed(format!("take_writer: {e}")))?;
+        let shared_writer: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(writer));
+        let terminal_engine = Arc::new(Mutex::new(WeztermTerminalEngine::new(
+            wezterm_term::TerminalSize {
+                rows: spawn.rows as usize,
+                cols: spawn.cols as usize,
+                pixel_width: 0,
+                pixel_height: 0,
+                dpi: 96,
+            },
+            WeztermTerminalConfig {
+                scrollback_lines: crate::terminal_engine::scrollback_lines_for_bytes(
+                    spawn.scrollback_bytes,
+                    spawn.cols,
+                ),
+                ..WeztermTerminalConfig::default()
+            },
+            Box::new(SharedPtyWriter {
+                writer: Arc::clone(&shared_writer),
+            }),
+        )));
+        let frame_hub = TerminalFrameHub::new(Arc::clone(&terminal_engine));
         let master: Box<dyn MasterPty + Send> = pair.master;
         // Drop the slave - we never spawn another process on this PTY.
         drop(pair.slave);
@@ -415,6 +461,8 @@ impl TerminalSession {
         // protocol line, retains every other byte sequence, and broadcasts it.
         // A missing or slow subscriber never blocks this loop.
         let hub_for_reader = Arc::clone(&event_hub);
+        let engine_for_reader = Arc::clone(&terminal_engine);
+        let frame_hub_for_reader = Arc::clone(&frame_hub);
         let sid_for_reader = Arc::clone(&shared_id);
         let watcher_for_reader = ready_watcher.clone();
         thread::spawn(move || {
@@ -431,6 +479,13 @@ impl TerminalSession {
                             Processed::Filtered(filtered) => Bytes::from(filtered),
                         };
                         if !output.is_empty() {
+                            // The Rust terminal model is updated before the
+                            // raw compatibility stream is published.  The
+                            // model remains live even when there are no
+                            // renderer subscribers.
+                            engine_for_reader.lock().feed(&output);
+                            frame_hub_for_reader.notify();
+
                             let backlog = {
                                 let mut hub = hub_for_reader.lock();
                                 hub.scrollback.push(output.clone());
@@ -453,7 +508,7 @@ impl TerminalSession {
 
         let inner = Arc::new(Mutex::new(SessionInner {
             master,
-            writer,
+            writer: shared_writer,
             killer: Some(killer),
             exit_code: None,
             status: SessionStatus::Starting,
@@ -510,6 +565,8 @@ impl TerminalSession {
             inner,
             ready_watcher,
             event_hub,
+            terminal_engine,
+            frame_hub,
             attachments: Mutex::new(HashMap::new()),
         })
     }
@@ -517,10 +574,48 @@ impl TerminalSession {
     /// Write user input bytes to the PTY. The bytes are forwarded as-is -
     /// we never parse or log input.
     pub fn write(&self, data: &[u8]) -> AppResult<()> {
-        let mut guard = self.inner.lock();
-        guard.writer.write_all(data).map_err(AppError::Io)?;
-        guard.writer.flush().map_err(AppError::Io)?;
+        let writer = self.inner.lock().writer.clone();
+        let mut writer = writer.lock();
+        writer.write_all(data).map_err(AppError::Io)?;
+        writer.flush().map_err(AppError::Io)?;
         Ok(())
+    }
+
+    pub fn key_down(&self, event: &TerminalKeyEvent) -> AppResult<()> {
+        self.terminal_engine
+            .lock()
+            .key_down(event)
+            .map_err(AppError::TerminalInputFailed)
+    }
+
+    pub fn mouse_event(&self, event: &TerminalMouseEvent) -> AppResult<()> {
+        self.terminal_engine
+            .lock()
+            .mouse_event(event)
+            .map_err(AppError::TerminalInputFailed)
+    }
+
+    pub fn send_paste(&self, text: &str) -> AppResult<()> {
+        self.terminal_engine
+            .lock()
+            .send_paste(text)
+            .map_err(AppError::TerminalInputFailed)
+    }
+
+    pub fn bracketed_paste_enabled(&self) -> bool {
+        self.terminal_engine.lock().bracketed_paste_enabled()
+    }
+
+    pub fn search(
+        &self,
+        query: &crate::terminal_engine::TerminalSearchQuery,
+    ) -> Vec<crate::terminal_engine::TerminalSearchMatch> {
+        self.terminal_engine.lock().search(query)
+    }
+
+    pub fn set_viewport_top(&self, stable_row: i64) {
+        self.terminal_engine.lock().set_viewport_top(stable_row);
+        self.frame_hub.notify();
     }
 
     /// Wait for a shell-generated marker line before injecting initialization
@@ -589,6 +684,10 @@ impl TerminalSession {
     ) -> AppResult<()> {
         let rows = rows.max(1);
         let cols = cols.max(1);
+        // Serialize the model resize with the ConPTY resize. The reader only
+        // holds the model lock while applying one output chunk, so this keeps
+        // the two dimensions in the same order without a global terminal lock.
+        let mut engine = self.terminal_engine.lock();
         let guard = self.inner.lock();
         // Hold the output hub across the OS resize so reader bytes triggered
         // by SIGWINCH/ConPTY cannot overtake the replay resize marker.
@@ -603,7 +702,48 @@ impl TerminalSession {
             })
             .map_err(|e| AppError::PtyCreationFailed(format!("resize: {e}")))?;
         hub.scrollback.resize(rows, cols);
+        engine.resize(wezterm_term::TerminalSize {
+            rows: rows as usize,
+            cols: cols as usize,
+            pixel_width: pixel_width as usize,
+            pixel_height: pixel_height as usize,
+            dpi: 96,
+        });
+        drop(hub);
+        drop(guard);
+        self.frame_hub.notify();
         Ok(())
+    }
+
+    /// Attach a renderer without changing the PTY/session lifecycle. The
+    /// first scheduled frame is always a full visible snapshot; subsequent
+    /// frames contain only rows changed since the previous extraction.
+    ///
+    /// The status receiver is subscribed without taking a raw scrollback
+    /// snapshot. Render clients reconstruct from the authoritative model and
+    /// therefore never need to copy the legacy byte ring on attach.
+    pub fn attach_renderer(
+        &self,
+        client_id: String,
+    ) -> (
+        TerminalFrameSubscription,
+        broadcast::Receiver<TerminalEvent>,
+    ) {
+        let mut subscription = self.frame_hub.subscribe();
+        let status_receiver = self.event_hub.lock().sender.subscribe();
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        if let Some(previous) = self.attachments.lock().insert(client_id, cancel_tx) {
+            let _ = previous.send(true);
+        }
+        subscription.cancellation = cancel_rx;
+        self.terminal_engine.lock().request_full_snapshot();
+        self.frame_hub.notify();
+        (subscription, status_receiver)
+    }
+
+    pub fn request_render_snapshot(&self) {
+        self.terminal_engine.lock().request_full_snapshot();
+        self.frame_hub.notify();
     }
 
     pub fn status(&self) -> SessionStatus {
@@ -659,6 +799,7 @@ impl TerminalSession {
         }
         guard.status = SessionStatus::Exited;
         drop(guard);
+        self.frame_hub.shutdown();
         for (_, cancellation) in self.attachments.lock().drain() {
             let _ = cancellation.send(true);
         }

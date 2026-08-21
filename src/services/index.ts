@@ -6,7 +6,12 @@
 
 import { Channel, invoke as tauriInvoke } from "@tauri-apps/api/core";
 
-import type { TerminalSessionFrame } from "@/lib/terminalFrames";
+import type {
+  TerminalRenderMessage,
+  TerminalSearchMatch,
+  TerminalSearchQuery,
+  TerminalSessionFrame,
+} from "@/lib/terminalFrames";
 import type {
   PlatformInfo,
   ProfileTemplate,
@@ -255,6 +260,9 @@ export interface CreateTerminalRequest {
 
 export type {
   TerminalControlFrame,
+  TerminalRenderMessage,
+  TerminalSearchMatch,
+  TerminalSearchQuery,
   TerminalSessionFrame,
 } from "@/lib/terminalFrames";
 
@@ -277,6 +285,44 @@ export interface SessionAttachment {
     | { type: "resize"; rows: number; cols: number }
   >;
   truncated: boolean;
+}
+
+export interface RenderSessionAttachment {
+  session: SessionInfo;
+}
+
+export interface TerminalKeyEvent {
+  key: string;
+  code?: string;
+  location?: number;
+  numLock?: boolean;
+  shift?: boolean;
+  alt?: boolean;
+  ctrl?: boolean;
+  meta?: boolean;
+}
+
+export type TerminalMouseEventKind = "press" | "release" | "move";
+export type TerminalMouseButton =
+  | "left"
+  | "middle"
+  | "right"
+  | "wheel-up"
+  | "wheel-down"
+  | "wheel-left"
+  | "wheel-right"
+  | "none";
+
+export interface TerminalMouseEvent {
+  kind: TerminalMouseEventKind;
+  button: TerminalMouseButton;
+  x: number;
+  y: number;
+  xPixelOffset?: number;
+  yPixelOffset?: number;
+  shift?: boolean;
+  alt?: boolean;
+  ctrl?: boolean;
 }
 
 export interface RemoteDirectoryListing {
@@ -510,6 +556,19 @@ export const terminalService = {
       clientId,
     });
   },
+  attachRender: async (
+    sessionId: string,
+    clientId: string,
+    onFrame: (frame: TerminalRenderMessage) => void,
+  ): Promise<RenderSessionAttachment> => {
+    const channel = new Channel<TerminalRenderMessage>();
+    channel.onmessage = onFrame;
+    return invokeOrThrow<RenderSessionAttachment>("session_attach_render", {
+      onFrame: channel,
+      sessionId,
+      clientId,
+    });
+  },
   detach: (sessionId: string, clientId: string) =>
     invokeOrThrow<void>("session_detach", { sessionId, clientId }),
   list: () =>
@@ -533,6 +592,24 @@ export const terminalService = {
     invokeOrThrow<void>("write_terminal_binary", {
       sessionId,
       data: Array.from(data),
+    }),
+  keyDown: (sessionId: string, event: TerminalKeyEvent) =>
+    invokeOrThrow<void>("terminal_key_down", { sessionId, event }),
+  mouseEvent: (sessionId: string, event: TerminalMouseEvent) =>
+    invokeOrThrow<void>("terminal_mouse_event", { sessionId, event }),
+  paste: (sessionId: string, text: string) =>
+    invokeOrThrow<void>("terminal_paste", { sessionId, text }),
+  bracketedPasteEnabled: (sessionId: string) =>
+    invokeOrThrow<boolean>("terminal_bracketed_paste_enabled", { sessionId }),
+  search: (sessionId: string, query: TerminalSearchQuery) =>
+    invokeOrThrow<TerminalSearchMatch[]>("terminal_search", {
+      sessionId,
+      query,
+    }),
+  setViewport: (sessionId: string, stableRow: number) =>
+    invokeOrThrow<void>("terminal_set_viewport", {
+      sessionId,
+      stableRow,
     }),
   resize: (
     sessionId: string,

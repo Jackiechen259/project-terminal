@@ -15,8 +15,12 @@ use parking_lot::RwLock;
 
 use crate::error::{AppError, AppResult};
 
+use super::frame_scheduler::TerminalFrameSubscription;
 use super::scrollback::ScrollbackSnapshotFormat;
-use super::session::{SessionSpawn, SessionStatus, SessionSubscription, TerminalSession};
+use super::session::{
+    SessionSpawn, SessionStatus, SessionSubscription, TerminalEvent, TerminalSession,
+};
+use crate::terminal_engine::{TerminalKeyEvent, TerminalMouseEvent};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -97,6 +101,35 @@ impl TerminalManager {
         session.write(data)
     }
 
+    pub fn key_down(&self, session_id: &str, event: &TerminalKeyEvent) -> AppResult<()> {
+        self.get(session_id)?.key_down(event)
+    }
+
+    pub fn mouse_event(&self, session_id: &str, event: &TerminalMouseEvent) -> AppResult<()> {
+        self.get(session_id)?.mouse_event(event)
+    }
+
+    pub fn send_paste(&self, session_id: &str, text: &str) -> AppResult<()> {
+        self.get(session_id)?.send_paste(text)
+    }
+
+    pub fn bracketed_paste_enabled(&self, session_id: &str) -> AppResult<bool> {
+        Ok(self.get(session_id)?.bracketed_paste_enabled())
+    }
+
+    pub fn search(
+        &self,
+        session_id: &str,
+        query: &crate::terminal_engine::TerminalSearchQuery,
+    ) -> AppResult<Vec<crate::terminal_engine::TerminalSearchMatch>> {
+        Ok(self.get(session_id)?.search(query))
+    }
+
+    pub fn set_viewport_top(&self, session_id: &str, stable_row: i64) -> AppResult<()> {
+        self.get(session_id)?.set_viewport_top(stable_row);
+        Ok(())
+    }
+
     pub fn attach(
         &self,
         session_id: &str,
@@ -109,6 +142,21 @@ impl TerminalManager {
         // represented either in this snapshot or in the event receiver.
         let info = SessionInfo::from(session.as_ref());
         Ok((info, subscription))
+    }
+
+    pub fn attach_renderer(
+        &self,
+        session_id: &str,
+        client_id: String,
+    ) -> AppResult<(
+        SessionInfo,
+        TerminalFrameSubscription,
+        tokio::sync::broadcast::Receiver<TerminalEvent>,
+    )> {
+        let session = self.get(session_id)?;
+        let (subscription, status_receiver) = session.attach_renderer(client_id);
+        let info = SessionInfo::from(session.as_ref());
+        Ok((info, subscription, status_receiver))
     }
 
     pub fn detach(&self, session_id: &str, client_id: &str) -> AppResult<()> {
