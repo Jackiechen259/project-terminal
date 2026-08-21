@@ -1031,6 +1031,18 @@ mod tests {
     }
 
     #[test]
+    fn encodes_ctrl_c_as_a_terminal_control_character() {
+        let (mut engine, output) = capture_engine();
+        let _ = engine.take_render_frame();
+
+        let mut event = key_event("c");
+        event.ctrl = true;
+        engine.key_down(&event).unwrap();
+
+        assert_eq!(wait_for_output(&output), b"\x03");
+    }
+
+    #[test]
     fn sends_composed_text_through_the_model_keyboard_path() {
         let (mut engine, output) = capture_engine();
         let _ = engine.take_render_frame();

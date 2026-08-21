@@ -16,10 +16,7 @@ use parking_lot::RwLock;
 use crate::error::{AppError, AppResult};
 
 use super::frame_scheduler::TerminalFrameSubscription;
-use super::scrollback::ScrollbackSnapshotFormat;
-use super::session::{
-    SessionSpawn, SessionStatus, SessionSubscription, TerminalSession, TerminalStatusEvent,
-};
+use super::session::{SessionSpawn, SessionStatus, TerminalSession, TerminalStatusEvent};
 use crate::terminal_engine::{TerminalKeyEvent, TerminalMouseEvent};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -143,20 +140,6 @@ impl TerminalManager {
         Ok(())
     }
 
-    pub fn attach(
-        &self,
-        session_id: &str,
-        client_id: String,
-        snapshot_format: ScrollbackSnapshotFormat,
-    ) -> AppResult<(SessionInfo, SessionSubscription)> {
-        let session = self.get(session_id)?;
-        let subscription = session.attach(client_id, snapshot_format);
-        // Read state after subscribing so an exit that races attach is
-        // represented either in this snapshot or in the event receiver.
-        let info = SessionInfo::from(session.as_ref());
-        Ok((info, subscription))
-    }
-
     pub fn attach_renderer(
         &self,
         session_id: &str,
@@ -272,35 +255,23 @@ mod tests {
         }
     }
 
-    fn wait_for_text(
-        receiver: &mut tokio::sync::broadcast::Receiver<super::super::session::TerminalEvent>,
-        expected: &[u8],
-    ) {
-        use super::super::session::TerminalEventPayload;
+    fn wait_for_model_text(manager: &TerminalManager, session_id: &str, expected: &str) {
+        use crate::terminal_engine::{TerminalSearchDirection, TerminalSearchQuery};
 
         let deadline = Instant::now() + Duration::from_secs(3);
-        let mut output = Vec::new();
+        let query = TerminalSearchQuery {
+            query: expected.to_string(),
+            case_sensitive: true,
+            direction: TerminalSearchDirection::Forward,
+            start: None,
+        };
         while Instant::now() < deadline {
-            match receiver.try_recv() {
-                Ok(event) => {
-                    if let TerminalEventPayload::Output(bytes) = event.payload {
-                        output.extend_from_slice(&bytes);
-                    }
-                    if output.windows(expected.len()).any(|part| part == expected) {
-                        return;
-                    }
-                }
-                Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-                Err(error) => panic!("terminal event stream failed: {error}"),
+            if !manager.search(session_id, &query).unwrap().is_empty() {
+                return;
             }
+            std::thread::sleep(Duration::from_millis(10));
         }
-        panic!(
-            "timed out waiting for {:?}; got {:?}",
-            String::from_utf8_lossy(expected),
-            String::from_utf8_lossy(&output)
-        );
+        panic!("timed out waiting for model text {expected:?}");
     }
 
     #[test]
@@ -345,30 +316,35 @@ mod tests {
     }
 
     #[test]
-    fn detach_keeps_shell_running_and_other_subscriber_receives_output() {
+    fn detach_keeps_shell_running_and_other_renderer_receives_output() {
         let manager = TerminalManager::new();
         let id = manager.create(cmd_spawn("shared-session")).unwrap();
         manager.mark_running(&id).unwrap();
-        let (_, first) = manager
-            .attach(&id, "first".into(), ScrollbackSnapshotFormat::Replay)
-            .unwrap();
-        let (_, second) = manager
-            .attach(&id, "second".into(), ScrollbackSnapshotFormat::Replay)
-            .unwrap();
-        let mut first_receiver = first.receiver;
-        let mut second_receiver = second.receiver;
+        let (_, first, _first_status) = manager.attach_renderer(&id, "first".into()).unwrap();
+        let (_, mut second, _second_status) =
+            manager.attach_renderer(&id, "second".into()).unwrap();
 
         manager.write(&id, b"echo BOTH_CLIENTS\r\n").unwrap();
-        wait_for_text(&mut first_receiver, b"BOTH_CLIENTS");
-        wait_for_text(&mut second_receiver, b"BOTH_CLIENTS");
+        wait_for_model_text(&manager, &id, "BOTH_CLIENTS");
+        while second.frames.try_recv().is_ok() {}
 
+        // The command mirrors the renderer lifecycle: the stream task drops
+        // its subscription before the manager removes the attachment.
+        drop(first);
         manager.detach(&id, "first").unwrap();
-        assert!(
-            *first.cancellation.borrow(),
-            "detached subscription was not cancelled"
-        );
+        assert_eq!(manager.renderer_count(&id).unwrap(), 1);
         manager.write(&id, b"echo SECOND_STILL_LIVE\r\n").unwrap();
-        wait_for_text(&mut second_receiver, b"SECOND_STILL_LIVE");
+        wait_for_model_text(&manager, &id, "SECOND_STILL_LIVE");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut received_frame = false;
+        while Instant::now() < deadline {
+            if second.frames.try_recv().is_ok() {
+                received_frame = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(received_frame, "the remaining renderer received no frame");
         assert_eq!(manager.info(&id).unwrap().status, SessionStatus::Running);
 
         manager.close(&id).unwrap();
@@ -376,25 +352,13 @@ mod tests {
     }
 
     #[test]
-    fn attach_recovers_scrollback_written_without_subscribers() {
+    fn model_recovers_output_written_without_renderers() {
         let manager = TerminalManager::new();
         let id = manager.create(cmd_spawn("scrollback-session")).unwrap();
         manager.mark_running(&id).unwrap();
         manager.write(&id, b"echo RECOVERED_HISTORY\r\n").unwrap();
 
-        let deadline = Instant::now() + Duration::from_secs(3);
-        loop {
-            let (_, attachment) = manager
-                .attach(&id, "history-client".into(), ScrollbackSnapshotFormat::Flat)
-                .unwrap();
-            let history = String::from_utf8_lossy(&attachment.snapshot.bytes).into_owned();
-            if history.contains("RECOVERED_HISTORY") {
-                break;
-            }
-            manager.detach(&id, "history-client").unwrap();
-            assert!(Instant::now() < deadline, "scrollback was not updated");
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        wait_for_model_text(&manager, &id, "RECOVERED_HISTORY");
 
         let listed = manager.list();
         assert_eq!(listed.len(), 1);

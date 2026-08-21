@@ -1,5 +1,5 @@
 //! Terminal session: owns one PTY plus a reader thread, bounded scrollback,
-//! and a broadcast event stream.
+//! and a Rust-owned render/control stream.
 //!
 //! Phase 3 supports local shells only. SSH (`ssh.exe`) sessions arrive in
 //! Phase 6. The session intentionally has no knowledge of profiles or
@@ -11,7 +11,6 @@ use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Duration;
 
-use bytes::Bytes;
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use tokio::sync::{broadcast, watch};
@@ -23,86 +22,8 @@ use crate::terminal_engine::{
 };
 
 use super::frame_scheduler::{TerminalFrameHub, TerminalFrameSubscription};
-use super::scrollback::{
-    OutputRingBuffer, ScrollbackSnapshot, ScrollbackSnapshotFormat, DEFAULT_SCROLLBACK_BYTES,
-};
 
 const PTY_READ_BUFFER_BYTES: usize = 16 * 1024;
-const LIVE_OUTPUT_BUFFER_EVENTS: usize = DEFAULT_SCROLLBACK_BYTES / PTY_READ_BUFFER_BYTES;
-
-/// A terminal lifecycle event as it travels on the broadcast bus.
-///
-/// Output stays as raw `Bytes` so fan-out to subscribers is a refcount bump
-/// rather than a copy of an encoded string. Consumers that need a text wire
-/// format (the remote WebSocket gateway) encode at their own end.
-#[derive(Debug, Clone)]
-pub struct TerminalEvent {
-    pub session_id: Arc<str>,
-    pub payload: TerminalEventPayload,
-}
-
-#[derive(Debug, Clone)]
-pub enum TerminalEventPayload {
-    Output(Bytes),
-    Status {
-        status: SessionStatus,
-        exit_code: Option<i32>,
-    },
-}
-
-impl TerminalEvent {
-    fn output(session_id: Arc<str>, data: Bytes) -> Self {
-        Self {
-            session_id,
-            payload: TerminalEventPayload::Output(data),
-        }
-    }
-
-    fn status(session_id: Arc<str>, status: SessionStatus, exit_code: Option<i32>) -> Self {
-        Self {
-            session_id,
-            payload: TerminalEventPayload::Status { status, exit_code },
-        }
-    }
-}
-
-/// JSON wire shape for the remote WebSocket gateway.
-///
-/// Output bytes are base64 encoded because terminal output is not guaranteed
-/// to be valid UTF-8. Exit state travels over the same channel so the client
-/// does not need to poll every live session.
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TerminalOutput {
-    pub session_id: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub data: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<SessionStatus>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub exit_code: Option<i32>,
-}
-
-impl TerminalOutput {
-    /// Encode a broadcast event for a client that speaks the JSON protocol.
-    pub fn from_event(event: &TerminalEvent) -> Self {
-        let session_id = event.session_id.to_string();
-        match &event.payload {
-            TerminalEventPayload::Output(bytes) => Self {
-                session_id,
-                data: encode_bytes(bytes),
-                status: None,
-                exit_code: None,
-            },
-            TerminalEventPayload::Status { status, exit_code } => Self {
-                session_id,
-                data: String::new(),
-                status: Some(*status),
-                exit_code: *exit_code,
-            },
-        }
-    }
-}
 
 /// What to spawn inside the PTY.
 #[derive(Debug, Clone)]
@@ -128,21 +49,12 @@ pub struct SessionSpawn {
     pub readiness_marker: Option<String>,
     pub rows: u16,
     pub cols: u16,
+    /// Legacy-compatible memory budget used only to derive a model row bound
+    /// when `scrollback_lines` is absent. No raw PTY history is retained.
     pub scrollback_bytes: usize,
     /// Explicit visible scrollback rows from the desktop settings. `None`
-    /// keeps the byte-budget fallback used by remote and older callers.
+    /// uses the byte-budget-to-row fallback in the terminal engine.
     pub scrollback_lines: Option<usize>,
-}
-
-struct EventHub {
-    sender: broadcast::Sender<TerminalEvent>,
-    scrollback: OutputRingBuffer,
-}
-
-pub struct SessionSubscription {
-    pub receiver: broadcast::Receiver<TerminalEvent>,
-    pub snapshot: ScrollbackSnapshot,
-    pub cancellation: watch::Receiver<bool>,
 }
 
 /// Lifecycle state of a session. Mirrors the frontend's TerminalStatus.
@@ -156,10 +68,6 @@ pub enum SessionStatus {
 }
 
 /// Lifecycle-only event stream for typed renderer attachments.
-///
-/// The legacy `TerminalEvent` bus intentionally still carries raw output for
-/// the old desktop/remote clients. New renderers must not subscribe to that
-/// stream just to filter out every `Output` event during a large-output burst.
 #[derive(Debug, Clone, Copy)]
 pub struct TerminalStatusEvent {
     pub status: SessionStatus,
@@ -189,40 +97,6 @@ impl Write for SharedPtyWriter {
 
     fn flush(&mut self) -> std::io::Result<()> {
         self.writer.lock().flush()
-    }
-}
-
-/// Backlog, in broadcast events, above which the reader slows down.
-///
-/// Two thirds of the channel. Below it a client is merely behind and will
-/// catch up; above it, it is losing ground and the next overflow drops output.
-const BACKPRESSURE_HIGH_WATER_EVENTS: usize = LIVE_OUTPUT_BUFFER_EVENTS * 2 / 3;
-
-/// How long the reader pauses per read once past the high-water mark.
-const BACKPRESSURE_PAUSE: Duration = Duration::from_millis(1);
-
-/// Should the reader pause before its next read, given `backlog`?
-///
-/// Pure so the policy can be tested without a pty.
-pub(crate) fn should_throttle(backlog: usize) -> bool {
-    backlog > BACKPRESSURE_HIGH_WATER_EVENTS
-}
-
-/// Slow the reader when subscribers are falling behind.
-///
-/// This is real flow control, not a heuristic. The ConPTY pipe has a finite
-/// buffer, so a reader that stops reading blocks the child in `WriteFile` -
-/// exactly what a tty does, and without a protocol change. The alternative
-/// people reach for, sending XOFF, does not work here: ConPTY has no line
-/// discipline, so `^S` goes into the child's *input* and most TUIs read it as
-/// a keystroke.
-///
-/// Deliberately a pause rather than a block. Waiting on a subscriber would let
-/// one stalled tab wedge the shell; a pause only costs throughput, and the
-/// existing lag-and-resync path still catches a client that never recovers.
-fn throttle_for_backlog(backlog: usize) {
-    if should_throttle(backlog) {
-        thread::sleep(BACKPRESSURE_PAUSE);
     }
 }
 
@@ -345,7 +219,6 @@ pub struct TerminalSession {
     pub created_at: chrono::DateTime<chrono::Utc>,
     inner: Arc<Mutex<SessionInner>>,
     ready_watcher: Arc<Mutex<ReadyWatcher>>,
-    event_hub: Arc<Mutex<EventHub>>,
     status_sender: broadcast::Sender<TerminalStatusEvent>,
     terminal_engine: Arc<Mutex<WeztermTerminalEngine>>,
     frame_hub: Arc<TerminalFrameHub>,
@@ -362,8 +235,8 @@ impl std::fmt::Debug for TerminalSession {
 }
 
 impl TerminalSession {
-    /// Spawn a PTY and start an always-on reader thread. Output is retained
-    /// even when no frontend is attached.
+    /// Spawn a PTY and start an always-on reader thread. The reader always
+    /// feeds the Rust terminal model, even when no renderer is attached.
     pub fn spawn(spawn: SessionSpawn) -> AppResult<Self> {
         let pty_system = native_pty_system();
         let pair = pty_system
@@ -463,28 +336,14 @@ impl TerminalSession {
             exit_error: None,
         }));
         let session_id = spawn.session_id.clone();
-        // Shared so tagging an event costs a refcount bump, not a String clone.
-        let shared_id: Arc<str> = Arc::from(session_id.as_str());
-        // Larger reads reduce syscall, Base64 and IPC overhead during output
-        // bursts. Scale the event count down proportionally so a stalled
-        // subscriber still retains roughly the same 4 MiB raw-data ceiling.
-        let (event_tx, _) = broadcast::channel(LIVE_OUTPUT_BUFFER_EVENTS);
         let (status_sender, _) = broadcast::channel(16);
-        let mut scrollback =
-            OutputRingBuffer::new(spawn.scrollback_bytes.max(DEFAULT_SCROLLBACK_BYTES / 4));
-        scrollback.resize(spawn.rows, spawn.cols);
-        let event_hub = Arc::new(Mutex::new(EventHub {
-            sender: event_tx,
-            scrollback,
-        }));
 
         // Reader thread: scans for the one-shot ready marker, removes that
-        // protocol line, retains every other byte sequence, and broadcasts it.
-        // A missing or slow subscriber never blocks this loop.
-        let hub_for_reader = Arc::clone(&event_hub);
+        // protocol line, and feeds every other byte directly into the
+        // authoritative terminal model. No raw PTY history or frontend
+        // output stream is maintained here.
         let engine_for_reader = Arc::clone(&terminal_engine);
         let frame_hub_for_reader = Arc::clone(&frame_hub);
-        let sid_for_reader = Arc::clone(&shared_id);
         let watcher_for_reader = ready_watcher.clone();
         thread::spawn(move || {
             let mut reader = reader;
@@ -492,33 +351,17 @@ impl TerminalSession {
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
-                    Ok(n) => {
-                        // Exactly one copy out of the reusable read buffer.
-                        // Scrollback and every subscriber then share it.
-                        let output = match watcher_for_reader.lock().process(&buf[..n]) {
-                            Processed::PassThrough => Bytes::copy_from_slice(&buf[..n]),
-                            Processed::Filtered(filtered) => Bytes::from(filtered),
-                        };
-                        if !output.is_empty() {
-                            // The Rust terminal model is updated before the
-                            // raw compatibility stream is published.  The
-                            // model remains live even when there are no
-                            // renderer subscribers.
+                    Ok(n) => match watcher_for_reader.lock().process(&buf[..n]) {
+                        Processed::PassThrough => {
+                            engine_for_reader.lock().feed(&buf[..n]);
+                            frame_hub_for_reader.notify();
+                        }
+                        Processed::Filtered(output) if !output.is_empty() => {
                             engine_for_reader.lock().feed(&output);
                             frame_hub_for_reader.notify();
-
-                            let backlog = {
-                                let mut hub = hub_for_reader.lock();
-                                hub.scrollback.push(output.clone());
-                                let _ = hub.sender.send(TerminalEvent::output(
-                                    Arc::clone(&sid_for_reader),
-                                    output,
-                                ));
-                                hub.sender.len()
-                            };
-                            throttle_for_backlog(backlog);
                         }
-                    }
+                        Processed::Filtered(_) => {}
+                    },
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         continue;
                     }
@@ -540,9 +383,7 @@ impl TerminalSession {
         // flip status.
         let inner_for_wait = inner.clone();
         let watcher_for_wait = ready_watcher.clone();
-        let hub_for_wait = Arc::clone(&event_hub);
         let status_for_wait = status_sender.clone();
-        let sid_for_wait = Arc::clone(&shared_id);
         let mut child_for_wait = child;
         thread::spawn(move || match child_for_wait.wait() {
             Ok(status) => {
@@ -558,11 +399,6 @@ impl TerminalSession {
                         status: SessionStatus::Exited,
                         exit_code: Some(code),
                     });
-                    let _ = hub_for_wait.lock().sender.send(TerminalEvent::status(
-                        sid_for_wait,
-                        SessionStatus::Exited,
-                        Some(code),
-                    ));
                 }
             }
             Err(_) => {
@@ -576,11 +412,6 @@ impl TerminalSession {
                         status: SessionStatus::Error,
                         exit_code: None,
                     });
-                    let _ = hub_for_wait.lock().sender.send(TerminalEvent::status(
-                        sid_for_wait,
-                        SessionStatus::Error,
-                        None,
-                    ));
                 }
             }
         });
@@ -594,7 +425,6 @@ impl TerminalSession {
             created_at: chrono::Utc::now(),
             inner,
             ready_watcher,
-            event_hub,
             status_sender,
             terminal_engine,
             frame_hub,
@@ -745,9 +575,6 @@ impl TerminalSession {
             return Ok(());
         }
         let guard = self.inner.lock();
-        // Hold the output hub across the OS resize so reader bytes triggered
-        // by SIGWINCH/ConPTY cannot overtake the replay resize marker.
-        let mut hub = self.event_hub.lock();
         guard
             .master
             .resize(PtySize {
@@ -757,9 +584,7 @@ impl TerminalSession {
                 pixel_height,
             })
             .map_err(|e| AppError::PtyCreationFailed(format!("resize: {e}")))?;
-        hub.scrollback.resize(rows, cols);
         engine.resize(requested_size);
-        drop(hub);
         drop(guard);
         self.frame_hub.notify();
         Ok(())
@@ -811,32 +636,6 @@ impl TerminalSession {
         self.inner.lock().exit_code
     }
 
-    /// Atomically subscribe before taking the scrollback snapshot. The reader
-    /// uses the same hub lock, so bytes can be in exactly one of the snapshot
-    /// or subsequent events, never lost between them.
-    pub fn attach(
-        &self,
-        client_id: String,
-        snapshot_format: ScrollbackSnapshotFormat,
-    ) -> SessionSubscription {
-        let (receiver, snapshot) = {
-            let hub = self.event_hub.lock();
-            (
-                hub.sender.subscribe(),
-                hub.scrollback.snapshot(snapshot_format),
-            )
-        };
-        let (cancel_tx, cancel_rx) = watch::channel(false);
-        if let Some(previous) = self.attachments.lock().insert(client_id, cancel_tx) {
-            let _ = previous.send(true);
-        }
-        SessionSubscription {
-            receiver,
-            snapshot,
-            cancellation: cancel_rx,
-        }
-    }
-
     pub fn detach(&self, client_id: &str) {
         if let Some(cancellation) = self.attachments.lock().remove(client_id) {
             let _ = cancellation.send(true);
@@ -863,49 +662,15 @@ impl TerminalSession {
     }
 }
 
-fn encode_bytes(bytes: &[u8]) -> String {
-    use base64::Engine;
-    base64::engine::general_purpose::STANDARD.encode(bytes)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
-    #[test]
-    fn live_output_queue_keeps_a_bounded_raw_byte_budget() {
-        assert_eq!(
-            PTY_READ_BUFFER_BYTES * LIVE_OUTPUT_BUFFER_EVENTS,
-            DEFAULT_SCROLLBACK_BYTES
-        );
-    }
+    const TEST_SCROLLBACK_BYTES: usize = 4 * 1024 * 1024;
 
-    /// Collect all output chunks delivered before the deadline, concatenated.
-    fn drain_output(rx: &mut broadcast::Receiver<TerminalEvent>, deadline: Instant) -> Vec<u8> {
-        let mut out = Vec::new();
-        while Instant::now() < deadline {
-            match rx.try_recv() {
-                Ok(event) => {
-                    if let TerminalEventPayload::Output(bytes) = event.payload {
-                        out.extend_from_slice(&bytes);
-                    }
-                }
-                Err(broadcast::error::TryRecvError::Empty) => {
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-                Err(broadcast::error::TryRecvError::Closed) => break,
-                Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
-            }
-        }
-        out
-    }
-
-    fn make_session(
-        program: &str,
-        args: &[&str],
-    ) -> (TerminalSession, broadcast::Receiver<TerminalEvent>) {
+    fn make_session(program: &str, args: &[&str]) -> TerminalSession {
         let session = TerminalSession::spawn(SessionSpawn {
             session_id: "test-session".to_string(),
             project_id: "test-project".to_string(),
@@ -920,61 +685,77 @@ mod tests {
             readiness_marker: None,
             rows: 24,
             cols: 80,
-            scrollback_bytes: DEFAULT_SCROLLBACK_BYTES,
+            scrollback_bytes: TEST_SCROLLBACK_BYTES,
             scrollback_lines: None,
         })
         .expect("spawn session");
-        let rx = session
-            .attach("test-client".into(), ScrollbackSnapshotFormat::Replay)
-            .receiver;
         session.mark_running();
-        (session, rx)
+        session
+    }
+
+    fn wait_for_model_text(session: &TerminalSession, query: &str) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let query = crate::terminal_engine::TerminalSearchQuery {
+            query: query.into(),
+            case_sensitive: true,
+            direction: crate::terminal_engine::TerminalSearchDirection::Forward,
+            start: None,
+        };
+        while Instant::now() < deadline {
+            if !session.search(&query).is_empty() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        false
+    }
+
+    fn model_contains(session: &TerminalSession, query: &str) -> bool {
+        let query = crate::terminal_engine::TerminalSearchQuery {
+            query: query.into(),
+            case_sensitive: true,
+            direction: crate::terminal_engine::TerminalSearchDirection::Forward,
+            start: None,
+        };
+        !session.search(&query).is_empty()
     }
 
     #[test]
     fn spawn_cmd_write_command_and_read_output() {
         // Â§37 Phase 3 acceptance: input/output normal. Spawn cmd.exe, write
         // `echo PT_TEST_OK`, read the echo back through the reader thread.
-        let (session, mut rx) = make_session("cmd.exe", &["/Q"]);
-        // Drain the initial prompt.
-        let _ = drain_output(&mut rx, Instant::now() + Duration::from_millis(500));
+        let session = make_session("cmd.exe", &["/Q"]);
 
         session.write(b"echo PT_TEST_OK\r\n").expect("write");
-        let output = drain_output(&mut rx, Instant::now() + Duration::from_secs(3));
-
-        assert!(
-            output
-                .windows(b"PT_TEST_OK".len())
-                .any(|w| w == b"PT_TEST_OK"),
-            "expected PT_TEST_OK in output, got: {:?}",
-            String::from_utf8_lossy(&output)
-        );
+        assert!(wait_for_model_text(&session, "PT_TEST_OK"));
         session.close();
     }
 
     #[test]
-    fn process_exit_is_pushed_through_the_output_channel() {
-        let (_session, mut rx) = make_session("cmd.exe", &["/C", "exit", "7"]);
+    fn process_exit_is_pushed_through_the_renderer_status_channel() {
+        let session = make_session("cmd.exe", &["/C", "exit", "7"]);
+        let (_subscription, mut status) = session.attach_renderer("status-client".into());
         let deadline = Instant::now() + Duration::from_secs(3);
-        let payload = loop {
+        let event = loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             assert!(!remaining.is_zero(), "timed out waiting for exit status");
-            match rx.try_recv() {
-                Ok(event) if matches!(event.payload, TerminalEventPayload::Status { .. }) => {
-                    break event.payload
-                }
-                Ok(_) | Err(broadcast::error::TryRecvError::Empty) => {
+            match status.try_recv() {
+                Ok(event) => break event,
+                Err(broadcast::error::TryRecvError::Empty) => {
                     std::thread::sleep(Duration::from_millis(10));
                 }
-                Err(error) => panic!("receive terminal event: {error}"),
+                Err(broadcast::error::TryRecvError::Lagged(_)) => {
+                    panic!("renderer status channel unexpectedly lagged")
+                }
+                Err(broadcast::error::TryRecvError::Closed) => {
+                    panic!("renderer status channel closed")
+                }
             }
         };
 
-        let TerminalEventPayload::Status { status, exit_code } = payload else {
-            unreachable!("loop only breaks on a status payload");
-        };
-        assert_eq!(status, SessionStatus::Exited);
-        assert_eq!(exit_code, Some(7));
+        assert_eq!(event.status, SessionStatus::Exited);
+        assert_eq!(event.exit_code, Some(7));
+        session.close();
     }
 
     #[test]
@@ -993,7 +774,7 @@ mod tests {
             readiness_marker: None,
             rows: 8,
             cols: 40,
-            scrollback_bytes: DEFAULT_SCROLLBACK_BYTES,
+            scrollback_bytes: TEST_SCROLLBACK_BYTES,
             scrollback_lines: None,
         })
         .expect("spawn session");
@@ -1082,7 +863,7 @@ mod tests {
             readiness_marker: None,
             rows: 8,
             cols: 40,
-            scrollback_bytes: DEFAULT_SCROLLBACK_BYTES,
+            scrollback_bytes: TEST_SCROLLBACK_BYTES,
             scrollback_lines: None,
         })
         .expect("spawn session");
@@ -1128,7 +909,7 @@ mod tests {
             readiness_marker: None,
             rows: 8,
             cols: 40,
-            scrollback_bytes: DEFAULT_SCROLLBACK_BYTES,
+            scrollback_bytes: TEST_SCROLLBACK_BYTES,
             scrollback_lines: None,
         })
         .expect("spawn session");
@@ -1172,20 +953,25 @@ mod tests {
         // (infinite), then send Ctrl+C (\x03) and verify the session is
         // still alive (status Running) - we should be back at the prompt,
         // not exited.
-        let (session, mut rx) = make_session("cmd.exe", &["/Q"]);
-        let _ = drain_output(&mut rx, Instant::now() + Duration::from_millis(500));
+        let session = make_session("cmd.exe", &["/Q"]);
 
         session.write(b"ping 127.0.0.1 -t\r\n").expect("write ping");
         // Give it time to start pinging.
         std::thread::sleep(Duration::from_millis(400));
+        assert!(model_contains(&session, "Ping"), "ping did not start");
         // Send Ctrl+C.
-        session.write(b"\x03").expect("write ctrl+c");
-        let output = drain_output(&mut rx, Instant::now() + Duration::from_secs(2));
-
-        assert!(
-            !output.is_empty(),
-            "expected output after Ctrl+C, got nothing"
-        );
+        session
+            .key_down(&TerminalKeyEvent {
+                key: "c".into(),
+                code: Some("KeyC".into()),
+                location: 0,
+                num_lock: false,
+                shift: false,
+                alt: false,
+                ctrl: true,
+                meta: false,
+            })
+            .expect("send ctrl+c through terminal input encoding");
         // Session should still be running (not exited) - Ctrl+C interrupts
         // the foreground command, not the shell.
         assert_eq!(
@@ -1199,34 +985,21 @@ mod tests {
     #[test]
     fn resize_does_not_error() {
         // Â§37 Phase 3 acceptance: resize normal.
-        let (session, _rx) = make_session("cmd.exe", &["/Q"]);
+        let session = make_session("cmd.exe", &["/Q"]);
         // Resize up then down; both must succeed.
         session.resize(30, 120, 960, 660).expect("resize up");
         session.resize(30, 120, 960, 660).expect("duplicate resize");
         session.resize(10, 40, 320, 220).expect("resize down");
-        let replay = session
-            .attach("resize-history".into(), ScrollbackSnapshotFormat::Replay)
-            .snapshot
-            .replay;
-        let grids = replay
-            .into_iter()
-            .filter_map(|event| match event {
-                crate::terminal::scrollback::ScrollbackReplayEvent::Resize { rows, cols } => {
-                    Some((rows, cols))
-                }
-                crate::terminal::scrollback::ScrollbackReplayEvent::Output(_) => None,
-            })
-            .collect::<Vec<_>>();
-        // Consecutive grid changes with no intervening output collapse to the
-        // latest one because no frame needs either earlier size for replay.
-        assert_eq!(grids, vec![(10, 40)]);
+        let size = session.terminal_engine.lock().terminal().get_size();
+        assert_eq!(size.rows, 10);
+        assert_eq!(size.cols, 40);
         assert_eq!(session.status(), SessionStatus::Running);
         session.close();
     }
 
     #[test]
     fn close_marks_session_exited() {
-        let (session, _rx) = make_session("cmd.exe", &["/Q"]);
+        let session = make_session("cmd.exe", &["/Q"]);
         session.close();
         // close() sets status to Exited synchronously.
         assert_eq!(session.status(), SessionStatus::Exited);
@@ -1234,19 +1007,10 @@ mod tests {
 
     #[test]
     fn close_is_idempotent() {
-        let (session, _rx) = make_session("cmd.exe", &["/Q"]);
+        let session = make_session("cmd.exe", &["/Q"]);
         session.close();
         session.close();
         assert_eq!(session.status(), SessionStatus::Exited);
-    }
-
-    #[test]
-    fn encode_bytes_handles_empty_and_padded_lengths() {
-        assert_eq!(encode_bytes(b""), "");
-        assert_eq!(encode_bytes(b"A"), "QQ==");
-        assert_eq!(encode_bytes(b"AB"), "QUI=");
-        assert_eq!(encode_bytes(b"ABC"), "QUJD");
-        assert_eq!(encode_bytes(&[0x00, 0xFF, 0x80, 0x7F]), "AP+Afw==");
     }
 
     #[test]
@@ -1329,13 +1093,10 @@ mod tests {
             readiness_marker: None,
             rows: 24,
             cols: 80,
-            scrollback_bytes: DEFAULT_SCROLLBACK_BYTES,
+            scrollback_bytes: TEST_SCROLLBACK_BYTES,
             scrollback_lines: None,
         })
         .expect("spawn session");
-        let mut rx = session
-            .attach("ready-client".into(), ScrollbackSnapshotFormat::Replay)
-            .receiver;
         let marker = "__PROJECT_TERMINAL_READY_test__";
         let encoded_marker = marker
             .chars()
@@ -1352,35 +1113,15 @@ mod tests {
         session.mark_running();
         assert_eq!(session.status(), SessionStatus::Running);
 
-        let output = drain_output(&mut rx, Instant::now() + Duration::from_millis(250));
         assert!(
-            !output
-                .windows(marker.len())
-                .any(|window| window == marker.as_bytes()),
-            "ready marker leaked into terminal output: {:?}",
-            String::from_utf8_lossy(&output)
+            !model_contains(&session, marker),
+            "ready marker leaked into terminal model"
         );
         assert!(
-            !String::from_utf8_lossy(&output).contains("$env:PROJECT_TERMINAL_READY"),
-            "readiness command leaked into terminal output: {:?}",
-            String::from_utf8_lossy(&output)
+            !model_contains(&session, "$env:PROJECT_TERMINAL_READY"),
+            "readiness command leaked into terminal model"
         );
         session.close();
-    }
-    #[test]
-    fn throttles_only_once_subscribers_are_losing_ground() {
-        // `broadcast::Sender::len` counts events no subscriber has taken yet,
-        // and it is 0 when nobody is attached - a background build must never
-        // be slowed by a tab that is not being watched.
-        assert!(!should_throttle(0));
-        assert!(!should_throttle(1));
-        assert!(!should_throttle(BACKPRESSURE_HIGH_WATER_EVENTS));
-        // Past the mark the next overflow drops output, so trading throughput
-        // for not dropping is the right way round.
-        assert!(should_throttle(BACKPRESSURE_HIGH_WATER_EVENTS + 1));
-        assert!(should_throttle(LIVE_OUTPUT_BUFFER_EVENTS));
-        // And it leaves headroom rather than waiting for the channel to fill.
-        const _: () = assert!(BACKPRESSURE_HIGH_WATER_EVENTS < LIVE_OUTPUT_BUFFER_EVENTS);
     }
 
     #[test]
@@ -1402,16 +1143,10 @@ mod tests {
             readiness_marker: None,
             rows: 24,
             cols: 80,
-            scrollback_bytes: DEFAULT_SCROLLBACK_BYTES,
+            scrollback_bytes: TEST_SCROLLBACK_BYTES,
             scrollback_lines: None,
         })
         .expect("spawn PowerShell session");
-        let mut rx = session
-            .attach(
-                "powershell-ready-client".into(),
-                ScrollbackSnapshotFormat::Replay,
-            )
-            .receiver;
         let marker = "__PROJECT_TERMINAL_READY_powershell__";
         session
             .wait_for_ready(
@@ -1423,18 +1158,14 @@ mod tests {
         session.mark_running();
         assert_eq!(session.status(), SessionStatus::Running);
 
-        let output = drain_output(&mut rx, Instant::now() + Duration::from_millis(250));
+        std::thread::sleep(Duration::from_millis(250));
         assert!(
-            !output.windows(4).any(|window| window == b"\r\n>>"),
-            "PowerShell entered a continuation prompt: {:?}",
-            String::from_utf8_lossy(&output)
+            !model_contains(&session, ">>"),
+            "PowerShell entered a continuation prompt"
         );
         assert!(
-            !output
-                .windows(marker.len())
-                .any(|window| window == marker.as_bytes()),
-            "ready marker leaked into terminal output: {:?}",
-            String::from_utf8_lossy(&output)
+            !model_contains(&session, marker),
+            "ready marker leaked into terminal model"
         );
         session.close();
     }

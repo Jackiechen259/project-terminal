@@ -9,7 +9,6 @@ pub mod escaping;
 pub mod frame_scheduler;
 pub mod initializer;
 pub mod manager;
-pub mod scrollback;
 pub mod session;
 pub mod shell_integration;
 pub mod wsl;
@@ -26,7 +25,7 @@ pub use frame_scheduler::TerminalFrameSubscription;
 pub use initializer::{build_activation_script, build_remote_initialization_commands};
 pub use manager::{SessionInfo, TerminalManager};
 use serde::Serialize;
-pub use session::{SessionSpawn, TerminalEvent, TerminalEventPayload, TerminalOutput};
+pub use session::SessionSpawn;
 pub use wsl::{detect_wsl_distributions, DetectedWslDistribution};
 
 /// Terminal type for shells that may consult terminfo, directly or on a host

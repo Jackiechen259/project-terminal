@@ -2123,45 +2123,29 @@ mod tests {
         spawn.readiness_marker = None;
 
         let id = terminal.manager.create(spawn).unwrap();
-        let (_, subscription) = terminal
-            .manager
-            .attach(
-                &id,
-                "activation-test".into(),
-                crate::terminal::scrollback::ScrollbackSnapshotFormat::Replay,
-            )
-            .unwrap();
-        let mut rx = subscription.receiver;
 
         // The helper should write the error into the shell and NOT return an
         // error, keeping the session alive.
         execute_startup_commands(&terminal.manager, &profile, &id).unwrap();
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        let mut out = Vec::new();
+        let query = crate::terminal_engine::TerminalSearchQuery {
+            query: "Environment activation failed".into(),
+            case_sensitive: true,
+            direction: crate::terminal_engine::TerminalSearchDirection::Forward,
+            start: None,
+        };
+        let mut found = false;
         while std::time::Instant::now() < deadline {
-            if let Ok(event) = rx.try_recv() {
-                if let crate::terminal::TerminalEventPayload::Output(bytes) = event.payload {
-                    out.extend_from_slice(&bytes);
-                }
-                if out
-                    .windows(27)
-                    .any(|w| w == b"Environment activation failed")
-                {
-                    break;
-                }
-            } else {
-                std::thread::sleep(std::time::Duration::from_millis(10));
+            if !terminal.manager.search(&id, &query).unwrap().is_empty() {
+                found = true;
+                break;
             }
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
         terminal.manager.close_all();
 
-        let output_str = String::from_utf8_lossy(&out);
-        assert!(
-            output_str.contains("Environment activation failed"),
-            "Got: {:?}",
-            output_str
-        );
+        assert!(found, "model did not contain the activation error");
         let _ = dir;
     }
 
@@ -2197,43 +2181,30 @@ mod tests {
         spawn.readiness_marker = None;
 
         let id = terminal.manager.create(spawn).unwrap();
-        let (_, subscription) = terminal
-            .manager
-            .attach(
-                &id,
-                "startup-test".into(),
-                crate::terminal::scrollback::ScrollbackSnapshotFormat::Replay,
-            )
-            .unwrap();
-        let mut rx = subscription.receiver;
 
         // Execute startup commands manually (replicating the wrapper).
         execute_startup_commands(&terminal.manager, &profile, &id).unwrap();
 
         // Read until we see our marker or time out.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        let mut out = Vec::new();
+        let query = crate::terminal_engine::TerminalSearchQuery {
+            query: "PT_STARTUP_OK".into(),
+            case_sensitive: true,
+            direction: crate::terminal_engine::TerminalSearchDirection::Forward,
+            start: None,
+        };
+        let mut found = false;
         while std::time::Instant::now() < deadline {
-            if let Ok(event) = rx.try_recv() {
-                if let crate::terminal::TerminalEventPayload::Output(bytes) = event.payload {
-                    out.extend_from_slice(&bytes);
-                }
-                if out.windows(14).any(|w| w == b"PT_STARTUP_OK\r") {
-                    break;
-                }
-            } else {
-                std::thread::sleep(std::time::Duration::from_millis(10));
+            if !terminal.manager.search(&id, &query).unwrap().is_empty() {
+                found = true;
+                break;
             }
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
         terminal.manager.close_all();
 
-        let output_str = String::from_utf8_lossy(&out);
-        assert!(
-            output_str.contains("PT_STARTUP_OK"),
-            "expected startup command output, got: {:?}",
-            output_str
-        );
+        assert!(found, "expected startup command output in the model");
         let _ = dir;
     }
 }
@@ -2280,23 +2251,28 @@ mod handshake_probe {
             })
             .unwrap();
 
-        let visible_now = || {
+        let visible_now = |query: &str| {
             std::thread::sleep(std::time::Duration::from_millis(1200));
-            let (_, subscription) = manager
-                .attach(
+            !manager
+                .search(
                     session_id,
-                    format!("probe-{}", uuid::Uuid::new_v4()),
-                    crate::terminal::scrollback::ScrollbackSnapshotFormat::Flat,
+                    &crate::terminal_engine::TerminalSearchQuery {
+                        query: query.into(),
+                        case_sensitive: true,
+                        direction: crate::terminal_engine::TerminalSearchDirection::Forward,
+                        start: None,
+                    },
                 )
-                .unwrap();
-            String::from_utf8_lossy(&subscription.snapshot.bytes).to_string()
+                .unwrap()
+                .is_empty()
         };
 
         if let Err(error) = wait_for_interactive_shell(&manager, &profile, session_id) {
             manager.close_all();
             panic!("{error}");
         }
-        let after_handshake = visible_now();
+        let after_handshake_has_encoding = visible_now("OutputEncoding");
+        let after_handshake_has_marker = visible_now(&marker);
 
         // What the fix is worth: sending the same command a moment later -
         // which is what `execute_startup_commands` used to do - puts it on
@@ -2309,21 +2285,21 @@ mod handshake_probe {
                 shell_command_line(profile.shell_type, preamble).as_bytes(),
             )
             .unwrap();
-        let after_startup_commands = visible_now();
+        let after_startup_commands_has_encoding = visible_now("OutputEncoding");
         manager.close_all();
 
         assert!(
-            !after_handshake.contains("OutputEncoding"),
-            "folded into the handshake it still reached the terminal:\n{after_handshake}"
+            !after_handshake_has_encoding,
+            "the encoding command reached the model during the handshake"
         );
         assert!(
-            !after_handshake.contains(&marker),
-            "the readiness marker reached the terminal:\n{after_handshake}"
+            !after_handshake_has_marker,
+            "the readiness marker reached the model"
         );
         assert!(
-            after_startup_commands.contains("OutputEncoding"),
-            "sent after the handshake it should be visible, so this test is \
-             actually measuring the handshake:\n{after_startup_commands}"
+            after_startup_commands_has_encoding,
+            "sent after the handshake the encoding command should be visible, \
+             so this test is actually measuring the handshake"
         );
     }
 }

@@ -57,7 +57,6 @@ dirs = "5"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 base64 = "0.22"
-bytes = "1"
 tempfile = "3"
 axum = { version = "0.8", features = ["ws"] }
 futures-util = "0.3"
@@ -73,8 +72,8 @@ windows-version = "0.1"
 custom-protocol = ["tauri/custom-protocol"]
 
 [profile.release]
-# Cross-crate inlining matters here: the PTY hot path spans session, scrollback
-# and the Tauri IPC layer.
+# Cross-crate inlining matters here: the PTY hot path spans session, terminal
+# model parsing, and the Tauri IPC layer.
 lto = true
 codegen-units = 1
 strip = true

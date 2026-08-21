@@ -52,7 +52,7 @@ encoding.
 | -------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------- |
 | ConPTY, process spawn, stdin/stdout, resize, kill        | portable-pty and TerminalSession           | The PTY boundary is unchanged.                          |
 | VT/ANSI parsing, screen, alternate screen, cursor, modes | wezterm-term through WeztermTerminalEngine | One model per terminal session.                         |
-| Scrollback and stable rows                               | wezterm-term                               | The old raw ring is compatibility/debug only.           |
+| Scrollback and stable rows                               | wezterm-term                               | The old raw ring and replay stream are removed.          |
 | Keyboard, mouse, paste, and IME encoding                 | WeztermTerminalEngine                      | Frontend sends semantic events.                         |
 | OSC title, cwd, command markers, bell                    | engine control event queue                 | Only changes are sent; not repeated per frame.          |
 | Render transport                                         | TerminalFrameHub and typed Tauri frames    | Dirty rows, sequence numbers, and full snapshots.       |
@@ -68,15 +68,15 @@ encoding.
 - A PTY read does not imply an IPC message; dirty state is frame-batched.
 - A frame contains only changed rows unless a full snapshot is requested.
 - Renderer attachment is independent of PTY/model lifetime.
-- A background session keeps reading, parsing, and bounded scrollback, but has
+- A background session keeps reading, parsing, and bounded model scrollback, but has
   no continuous frame subscriber.
 - The model sequence used for dirty-row extraction is separate from the
   monotonic IPC sequence used for resync ordering.
 - Render/control transport is distinct from status, exit, bell, title, cwd,
   and command-finished events.
-- Raw OutputRingBuffer and raw session subscriptions remain only for backend
-  startup probes, diagnostics, and comparison tests; no frontend terminal
-  renderer consumes them.
+- The legacy raw OutputRingBuffer, raw session subscriptions, and raw PTY replay
+  path have been removed; startup probes and diagnostics now query the
+  authoritative wezterm model or typed control/status streams.
 
 ## Implemented compatibility surface
 
@@ -126,7 +126,7 @@ Deterministic checks run during migration:
 ```text
 Frontend: tsc -b, Vite production build, ESLint, Prettier check, and Vitest
 (37 files, 240 tests).
-Rust: cargo fmt, cargo check, cargo clippy, and cargo test (324 passed, 3
+Rust: cargo fmt, cargo check, cargo clippy, and cargo test (314 passed, 3
 ignored stress/profiling probes). The 10-session probe was also run separately
 with `--ignored` and passed.
 ```
