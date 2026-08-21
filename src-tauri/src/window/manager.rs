@@ -1067,6 +1067,7 @@ mod tests {
                 rows: 24,
                 cols: 80,
                 scrollback_bytes: 1024,
+                scrollback_lines: None,
             }
         }
 
@@ -1181,6 +1182,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_bytes: 1024,
+            scrollback_lines: None,
         };
         terminal.manager.create(spawn("a-1", "main")).unwrap();
         terminal.manager.create(spawn("a-2", "main")).unwrap();

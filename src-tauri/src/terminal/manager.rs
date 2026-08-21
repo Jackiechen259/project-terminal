@@ -255,6 +255,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_bytes: 4 * 1024 * 1024,
+            scrollback_lines: None,
         }
     }
 

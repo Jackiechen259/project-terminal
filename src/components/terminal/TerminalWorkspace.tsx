@@ -242,6 +242,8 @@ export function TerminalWorkspace() {
           cols: 80,
           scrollbackMegabytes:
             useSettingsStore.getState().terminalScrollbackMegabytes,
+          scrollbackLines:
+            useSettingsStore.getState().terminalScrollbackLines,
         });
         // The user may close the loading tab while process creation is still
         // in flight. Do not leak the resulting backend session in that race.
@@ -490,6 +492,8 @@ export function TerminalWorkspace() {
           cols: 80,
           scrollbackMegabytes:
             useSettingsStore.getState().terminalScrollbackMegabytes,
+          scrollbackLines:
+            useSettingsStore.getState().terminalScrollbackLines,
         });
         const tab: TerminalTab = {
           id: crypto.randomUUID(),
@@ -529,6 +533,8 @@ export function TerminalWorkspace() {
             cols: 80,
             scrollbackMegabytes:
               useSettingsStore.getState().terminalScrollbackMegabytes,
+            scrollbackLines:
+              useSettingsStore.getState().terminalScrollbackLines,
           });
       updateTab(tabId, {
         sessionId,

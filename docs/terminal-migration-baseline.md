@@ -97,6 +97,9 @@ Implemented in this checkpoint:
   command-finished side channel.
 - Stable-row viewport requests, Rust-owned search results, dirty-row frames,
   full-snapshot recovery, and renderer attachment independent of PTY lifetime.
+- Desktop session creation now passes the existing visible scrollback-row
+  setting directly to wezterm-term while retaining the raw-byte attach-history
+  budget as a separate compatibility limit.
 - Renderer attachments use a status-only lifecycle channel; they do not
   subscribe to the legacy raw-output broadcast while rendering.
 - Canvas2D text/attribute/cursor/selection rendering with DPR-aware metrics,
@@ -111,12 +114,12 @@ Current deterministic checks:
 
 ```text
 Frontend: tsc -b, ESLint, CanvasRenderer tests, and the full Vitest suite pass.
-Rust: 316 standard tests passed in the latest run, including live `cmd.exe`
-renderer attachment, status delivery, background-model, and semantic text
-input tests. The existing real PowerShell handshake probe timed out in that
-parallel run, but passes when rerun with `--test-threads=1`; the 100MB stress
-fixture is intentionally ignored in the standard suite and requires a
-separate profiling run.
+Rust: 319 tests passed serially with one intentionally ignored 100MB stress
+fixture. This includes live `cmd.exe` renderer attachment, status delivery,
+background-model, semantic text input, and scrollback-setting tests. A prior
+parallel run timed out in the existing real PowerShell handshake probe; the
+latest full serial run passes with `--test-threads=1`. The 100MB fixture still
+requires a separate profiling run.
 ```
 
 ### Runtime performance

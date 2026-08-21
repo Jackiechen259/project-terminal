@@ -50,6 +50,10 @@ pub struct CreateTerminalRequest {
     pub cols: u16,
     #[serde(default)]
     pub scrollback_megabytes: Option<u8>,
+    /// Authoritative wezterm-term visible history. Optional for compatibility
+    /// with remote callers that only provide the raw attach-history budget.
+    #[serde(default)]
+    pub scrollback_lines: Option<u32>,
 }
 
 /// Which workspace/window owns a terminal session.
@@ -95,6 +99,8 @@ struct SessionMeta {
     cols: u16,
     /// Attach-history budget the session was created with.
     scrollback_megabytes: Option<u8>,
+    /// Visible history rows used by the Rust terminal model.
+    scrollback_lines: Option<u32>,
 }
 
 pub struct TerminalState {
@@ -142,6 +148,7 @@ impl TerminalState {
                 rows: request.rows.max(1),
                 cols: request.cols.max(1),
                 scrollback_megabytes: request.scrollback_megabytes,
+                scrollback_lines: request.scrollback_lines,
             },
         );
     }
@@ -216,6 +223,7 @@ impl TerminalState {
                 rows: m.rows,
                 cols: m.cols,
                 scrollback_megabytes: m.scrollback_megabytes,
+                scrollback_lines: m.scrollback_lines,
             })
     }
 }
@@ -376,6 +384,7 @@ pub(crate) fn build_session_spawn(
             scrollback_bytes: usize::from(request.scrollback_megabytes.unwrap_or(4).clamp(1, 32))
                 * 1024
                 * 1024,
+            scrollback_lines: request.scrollback_lines.map(|lines| lines as usize),
         },
         project_type,
         profile,
@@ -1586,6 +1595,7 @@ mod tests {
                 rows: 24,
                 cols: 80,
                 scrollback_bytes: 1024,
+                scrollback_lines: None,
             }
         }
 
@@ -1632,6 +1642,7 @@ mod tests {
                 rows: 24,
                 cols: 80,
                 scrollback_bytes: 1024,
+                scrollback_lines: None,
             }
         }
 
@@ -1682,6 +1693,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: None,
+            scrollback_lines: None,
         }
     }
 
@@ -1757,6 +1769,7 @@ mod tests {
             "session-1",
             &CreateTerminalRequest {
                 scrollback_megabytes: Some(16),
+                scrollback_lines: Some(2_500),
                 ..create_request("p1", "profile-1")
             },
         );
@@ -1765,6 +1778,29 @@ mod tests {
             terminal.meta_for("session-1").unwrap().scrollback_megabytes,
             Some(16)
         );
+        assert_eq!(
+            terminal.meta_for("session-1").unwrap().scrollback_lines,
+            Some(2_500)
+        );
+    }
+
+    #[test]
+    fn build_session_spawn_keeps_model_rows_separate_from_raw_history_bytes() {
+        let app = test_state();
+        seed_project(&app, "p1");
+        app.profiles
+            .upsert(default_powershell_profile("profile-1".into(), "p1".into()))
+            .unwrap();
+
+        let request = CreateTerminalRequest {
+            scrollback_megabytes: Some(2),
+            scrollback_lines: Some(25_000),
+            ..create_request("p1", "profile-1")
+        };
+        let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
+
+        assert_eq!(spawn.scrollback_bytes, 2 * 1024 * 1024);
+        assert_eq!(spawn.scrollback_lines, Some(25_000));
     }
 
     fn test_state() -> AppState {
@@ -1819,6 +1855,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: None,
+            scrollback_lines: None,
         };
         let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
         assert_eq!(spawn.cwd.as_deref(), Some(dir.to_str().unwrap()));
@@ -1845,6 +1882,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: None,
+            scrollback_lines: None,
         };
 
         // A PowerShell profile advertises inline-image support by default.
@@ -1890,6 +1928,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: Some(255),
+            scrollback_lines: None,
         };
 
         let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
@@ -1930,6 +1969,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: None,
+            scrollback_lines: None,
         };
         let (spawn, project_type, _) = build_session_spawn(&app, &request, "session-1").unwrap();
 
@@ -1976,6 +2016,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: None,
+            scrollback_lines: None,
         };
         build_session_spawn(&app, &request, "session-1").unwrap().0
     }
@@ -2015,6 +2056,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: None,
+            scrollback_lines: None,
         };
         let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
 
@@ -2103,6 +2145,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: None,
+            scrollback_lines: None,
         };
         let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
 
@@ -2140,6 +2183,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: None,
+            scrollback_lines: None,
         };
         let err = build_session_spawn(&app, &request, "session-1").unwrap_err();
         assert!(matches!(err, AppError::Configuration(_)));
@@ -2173,6 +2217,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: None,
+            scrollback_lines: None,
         };
         let err = build_session_spawn(&app, &request, "session-1").unwrap_err();
         assert!(matches!(err, AppError::ProjectPathNotFound(_)));
@@ -2315,6 +2360,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: None,
+            scrollback_lines: None,
         };
 
         let terminal = TerminalState::new();
@@ -2386,6 +2432,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: None,
+            scrollback_lines: None,
         };
 
         let terminal = TerminalState::new();
@@ -2472,6 +2519,7 @@ mod handshake_probe {
                 rows: 24,
                 cols: 80,
                 scrollback_bytes: 1024 * 1024,
+                scrollback_lines: None,
             })
             .unwrap();
 

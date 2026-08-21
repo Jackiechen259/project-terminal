@@ -13,7 +13,10 @@ mod render_frame;
 mod search;
 mod wezterm_engine;
 
-pub use config::{scrollback_lines_for_bytes, WeztermTerminalConfig, DEFAULT_SCROLLBACK_LINES};
+pub use config::{
+    normalize_scrollback_lines, scrollback_lines_for_bytes, WeztermTerminalConfig,
+    DEFAULT_SCROLLBACK_LINES,
+};
 pub use input::{
     TerminalKeyEvent, TerminalMouseButton, TerminalMouseEvent, TerminalMouseEventKind,
 };

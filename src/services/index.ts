@@ -256,6 +256,8 @@ export interface CreateTerminalRequest {
   rows: number;
   cols: number;
   scrollbackMegabytes?: number;
+  /** Visible rows retained by the Rust terminal model. */
+  scrollbackLines?: number;
 }
 
 export type {

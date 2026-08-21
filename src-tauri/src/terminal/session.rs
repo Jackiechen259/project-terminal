@@ -129,6 +129,9 @@ pub struct SessionSpawn {
     pub rows: u16,
     pub cols: u16,
     pub scrollback_bytes: usize,
+    /// Explicit visible scrollback rows from the desktop settings. `None`
+    /// keeps the byte-budget fallback used by remote and older callers.
+    pub scrollback_lines: Option<usize>,
 }
 
 struct EventHub {
@@ -430,10 +433,15 @@ impl TerminalSession {
                 dpi: 96,
             },
             WeztermTerminalConfig {
-                scrollback_lines: crate::terminal_engine::scrollback_lines_for_bytes(
-                    spawn.scrollback_bytes,
-                    spawn.cols,
-                ),
+                scrollback_lines: spawn
+                    .scrollback_lines
+                    .map(crate::terminal_engine::normalize_scrollback_lines)
+                    .unwrap_or_else(|| {
+                        crate::terminal_engine::scrollback_lines_for_bytes(
+                            spawn.scrollback_bytes,
+                            spawn.cols,
+                        )
+                    }),
                 ..WeztermTerminalConfig::default()
             },
             Box::new(SharedPtyWriter {
@@ -894,6 +902,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_bytes: DEFAULT_SCROLLBACK_BYTES,
+            scrollback_lines: None,
         })
         .expect("spawn session");
         let rx = session
@@ -966,6 +975,7 @@ mod tests {
             rows: 8,
             cols: 40,
             scrollback_bytes: DEFAULT_SCROLLBACK_BYTES,
+            scrollback_lines: None,
         })
         .expect("spawn session");
         let (mut subscription, _status) = session.attach_renderer("render-client".into());
@@ -1054,6 +1064,7 @@ mod tests {
             rows: 8,
             cols: 40,
             scrollback_bytes: DEFAULT_SCROLLBACK_BYTES,
+            scrollback_lines: None,
         })
         .expect("spawn session");
         let (_subscription, mut status) = session.attach_renderer("status-client".into());
@@ -1099,6 +1110,7 @@ mod tests {
             rows: 8,
             cols: 40,
             scrollback_bytes: DEFAULT_SCROLLBACK_BYTES,
+            scrollback_lines: None,
         })
         .expect("spawn session");
         session.mark_running();
@@ -1298,6 +1310,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_bytes: DEFAULT_SCROLLBACK_BYTES,
+            scrollback_lines: None,
         })
         .expect("spawn session");
         let mut rx = session
@@ -1370,6 +1383,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_bytes: DEFAULT_SCROLLBACK_BYTES,
+            scrollback_lines: None,
         })
         .expect("spawn PowerShell session");
         let mut rx = session

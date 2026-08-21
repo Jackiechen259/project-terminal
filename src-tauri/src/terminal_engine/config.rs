@@ -7,12 +7,20 @@ pub const DEFAULT_SCROLLBACK_LINES: usize = 10_000;
 const MIN_SCROLLBACK_LINES: usize = 1_000;
 const MAX_SCROLLBACK_LINES: usize = 100_000;
 
+/// Clamp a user-provided visible scrollback setting before it reaches
+/// wezterm-term. The frontend already enforces the same range, but keeping
+/// the invariant at the engine boundary also protects remote callers and
+/// restart metadata.
+pub fn normalize_scrollback_lines(lines: usize) -> usize {
+    lines.clamp(MIN_SCROLLBACK_LINES, MAX_SCROLLBACK_LINES)
+}
+
 /// Convert the existing byte-budget setting into the line budget understood
 /// by wezterm-term. A line is estimated conservatively so the migration does
 /// not silently discard the user's configured history.
 pub fn scrollback_lines_for_bytes(max_bytes: usize, cols: u16) -> usize {
     let estimated_bytes_per_line = usize::from(cols.max(1)).saturating_mul(4);
-    (max_bytes / estimated_bytes_per_line).clamp(MIN_SCROLLBACK_LINES, MAX_SCROLLBACK_LINES)
+    normalize_scrollback_lines(max_bytes / estimated_bytes_per_line)
 }
 
 /// Configuration passed to each `wezterm_term::Terminal` instance.
@@ -91,5 +99,12 @@ mod tests {
             scrollback_lines_for_bytes(usize::MAX, 1),
             MAX_SCROLLBACK_LINES
         );
+    }
+
+    #[test]
+    fn normalizes_explicit_visible_scrollback_without_changing_raw_budget() {
+        assert_eq!(normalize_scrollback_lines(1), MIN_SCROLLBACK_LINES);
+        assert_eq!(normalize_scrollback_lines(25_000), 25_000);
+        assert_eq!(normalize_scrollback_lines(usize::MAX), MAX_SCROLLBACK_LINES);
     }
 }

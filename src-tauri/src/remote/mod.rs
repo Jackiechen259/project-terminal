@@ -474,6 +474,7 @@ async fn create_session(
         rows: 24,
         cols: 80,
         scrollback_megabytes: Some(4),
+        scrollback_lines: None,
     };
 
     // Remote clients own no window: sessions created through the gateway are
@@ -1528,6 +1529,7 @@ mod tests {
                 rows: 24,
                 cols: 80,
                 scrollback_bytes: 64 * 1024,
+                scrollback_lines: None,
             })
             .unwrap();
 
