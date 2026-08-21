@@ -97,7 +97,8 @@ Implemented in this checkpoint:
   the minimal OSC 133
   command-finished side channel.
 - Stable-row viewport requests, Rust-owned search results, dirty-row frames,
-  full-snapshot recovery, and renderer attachment independent of PTY lifetime.
+  sequence-guarded full-snapshot recovery, and renderer attachment independent
+  of PTY lifetime.
 - Desktop session creation now passes the existing visible scrollback-row
   setting directly to wezterm-term while retaining the raw-byte attach-history
   budget as a separate compatibility limit.

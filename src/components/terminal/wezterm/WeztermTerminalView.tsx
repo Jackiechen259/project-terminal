@@ -726,6 +726,12 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       if (cancelled || !isTerminalRenderMessage(message)) return;
       if (message.type === "frame") {
         const frame = message.frame;
+        // Tauri preserves channel order, but keeping the sequence guard at
+        // the attachment boundary makes a late callback harmless if a
+        // renderer is replaced or a platform transport retries delivery.
+        if (frameRef.current && frame.sequence < frameRef.current.sequence) {
+          return;
+        }
         if (frame.fullSnapshot) attachedRows.clear();
         for (const row of frame.dirtyRows) attachedRows.set(row.stableRow, row);
         frameRef.current = frame;
