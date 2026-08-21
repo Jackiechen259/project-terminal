@@ -93,7 +93,8 @@ Implemented in this checkpoint:
 
 - Rust-owned VT parsing, screen, alternate screen, scrollback, cursor,
   hyperlinks, ANSI attributes, images, keyboard/mouse encoding, paste mode,
-  semantic text/IME input, OSC title/cwd, and the minimal OSC 133
+  semantic text/IME input, OSC title/cwd (including clearing a stale cwd), and
+  the minimal OSC 133
   command-finished side channel.
 - Stable-row viewport requests, Rust-owned search results, dirty-row frames,
   full-snapshot recovery, and renderer attachment independent of PTY lifetime.

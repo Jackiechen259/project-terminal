@@ -77,7 +77,7 @@ export const TerminalPane = memo(function TerminalPane({
   // Only arrives when the profile opted into shell integration. Until now
   // `cwd` was written as "" at creation and never updated.
   const handleCwdChange = useCallback(
-    (cwd: string) => updateTab(tabId, { cwd }),
+    (cwd: string | null) => updateTab(tabId, { cwd: cwd ?? "" }),
     [tabId, updateTab],
   );
   const handleCommandFinished = useCallback(

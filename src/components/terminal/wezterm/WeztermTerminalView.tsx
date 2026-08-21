@@ -125,7 +125,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
   defaultTitle: string;
   onExit?: (code: number | null, status?: "exited" | "error") => void;
   onTitleChange?: (title: string) => void;
-  onCwdChange?: (cwd: string) => void;
+  onCwdChange?: (cwd: string | null) => void;
   onCommandFinished?: (exitCode: number | null) => void;
   colorSchemeId?: string;
   onFocus?: () => void;
@@ -741,8 +741,8 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
             defaultTitle,
           );
           if (title) onTitleChangeRef.current?.(title);
-        } else if (message.event.type === "cwdChanged" && message.event.cwd) {
-          onCwdChangeRef.current?.(message.event.cwd);
+        } else if (message.event.type === "cwdChanged") {
+          onCwdChangeRef.current?.(message.event.cwd ?? null);
         } else if (message.event.type === "commandFinished") {
           onCommandFinishedRef.current?.(message.event.exitCode ?? null);
         }
