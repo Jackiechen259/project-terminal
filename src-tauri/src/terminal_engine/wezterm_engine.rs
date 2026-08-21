@@ -342,14 +342,14 @@ impl TerminalEngine for WeztermTerminalEngine {
         // on stale history, so discard the old control queue during a full
         // resync.
         self.control_events.lock().unwrap().clear();
-        if !self.last_title.is_empty() {
-            push_control_event(
-                &self.control_events,
-                TerminalControlEvent::TitleChanged {
-                    title: self.last_title.clone(),
-                },
-            );
-        }
+        // An empty title is also state: it asks the frontend to restore the
+        // profile fallback instead of retaining a title from before detach.
+        push_control_event(
+            &self.control_events,
+            TerminalControlEvent::TitleChanged {
+                title: self.last_title.clone(),
+            },
+        );
         // `None` is also state: it clears a cwd that a detached renderer may
         // still have cached from an earlier OSC 7 notification. Replaying the
         // explicit absence makes attach/resync deterministic.
@@ -848,6 +848,25 @@ mod tests {
             .drain_control_events()
             .iter()
             .any(|event| { matches!(event, TerminalControlEvent::CwdChanged { cwd: None }) }));
+    }
+
+    #[test]
+    fn full_snapshot_replays_an_explicitly_cleared_title() {
+        let mut engine = engine();
+        let _ = engine.take_render_frame();
+        let _ = engine.drain_control_events();
+
+        engine.feed(b"\x1b]2;Project Terminal\x07");
+        let _ = engine.drain_control_events();
+        engine.feed(b"\x1b]2;\x07");
+        assert!(engine.drain_control_events().iter().any(|event| {
+            matches!(event, TerminalControlEvent::TitleChanged { title } if title.is_empty())
+        }));
+
+        engine.request_full_snapshot();
+        assert!(engine.drain_control_events().iter().any(|event| {
+            matches!(event, TerminalControlEvent::TitleChanged { title } if title.is_empty())
+        }));
     }
 
     #[test]
