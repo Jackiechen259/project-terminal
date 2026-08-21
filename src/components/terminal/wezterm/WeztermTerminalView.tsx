@@ -496,6 +496,10 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
       if (event.nativeEvent.isComposing || compositionRef.current) return;
+      // Dead keys start a browser composition and do not represent a
+      // terminal key of their own. Let beforeinput/compositionend deliver
+      // the composed grapheme instead of preventing the IME sequence here.
+      if (event.key === "Dead" || event.key === "Compose") return;
       const { terminalPasteShortcut } = useSettingsStore.getState();
       const pasteChord =
         terminalPasteShortcut === "ctrl-shift-v"
