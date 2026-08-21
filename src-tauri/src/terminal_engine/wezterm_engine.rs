@@ -37,6 +37,11 @@ fn find_osc_terminator(bytes: &[u8]) -> Option<(usize, usize)> {
 /// PTY read frequency never dictates IPC frequency.
 pub struct WeztermTerminalEngine {
     terminal: Terminal,
+    /// WezTerm's sequence number is used internally for dirty-row queries;
+    /// this separate counter is the monotonic transport sequence exposed to
+    /// renderers. A full snapshot or viewport move can happen without a
+    /// model mutation, so it must still receive a newer IPC sequence.
+    last_frame_sequence: u64,
     last_emitted_sequence: usize,
     last_cursor: Option<CursorState>,
     last_scrollback_length: usize,
@@ -101,6 +106,7 @@ impl WeztermTerminalEngine {
 
         let mut engine = Self {
             terminal,
+            last_frame_sequence: 0,
             last_emitted_sequence: 0,
             last_cursor: None,
             last_scrollback_length: 0,
@@ -402,8 +408,10 @@ impl TerminalEngine for WeztermTerminalEngine {
             return None;
         }
 
+        self.last_frame_sequence = self.last_frame_sequence.saturating_add(1);
+
         Some(RenderFrame {
-            sequence: self.last_emitted_sequence as u64,
+            sequence: self.last_frame_sequence,
             rows,
             cols,
             dirty_rows,
@@ -867,6 +875,21 @@ mod tests {
         assert!(engine.drain_control_events().iter().any(|event| {
             matches!(event, TerminalControlEvent::TitleChanged { title } if title.is_empty())
         }));
+    }
+
+    #[test]
+    fn full_snapshot_gets_a_new_transport_sequence_without_model_output() {
+        let mut engine = engine();
+        let initial = engine.take_render_frame().expect("initial frame");
+
+        engine.feed(b"output");
+        let incremental = engine.take_render_frame().expect("incremental frame");
+        assert!(incremental.sequence > initial.sequence);
+
+        engine.request_full_snapshot();
+        let snapshot = engine.take_render_frame().expect("resync frame");
+        assert!(snapshot.full_snapshot);
+        assert!(snapshot.sequence > incremental.sequence);
     }
 
     #[test]
