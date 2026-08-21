@@ -104,9 +104,12 @@ Implemented in this checkpoint:
   budget as a separate compatibility limit.
 - Renderer attachments use a status-only lifecycle channel; they do not
   subscribe to the legacy raw-output broadcast while rendering.
-- Full-snapshot resyncs replay only current title/cwd state, not stale
-  detached-session bell or command-completion edges; backend resize requests
-  are deduplicated across grid and pixel dimensions.
+- Full-snapshot resyncs replay the current title/cwd state (including explicit
+  empty values), not stale detached-session bell or command-completion edges;
+  backend resize requests are deduplicated across grid and pixel dimensions.
+- WezTerm's internal sequence used for dirty-row queries is separate from the
+  monotonic IPC frame sequence, so a viewport/full-snapshot resync is always
+  newer than a frame that arrived before it.
 - Canvas2D text/attribute/cursor/selection rendering with DPR-aware metrics,
   image cache loading, plain-link detection, minimum-contrast handling,
   configurable cursor styles/blink, frame coalescing, and a transient visual
@@ -120,7 +123,7 @@ Current deterministic checks:
 
 ```text
 Frontend: tsc -b, ESLint, CanvasRenderer tests, and the full Vitest suite pass.
-Rust: 320 tests passed serially with one intentionally ignored 100MB stress
+Rust: 324 tests passed serially with one intentionally ignored 100MB stress
 fixture. This includes live `cmd.exe` renderer attachment, status delivery,
 background-model, semantic text input, and scrollback-setting tests. A prior
 parallel run timed out in the existing real PowerShell handshake probe; the
