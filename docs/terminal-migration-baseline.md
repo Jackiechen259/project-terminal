@@ -96,9 +96,9 @@ Implemented in this checkpoint:
   semantic text/IME input, OSC title/cwd (including clearing a stale cwd), and
   the minimal OSC 133
   command-finished side channel.
-- Stable-row viewport requests, Rust-owned search results, dirty-row frames,
-  sequence-guarded full-snapshot recovery, and renderer attachment independent
-  of PTY lifetime.
+- Stable-row viewport requests, Rust-owned search results and selection text,
+  dirty-row frames, sequence-guarded full-snapshot recovery, and renderer
+  attachment independent of PTY lifetime.
 - Desktop session creation now passes the existing visible scrollback-row
   setting directly to wezterm-term while retaining the raw-byte attach-history
   budget as a separate compatibility limit.
@@ -123,11 +123,11 @@ Current deterministic checks:
 
 ```text
 Frontend: tsc -b, ESLint, CanvasRenderer tests, and the full Vitest suite pass.
-Rust: 324 tests passed serially with one intentionally ignored 100MB stress
-fixture. This includes live `cmd.exe` renderer attachment, status delivery,
-background-model, semantic text input, and scrollback-setting tests. A prior
-parallel run timed out in the existing real PowerShell handshake probe; the
-latest full serial run passes with `--test-threads=1`. The 100MB fixture still
+Rust: the latest serial run had 324 passed, one existing real PowerShell
+handshake probe timeout, and one intentionally ignored 100MB stress fixture;
+the isolated PowerShell probe passes on rerun. This includes live `cmd.exe`
+renderer attachment, status delivery, background-model, semantic text input,
+Rust-owned selection, and scrollback-setting tests. The 100MB fixture still
 requires a separate profiling run.
 ```
 
