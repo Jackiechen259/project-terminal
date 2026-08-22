@@ -125,8 +125,8 @@ Deterministic checks run during migration:
 
 ```text
 Frontend: tsc -b, Vite production build, ESLint, Prettier check, and Vitest
-(37 files, 240 tests).
-Rust: cargo fmt, cargo check, cargo clippy, and cargo test (314 passed, 3
+(38 files, 243 tests).
+Rust: cargo fmt, cargo check, cargo clippy, and cargo test (316 passed, 3
 ignored stress/profiling probes). The 10-session probe was also run separately
 with `--ignored` and passed.
 ```
@@ -257,15 +257,18 @@ fixed a shortcut portability bug: Chromium reports the shifted backslash as
 `Backslash`/`Minus` key codes as well as the shifted characters.
 
 The formal Windows release build was rerun with the Tauri `custom-protocol`
-feature on 2026-08-22. `pnpm tauri build --bundles nsis --no-sign` completed
-and produced the current exe and NSIS installer. A normal elevated
+feature on 2026-08-22. `pnpm tauri build --bundles nsis` completed with the
+local, gitignored updater key and an explicit empty key password. It produced
+the current exe, NSIS installer, and a 432-byte updater signature. The public
+key in `src-tauri/tauri.conf.json` matches `.tauri-updater.key.pub`; the private
+key was never committed or printed. A normal elevated
 `pnpm tauri bundle --bundles msi --verbose --no-sign` run also completed: WiX
 ICE validation passed with the expected ICE03/ICE40/ICE57/ICE61 warnings and
 produced the current MSI installer. A prior non-elevated run failed with WiX
 LGHT0217/LGHT0216 because the managed Windows Installer Service could not be
-accessed; that diagnostic failure is not a project packaging failure.
-No updater signatures were generated because `TAURI_SIGNING_PRIVATE_KEY` and
-`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` are unavailable in the environment.
+accessed; that diagnostic failure is not a project packaging failure. CI still
+requires the corresponding `TAURI_SIGNING_PRIVATE_KEY` and optional password
+secrets before publishing a GitHub release.
 
 The ignored Windows multi-session probe spawned ten independent `cmd.exe`
 sessions, attached one frame subscriber, left nine sessions without renderer
@@ -291,6 +294,5 @@ Rust-owned search path.
 - WSL distro enumeration is present on the host but returns `E_ACCESSDENIED`
   in this managed session, so WSL GUI integration remains an optional manual
   run outside this environment.
-- Run a signed release build when TAURI_SIGNING_PRIVATE_KEY is available.
 - Keep the xterm terminology in this document only where it identifies the
   historical baseline or the required comparison.
