@@ -895,26 +895,41 @@ mod tests {
         engine.feed(format!("\x1b]1337;File=inline=1:{TINY_PNG_BASE64}\x07").as_bytes());
 
         let frame = engine.take_render_frame().expect("image frame");
-        let image = frame
+        let cache_key = {
+            let image = frame
+                .dirty_rows
+                .iter()
+                .flat_map(|row| row.cells.iter())
+                .flat_map(|cell| cell.images.iter())
+                .find(|image| image.data_base64.is_some())
+                .expect("inline image payload");
+
+            assert_eq!(image.mime_type, "image/png");
+            // EncodedFile intentionally leaves dimensions for the browser's
+            // image decoder; RGBA frames carry explicit dimensions in the
+            // protocol.
+            assert_eq!((image.width, image.height), (0, 0));
+            assert!(image
+                .cache_key
+                .chars()
+                .all(|character| character.is_ascii_hexdigit()));
+            assert!(image
+                .data_base64
+                .as_deref()
+                .is_some_and(|data| data == TINY_PNG_BASE64));
+            image.cache_key.clone()
+        };
+
+        engine.feed(format!("\x1b]1337;File=inline=1:{TINY_PNG_BASE64}\x07").as_bytes());
+        let repeat = engine.take_render_frame().expect("repeated image frame");
+        let cached = repeat
             .dirty_rows
             .iter()
             .flat_map(|row| row.cells.iter())
             .flat_map(|cell| cell.images.iter())
-            .find(|image| image.data_base64.is_some())
-            .expect("inline image payload");
-
-        assert_eq!(image.mime_type, "image/png");
-        // EncodedFile intentionally leaves dimensions for the browser's image
-        // decoder; RGBA frames carry explicit dimensions in the protocol.
-        assert_eq!((image.width, image.height), (0, 0));
-        assert!(image
-            .cache_key
-            .chars()
-            .all(|character| character.is_ascii_hexdigit()));
-        assert!(image
-            .data_base64
-            .as_deref()
-            .is_some_and(|data| data == TINY_PNG_BASE64));
+            .find(|image| image.cache_key == cache_key)
+            .expect("cached image placement");
+        assert!(cached.data_base64.is_none());
     }
 
     #[test]
