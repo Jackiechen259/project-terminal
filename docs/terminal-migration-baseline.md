@@ -283,6 +283,14 @@ final marker remains on one physical row. It passed in 219.87 s, kept the
 scrollback at the configured bound, and found the final marker through the
 Rust-owned search path.
 
+The elevated Windows acceptance session also enumerated the host WSL
+installations (`Ubuntu` and `docker-desktop`). A disposable WSL project was
+created through the release GUI, `Ubuntu` was selected, a terminal was
+started, semantic input sent `printf '__PROJECT_TERMINAL_WSL_SMOKE__\n';
+exit`, and the terminal reached the normal exited-tab state. The disposable
+projects created during this probe were removed afterward; no user project
+was changed.
+
 ## Remaining acceptance work
 
 - Capture renderer-FPS/IPC-volume comparisons if a historical trace becomes
@@ -291,8 +299,9 @@ Rust-owned search path.
   non-elevated managed desktop session still
   fails WebView2 creation with `0x800700AA` (resource in use); the matrix was
   collected in the elevated interactive session.
-- WSL distro enumeration is present on the host but returns `E_ACCESSDENIED`
-  in this managed session, so WSL GUI integration remains an optional manual
-  run outside this environment.
+- WSL enumeration and the disposable release-GUI WSL lifecycle smoke passed
+  in the elevated interactive session. A longer-running WSL process-tree
+  trace was not retained, so a manual interactive WSL/TUI run remains useful
+  before publishing a release.
 - Keep the xterm terminology in this document only where it identifies the
   historical baseline or the required comparison.
