@@ -24,7 +24,7 @@ Project Terminal is a Windows-first desktop terminal workspace for developers wh
 
 Instead of keeping unrelated sessions in one global tab bar, Project Terminal organizes terminals by **project**. Each project owns its own tab group and terminal profiles. Switching projects changes the visible workspace without destroying running PTY sessions.
 
-The current release is **v0.5.1**.
+The current release is **v0.5.12**.
 
 ## Features
 
@@ -152,29 +152,31 @@ Writes are atomic: data is serialized to a temporary file, flushed, and then ren
 ```text
 React / TypeScript UI
         │
-        │ Tauri commands and channels
+        │ Tauri commands, RenderFrames, and semantic input
         ▼
 Rust application backend
         │
         ├── Project, profile, SSH, and settings repositories
         ├── Shell and environment resolution
         ├── Single desktop-owned terminal session manager
+        │       ├── wezterm-term terminal model
+        │       └── portable-pty / ConPTY
         ├── Authenticated remote HTTP/WebSocket gateway
-        └── portable-pty
-                │
-                ├── PowerShell / CMD / Git Bash
-                ├── WSL
-                └── system OpenSSH client
+        └── PowerShell / CMD / Git Bash / WSL / system OpenSSH client
 ```
 
 ### Terminal sessions
 
-Every terminal tab owns an independent PTY created by Rust through `portable-pty`. The frontend sends input bytes to the backend and receives terminal output through a Tauri channel associated with the session ID.
+Every terminal tab owns an independent PTY and `wezterm-term` model created by
+Rust. The frontend sends semantic key, text, mouse, paste, resize, and viewport
+events; Rust encodes terminal input and sends typed dirty-row RenderFrames and
+control events back through the Tauri channel.
 
-The desktop process is the sole owner of live PTYs. Both the Tauri command
-adapter and the optional remote gateway share the same terminal manager, so
-session lifecycle and status cannot diverge between local and remote clients.
-Hiding the window keeps that process running; fully quitting stops all PTYs.
+The desktop process is the sole owner of live PTYs and terminal models. Both the
+Tauri command adapter and the optional remote gateway share the same terminal
+manager, so session lifecycle and status cannot diverge between local and
+remote clients. Detaching a hidden/background renderer does not pause or kill
+the session; fully quitting stops all PTYs.
 
 ### Inline images
 
@@ -207,7 +209,8 @@ For an SSH project, Project Terminal first establishes the interactive SSH sessi
 - Unsaved passwords and private-key passphrases are entered directly into the PTY and are not persisted or logged. Passwords explicitly saved by the user are protected by Windows Credential Manager and supplied to OpenSSH through the app's restricted askpass helper.
 - Private-key contents are never stored by the application.
 - Shell and SSH arguments are passed as argument arrays, not concatenated command strings.
-- Terminal input is forwarded byte-for-byte and is not parsed or recorded.
+- Terminal input is sent as semantic events and encoded by the Rust terminal
+  model; input content is not parsed for logging or recorded.
 - Tauri capabilities are restricted to the functionality required by the application.
 - Configuration writes are atomic and corrupt files are preserved for recovery.
 
@@ -220,7 +223,8 @@ For an SSH project, Project Terminal first establishes the interactive SSH sessi
 | Frontend | React 18, TypeScript, Vite |
 | UI | Tailwind CSS, Radix UI, shadcn/ui, Lucide |
 | State management | Zustand |
-| Terminal renderer | xterm.js |
+| Terminal emulator core | `wezterm-term` in Rust |
+| Terminal renderer | Canvas2D with WebGL2 acceleration/fallback |
 | PTY backend | portable-pty |
 | Persistence | JSON files |
 | SSH | System OpenSSH client |
@@ -260,6 +264,13 @@ pnpm dev
 
 Frontend-only mode is useful for UI development, but PTY, filesystem persistence, SSH, and other native Tauri features require the desktop application.
 
+### Terminal renderer
+
+The Rust/WezTerm terminal engine is the default. The renderer preference can be
+changed under Settings › Appearance: `auto` selects WebGL2 when available and
+falls back to Canvas2D; `dom` remains the persisted compatibility name for the
+software renderer.
+
 ### Build installers
 
 ```powershell
@@ -286,6 +297,8 @@ src-tauri/target/release/bundle/
 | `pnpm format` | Format frontend files with Prettier |
 | `pnpm format:check` | Check frontend formatting |
 | `pnpm bump` | Bump and sync project version across package and Tauri config files |
+| `pwsh -NoLogo -NoProfile -File scripts/terminal-gui-performance.ps1 -Counts 1,5,10` | Run the real Windows GUI/PTY active-background performance matrix (elevated WebView2 session) |
+| `pwsh -NoLogo -NoProfile -File scripts/terminal-gui-interaction.ps1 -SplitAdditionalPanes 3` | Measure semantic input, large output, active-PTY resize, four-pane rendering, and clean GUI shutdown (elevated WebView2 session) |
 Rust checks:
 
 ```powershell
@@ -357,7 +370,7 @@ git push origin v0.3.0
 
 The workflow builds Windows and Linux packages, signs updater artifacts, creates the GitHub Release, and publishes update metadata.
 
-The repository must contain the Actions secret `TAURI_SIGNING_PRIVATE_KEY`. The private signing key must never be committed. Keep a secure backup because installed applications trust the matching public key embedded in the Tauri configuration.
+The repository must contain the Actions secret `TAURI_SIGNING_PRIVATE_KEY`. If the key is encrypted, also configure `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Neither secret may be committed. Keep a secure backup because installed applications trust the matching public key embedded in the Tauri configuration.
 
 ## Known limitations
 
@@ -371,6 +384,9 @@ The repository must contain the Actions secret `TAURI_SIGNING_PRIVATE_KEY`. The 
 ## License
 
 Licensed under the [Apache License 2.0](./LICENSE).
+
+Direct WezTerm dependency notices and the pinned revision are recorded in
+[`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md).
 
 ### Bundled fonts
 

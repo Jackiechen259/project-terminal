@@ -59,6 +59,9 @@ pub enum AppError {
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("Terminal input failed: {0}")]
+    TerminalInputFailed(String),
 }
 
 impl AppError {
@@ -85,6 +88,7 @@ impl AppError {
             AppError::EnvironmentInitializationFailed(_) => "environment_init_failed",
             AppError::Configuration(_) => "configuration",
             AppError::Io(_) => "io",
+            AppError::TerminalInputFailed(_) => "terminal_input_failed",
         }
     }
 }
@@ -171,6 +175,10 @@ mod tests {
             ),
             (AppError::Configuration("e".into()), "configuration"),
             (AppError::Io(std::io::Error::other("x")), "io"),
+            (
+                AppError::TerminalInputFailed("x".into()),
+                "terminal_input_failed",
+            ),
         ];
         for (err, expected_code) in cases {
             assert_eq!(err.code(), expected_code, "mismatch for {err:?}");

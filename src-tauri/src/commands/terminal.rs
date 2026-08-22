@@ -16,8 +16,9 @@ use tauri::{Manager, State};
 
 use crate::error::{AppError, AppResult};
 use crate::state::{new_id, AppState};
-use crate::terminal::{
-    resolve_local_shell, SessionInfo, SessionSpawn, TerminalEventPayload, TerminalManager,
+use crate::terminal::{resolve_local_shell, SessionInfo, SessionSpawn, TerminalManager};
+use crate::terminal_engine::{
+    RenderFrame, TerminalControlEvent, TerminalKeyEvent, TerminalMouseEvent, TerminalSelectionPoint,
 };
 
 use super::ListResponse;
@@ -46,7 +47,14 @@ pub struct CreateTerminalRequest {
     pub rows: u16,
     pub cols: u16,
     #[serde(default)]
+    /// Compatibility memory budget used to derive a bounded model scrollback
+    /// when an explicit line count is not supplied. No raw PTY output is
+    /// retained for reattachment.
     pub scrollback_megabytes: Option<u8>,
+    /// Authoritative wezterm-term visible history. This takes precedence over
+    /// the compatibility memory budget when supplied.
+    #[serde(default)]
+    pub scrollback_lines: Option<u32>,
 }
 
 /// Which workspace/window owns a terminal session.
@@ -90,8 +98,11 @@ struct SessionMeta {
     /// fragments into the terminal.
     rows: u16,
     cols: u16,
-    /// Attach-history budget the session was created with.
+    /// Compatibility memory budget used to derive the model scrollback when
+    /// explicit rows were not supplied.
     scrollback_megabytes: Option<u8>,
+    /// Visible history rows used by the Rust terminal model.
+    scrollback_lines: Option<u32>,
 }
 
 pub struct TerminalState {
@@ -139,6 +150,7 @@ impl TerminalState {
                 rows: request.rows.max(1),
                 cols: request.cols.max(1),
                 scrollback_megabytes: request.scrollback_megabytes,
+                scrollback_lines: request.scrollback_lines,
             },
         );
     }
@@ -213,6 +225,7 @@ impl TerminalState {
                 rows: m.rows,
                 cols: m.cols,
                 scrollback_megabytes: m.scrollback_megabytes,
+                scrollback_lines: m.scrollback_lines,
             })
     }
 }
@@ -373,6 +386,7 @@ pub(crate) fn build_session_spawn(
             scrollback_bytes: usize::from(request.scrollback_megabytes.unwrap_or(4).clamp(1, 32))
                 * 1024
                 * 1024,
+            scrollback_lines: request.scrollback_lines.map(|lines| lines as usize),
         },
         project_type,
         profile,
@@ -747,12 +761,10 @@ fn execute_startup_commands(
         }
     }
 
-    // Per plan Â§22 (Wait until interactive shell is available): portable-pty
-    // buffers writes until the shell reads them. A true prompt-sync handshake
-    // (waiting for the shell's PS1 or native ready marker) is a complex
-    // feature that we defer out of MVP scope. We write the commands to the PTY
-    // immediately, which works for fast-starting shells but races heavy
-    // initializations.
+    // The readiness handshake has completed for local shells before this
+    // function runs. WSL startup is intentionally buffered until its shell
+    // accepts input; SSH startup is embedded in the remote command because
+    // authentication and host-key prompts must remain visible in the PTY.
     for cmd in &profile.startup_commands {
         let line = shell_command_line(profile.shell_type, cmd);
         if let Err(e) = manager.write(session_id, line.as_bytes()) {
@@ -869,24 +881,92 @@ pub fn write_terminal(
     session_id: String,
     data: String,
 ) -> AppResult<()> {
-    // The frontend sends a UTF-8 string (xterm.js `onData`). We forward the
-    // raw bytes into the PTY. We do NOT parse, log, or interpret the input.
+    // This command remains for raw command execution initiated by the UI
+    // (for example memo automation). Terminal key/text input uses the
+    // semantic model-owned commands below.
     terminal.manager.write(&session_id, data.as_bytes())
 }
 
-/// Byte-transparent counterpart of [`write_terminal`].
-///
-/// xterm.js splits terminal input across two events: `onData` carries UTF-8
-/// text, while `onBinary` carries bytes that are not text at all - most
-/// visibly the mouse reports of the default (non-SGR) encoding, whose
-/// coordinates are raw byte values that UTF-8 encoding would corrupt.
+/// Semantic key path for the wezterm renderer. The backend, not the browser,
+/// applies application-cursor, kitty/CSI-u, and modifier encoding.
 #[tauri::command]
-pub fn write_terminal_binary(
+pub fn terminal_key_down(
     terminal: State<'_, TerminalState>,
     session_id: String,
-    data: Vec<u8>,
+    event: TerminalKeyEvent,
 ) -> AppResult<()> {
-    terminal.manager.write(&session_id, &data)
+    terminal.manager.key_down(&session_id, &event)
+}
+
+/// Semantic printable/composition input for the wezterm renderer. The
+/// renderer sends text, not pre-encoded escape sequences; wezterm-term owns
+/// the keyboard output path and the PTY writer remains in Rust.
+#[tauri::command]
+pub fn terminal_text_input(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+    text: String,
+) -> AppResult<()> {
+    terminal.manager.text_input(&session_id, &text)
+}
+
+#[tauri::command]
+pub fn terminal_mouse_event(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+    event: TerminalMouseEvent,
+) -> AppResult<()> {
+    terminal.manager.mouse_event(&session_id, &event)
+}
+
+#[tauri::command]
+pub fn terminal_paste(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+    text: String,
+) -> AppResult<()> {
+    terminal.manager.send_paste(&session_id, &text)
+}
+
+#[tauri::command]
+pub fn terminal_bracketed_paste_enabled(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+) -> AppResult<bool> {
+    terminal.manager.bracketed_paste_enabled(&session_id)
+}
+
+#[tauri::command]
+pub fn terminal_search(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+    query: crate::terminal_engine::TerminalSearchQuery,
+) -> AppResult<Vec<crate::terminal_engine::TerminalSearchMatch>> {
+    terminal.manager.search(&session_id, &query)
+}
+
+/// Extract selected text from the Rust-owned model. The frontend sends only
+/// stable coordinates; it does not need to retain all scrollback rows just to
+/// support copy after a viewport move.
+#[tauri::command]
+pub fn terminal_selection_text(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+    anchor: TerminalSelectionPoint,
+    focus: TerminalSelectionPoint,
+) -> AppResult<String> {
+    terminal
+        .manager
+        .selection_text(&session_id, &anchor, &focus)
+}
+
+#[tauri::command]
+pub fn terminal_set_viewport(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+    stable_row: i64,
+) -> AppResult<()> {
+    terminal.manager.set_viewport_top(&session_id, stable_row)
 }
 
 #[tauri::command]
@@ -963,90 +1043,36 @@ pub async fn restart_terminal_inner(
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SessionAttachment {
+pub struct RenderSessionAttachment {
     pub session: SessionInfo,
-    /// Base64-encoded raw PTY bytes captured before the live subscription.
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub scrollback: String,
-    /// Ordered output and grid changes required to faithfully reconstruct a
-    /// cursor-addressed terminal after reattaching.
-    pub replay: Vec<SessionReplayEvent>,
-    pub truncated: bool,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum SessionReplayEvent {
-    Output { data: String },
-    Resize { rows: u16, cols: u16 },
-}
-
-/// Merge each run of consecutive output chunks into one replay event.
+/// Typed render/control transport for the Rust-owned terminal engine.
 ///
-/// A 4 MiB scrollback is retained as ~256 chunks of 16 KiB. Sending them
-/// individually costs the frontend one sequential `term.write` round-trip
-/// each. Resize boundaries must survive, so runs are only merged between
-/// them, which preserves replay ordering exactly.
-fn coalesce_replay(
-    events: Vec<crate::terminal::scrollback::ScrollbackReplayEvent>,
-) -> Vec<SessionReplayEvent> {
-    use crate::terminal::scrollback::ScrollbackReplayEvent;
-    use base64::Engine;
-
-    let mut out: Vec<SessionReplayEvent> = Vec::new();
-    let mut run: Vec<bytes::Bytes> = Vec::new();
-
-    fn flush(run: &mut Vec<bytes::Bytes>, out: &mut Vec<SessionReplayEvent>) {
-        if run.is_empty() {
-            return;
-        }
-        let total = run.iter().map(|chunk| chunk.len()).sum();
-        let mut merged = Vec::with_capacity(total);
-        for chunk in run.drain(..) {
-            merged.extend_from_slice(&chunk);
-        }
-        out.push(SessionReplayEvent::Output {
-            data: base64::engine::general_purpose::STANDARD.encode(merged),
-        });
-    }
-
-    for event in events {
-        match event {
-            ScrollbackReplayEvent::Output(bytes) => run.push(bytes),
-            ScrollbackReplayEvent::Resize { rows, cols } => {
-                flush(&mut run, &mut out);
-                out.push(SessionReplayEvent::Resize { rows, cols });
-            }
-        }
-    }
-    flush(&mut run, &mut out);
-    out
-}
-
-/// Control frames on the desktop session channel.
-///
-/// Output travels as `InvokeResponseBody::Raw` on the same channel; the JS
-/// `Channel` reorders by index, so raw and JSON frames stay in sequence.
-/// The session id is omitted because a channel is per-attachment.
-// `rename_all` on an enum renames variants, not their fields, so
-// `rename_all_fields` is what actually gets `exitCode` to the frontend.
+/// This command never replays raw PTY bytes to the frontend. The initial full
+/// frame and all subsequent dirty-row frames come from the session's persistent
+/// wezterm-term model.
 #[derive(Debug, Serialize)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
-enum DesktopSessionFrame {
+enum DesktopRenderFrame {
+    Frame {
+        frame: RenderFrame,
+    },
+    Control {
+        event: TerminalControlEvent,
+    },
     Status {
         status: crate::terminal::session::SessionStatus,
         exit_code: Option<i32>,
     },
-    /// The client fell too far behind and output was dropped; it must
-    /// re-attach to resynchronize from a fresh snapshot.
     Lagged,
 }
 
-impl DesktopSessionFrame {
+impl DesktopRenderFrame {
     fn into_body(self) -> Option<InvokeResponseBody> {
         serde_json::to_string(&self)
             .ok()
@@ -1054,48 +1080,26 @@ impl DesktopSessionFrame {
     }
 }
 
-/// Attach one frontend client to an existing PTY without changing its
-/// lifecycle. Scrollback is returned in the command response and later output
-/// is delivered through the bounded broadcast receiver.
+/// Attach a custom renderer without attaching to the raw PTY output stream.
+/// The PTY and wezterm-term model continue when this renderer detaches.
 #[tauri::command]
-pub fn session_attach(
+pub fn session_attach_render(
     terminal: State<'_, TerminalState>,
     session_id: String,
     client_id: String,
-    on_output: Channel<InvokeResponseBody>,
-) -> AppResult<SessionAttachment> {
-    use base64::Engine;
+    on_frame: Channel<InvokeResponseBody>,
+) -> AppResult<RenderSessionAttachment> {
     use tokio::sync::broadcast::error::RecvError;
 
-    let (info, subscription) = terminal.manager.attach(
-        &session_id,
-        client_id.clone(),
-        crate::terminal::scrollback::ScrollbackSnapshotFormat::Replay,
-    )?;
-    let crate::terminal::scrollback::ScrollbackSnapshot {
-        bytes,
-        replay,
-        truncated,
-    } = subscription.snapshot;
-    let replay = coalesce_replay(replay);
-    // Avoid sending the same potentially multi-megabyte history twice. The
-    // flat field remains only as a compatibility fallback for snapshots that
-    // predate resize-aware replay events.
-    let scrollback = if replay.is_empty() {
-        base64::engine::general_purpose::STANDARD.encode(bytes)
-    } else {
-        String::new()
-    };
-    let attachment = SessionAttachment {
-        session: info,
-        scrollback,
-        replay,
-        truncated,
-    };
-
+    let (info, subscription, mut status_receiver) = terminal
+        .manager
+        .attach_renderer(&session_id, client_id.clone())?;
+    let session = terminal.manager.get(&session_id)?;
     let manager = terminal.manager.clone_handle();
+
     tauri::async_runtime::spawn(async move {
-        let mut receiver = subscription.receiver;
+        let mut frames = subscription.frames;
+        let mut controls = subscription.controls;
         let mut cancellation = subscription.cancellation;
         loop {
             tokio::select! {
@@ -1104,29 +1108,47 @@ pub fn session_attach(
                         break;
                     }
                 }
-                event = receiver.recv() => {
-                    let body = match event {
-                        Ok(event) => match event.payload {
-                            // Raw bytes: no base64, no JSON escape scan. The
-                            // copy is unavoidable because `Raw` owns its Vec
-                            // and the scrollback still holds the `Bytes`.
-                            TerminalEventPayload::Output(bytes) => {
-                                Some(InvokeResponseBody::Raw(bytes.to_vec()))
-                            }
-                            TerminalEventPayload::Status { status, exit_code } => {
-                                DesktopSessionFrame::Status { status, exit_code }.into_body()
-                            }
-                        },
+                frame = frames.recv() => {
+                    let body = match frame {
+                        Ok(frame) => DesktopRenderFrame::Frame { frame: (*frame).clone() }.into_body(),
                         Err(RecvError::Lagged(_)) => {
-                            // The PTY reader and other clients must keep
-                            // flowing. Tell this client so it can re-attach
-                            // and pull the latest bounded snapshot.
-                            DesktopSessionFrame::Lagged.into_body()
+                            session.request_render_snapshot();
+                            DesktopRenderFrame::Lagged.into_body()
                         }
                         Err(RecvError::Closed) => break,
                     };
                     if let Some(body) = body {
-                        if on_output.send(body).is_err() {
+                        if on_frame.send(body).is_err() {
+                            break;
+                        }
+                    }
+                }
+                event = controls.recv() => {
+                    let body = match event {
+                        Ok(event) => DesktopRenderFrame::Control { event: (*event).clone() }.into_body(),
+                        Err(RecvError::Lagged(_)) => {
+                            session.request_render_snapshot();
+                            DesktopRenderFrame::Lagged.into_body()
+                        }
+                        Err(RecvError::Closed) => break,
+                    };
+                    if let Some(body) = body {
+                        if on_frame.send(body).is_err() {
+                            break;
+                        }
+                    }
+                }
+                event = status_receiver.recv() => {
+                    let body = match event {
+                        Ok(event) => DesktopRenderFrame::Status {
+                            status: event.status,
+                            exit_code: event.exit_code,
+                        }.into_body(),
+                        Err(RecvError::Lagged(_)) => DesktopRenderFrame::Lagged.into_body(),
+                        Err(RecvError::Closed) => break,
+                    };
+                    if let Some(body) = body {
+                        if on_frame.send(body).is_err() {
                             break;
                         }
                     }
@@ -1136,7 +1158,7 @@ pub fn session_attach(
         let _ = manager.detach(&session_id, &client_id);
     });
 
-    Ok(attachment)
+    Ok(RenderSessionAttachment { session: info })
 }
 
 #[tauri::command]
@@ -1236,84 +1258,15 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
-    fn replay_data(event: &SessionReplayEvent) -> &str {
-        match event {
-            SessionReplayEvent::Output { data } => data,
-            SessionReplayEvent::Resize { .. } => panic!("expected an output event"),
-        }
-    }
-
     #[test]
     fn desktop_control_frames_use_the_camel_case_keys_the_frontend_reads() {
-        let status = serde_json::to_string(&DesktopSessionFrame::Status {
-            status: crate::terminal::session::SessionStatus::Exited,
-            exit_code: Some(7),
-        })
-        .unwrap();
         assert_eq!(
-            status,
-            r#"{"type":"status","status":"exited","exitCode":7}"#
+            serde_json::to_string(&DesktopRenderFrame::Control {
+                event: TerminalControlEvent::Bell,
+            })
+            .unwrap(),
+            r#"{"type":"control","event":{"type":"bell"}}"#
         );
-        assert_eq!(
-            serde_json::to_string(&DesktopSessionFrame::Lagged).unwrap(),
-            r#"{"type":"lagged"}"#
-        );
-    }
-
-    #[test]
-    fn coalesce_replay_merges_output_runs_between_resizes() {
-        use crate::terminal::scrollback::ScrollbackReplayEvent as Event;
-        use base64::Engine;
-
-        let merged = coalesce_replay(vec![
-            Event::Resize { rows: 24, cols: 80 },
-            Event::Output(bytes::Bytes::from_static(b"one")),
-            Event::Output(bytes::Bytes::from_static(b"two")),
-            Event::Resize {
-                rows: 40,
-                cols: 120,
-            },
-            Event::Output(bytes::Bytes::from_static(b"three")),
-        ]);
-
-        assert_eq!(merged.len(), 4);
-        assert!(matches!(
-            merged[0],
-            SessionReplayEvent::Resize { rows: 24, cols: 80 }
-        ));
-        assert_eq!(
-            base64::engine::general_purpose::STANDARD
-                .decode(replay_data(&merged[1]))
-                .unwrap(),
-            b"onetwo"
-        );
-        assert!(matches!(
-            merged[2],
-            SessionReplayEvent::Resize {
-                rows: 40,
-                cols: 120
-            }
-        ));
-        assert_eq!(
-            base64::engine::general_purpose::STANDARD
-                .decode(replay_data(&merged[3]))
-                .unwrap(),
-            b"three"
-        );
-    }
-
-    #[test]
-    fn coalesce_replay_collapses_a_resize_free_history_into_one_event() {
-        use crate::terminal::scrollback::ScrollbackReplayEvent as Event;
-
-        let merged = coalesce_replay(
-            (0..8)
-                .map(|_| Event::Output(bytes::Bytes::from_static(b"chunk")))
-                .collect(),
-        );
-
-        assert_eq!(merged.len(), 1);
-        assert_eq!(coalesce_replay(Vec::new()).len(), 0);
     }
 
     #[test]
@@ -1396,6 +1349,7 @@ mod tests {
                 rows: 24,
                 cols: 80,
                 scrollback_bytes: 1024,
+                scrollback_lines: None,
             }
         }
 
@@ -1442,6 +1396,7 @@ mod tests {
                 rows: 24,
                 cols: 80,
                 scrollback_bytes: 1024,
+                scrollback_lines: None,
             }
         }
 
@@ -1492,6 +1447,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: None,
+            scrollback_lines: None,
         }
     }
 
@@ -1567,6 +1523,7 @@ mod tests {
             "session-1",
             &CreateTerminalRequest {
                 scrollback_megabytes: Some(16),
+                scrollback_lines: Some(2_500),
                 ..create_request("p1", "profile-1")
             },
         );
@@ -1575,6 +1532,29 @@ mod tests {
             terminal.meta_for("session-1").unwrap().scrollback_megabytes,
             Some(16)
         );
+        assert_eq!(
+            terminal.meta_for("session-1").unwrap().scrollback_lines,
+            Some(2_500)
+        );
+    }
+
+    #[test]
+    fn build_session_spawn_keeps_model_rows_separate_from_raw_history_bytes() {
+        let app = test_state();
+        seed_project(&app, "p1");
+        app.profiles
+            .upsert(default_powershell_profile("profile-1".into(), "p1".into()))
+            .unwrap();
+
+        let request = CreateTerminalRequest {
+            scrollback_megabytes: Some(2),
+            scrollback_lines: Some(25_000),
+            ..create_request("p1", "profile-1")
+        };
+        let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
+
+        assert_eq!(spawn.scrollback_bytes, 2 * 1024 * 1024);
+        assert_eq!(spawn.scrollback_lines, Some(25_000));
     }
 
     fn test_state() -> AppState {
@@ -1629,6 +1609,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: None,
+            scrollback_lines: None,
         };
         let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
         assert_eq!(spawn.cwd.as_deref(), Some(dir.to_str().unwrap()));
@@ -1655,6 +1636,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: None,
+            scrollback_lines: None,
         };
 
         // A PowerShell profile advertises inline-image support by default.
@@ -1700,6 +1682,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: Some(255),
+            scrollback_lines: None,
         };
 
         let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
@@ -1740,6 +1723,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: None,
+            scrollback_lines: None,
         };
         let (spawn, project_type, _) = build_session_spawn(&app, &request, "session-1").unwrap();
 
@@ -1786,6 +1770,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: None,
+            scrollback_lines: None,
         };
         build_session_spawn(&app, &request, "session-1").unwrap().0
     }
@@ -1825,6 +1810,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: None,
+            scrollback_lines: None,
         };
         let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
 
@@ -1913,13 +1899,11 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: None,
+            scrollback_lines: None,
         };
         let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
 
-        let last_askpass = spawn
-            .env
-            .iter()
-            .rfind(|(k, _)| k == "SSH_ASKPASS");
+        let last_askpass = spawn.env.iter().rfind(|(k, _)| k == "SSH_ASKPASS");
         // No SSH connection here, so the profile value is the only one; the
         // ordering guarantee is what the assertion below pins.
         assert_eq!(
@@ -1953,6 +1937,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: None,
+            scrollback_lines: None,
         };
         let err = build_session_spawn(&app, &request, "session-1").unwrap_err();
         assert!(matches!(err, AppError::Configuration(_)));
@@ -1986,6 +1971,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: None,
+            scrollback_lines: None,
         };
         let err = build_session_spawn(&app, &request, "session-1").unwrap_err();
         assert!(matches!(err, AppError::ProjectPathNotFound(_)));
@@ -2128,6 +2114,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: None,
+            scrollback_lines: None,
         };
 
         let terminal = TerminalState::new();
@@ -2138,45 +2125,29 @@ mod tests {
         spawn.readiness_marker = None;
 
         let id = terminal.manager.create(spawn).unwrap();
-        let (_, subscription) = terminal
-            .manager
-            .attach(
-                &id,
-                "activation-test".into(),
-                crate::terminal::scrollback::ScrollbackSnapshotFormat::Replay,
-            )
-            .unwrap();
-        let mut rx = subscription.receiver;
 
         // The helper should write the error into the shell and NOT return an
         // error, keeping the session alive.
         execute_startup_commands(&terminal.manager, &profile, &id).unwrap();
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        let mut out = Vec::new();
+        let query = crate::terminal_engine::TerminalSearchQuery {
+            query: "Environment activation failed".into(),
+            case_sensitive: true,
+            direction: crate::terminal_engine::TerminalSearchDirection::Forward,
+            start: None,
+        };
+        let mut found = false;
         while std::time::Instant::now() < deadline {
-            if let Ok(event) = rx.try_recv() {
-                if let crate::terminal::TerminalEventPayload::Output(bytes) = event.payload {
-                    out.extend_from_slice(&bytes);
-                }
-                if out
-                    .windows(27)
-                    .any(|w| w == b"Environment activation failed")
-                {
-                    break;
-                }
-            } else {
-                std::thread::sleep(std::time::Duration::from_millis(10));
+            if !terminal.manager.search(&id, &query).unwrap().is_empty() {
+                found = true;
+                break;
             }
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
         terminal.manager.close_all();
 
-        let output_str = String::from_utf8_lossy(&out);
-        assert!(
-            output_str.contains("Environment activation failed"),
-            "Got: {:?}",
-            output_str
-        );
+        assert!(found, "model did not contain the activation error");
         let _ = dir;
     }
 
@@ -2199,6 +2170,7 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_megabytes: None,
+            scrollback_lines: None,
         };
 
         let terminal = TerminalState::new();
@@ -2211,43 +2183,30 @@ mod tests {
         spawn.readiness_marker = None;
 
         let id = terminal.manager.create(spawn).unwrap();
-        let (_, subscription) = terminal
-            .manager
-            .attach(
-                &id,
-                "startup-test".into(),
-                crate::terminal::scrollback::ScrollbackSnapshotFormat::Replay,
-            )
-            .unwrap();
-        let mut rx = subscription.receiver;
 
         // Execute startup commands manually (replicating the wrapper).
         execute_startup_commands(&terminal.manager, &profile, &id).unwrap();
 
         // Read until we see our marker or time out.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        let mut out = Vec::new();
+        let query = crate::terminal_engine::TerminalSearchQuery {
+            query: "PT_STARTUP_OK".into(),
+            case_sensitive: true,
+            direction: crate::terminal_engine::TerminalSearchDirection::Forward,
+            start: None,
+        };
+        let mut found = false;
         while std::time::Instant::now() < deadline {
-            if let Ok(event) = rx.try_recv() {
-                if let crate::terminal::TerminalEventPayload::Output(bytes) = event.payload {
-                    out.extend_from_slice(&bytes);
-                }
-                if out.windows(14).any(|w| w == b"PT_STARTUP_OK\r") {
-                    break;
-                }
-            } else {
-                std::thread::sleep(std::time::Duration::from_millis(10));
+            if !terminal.manager.search(&id, &query).unwrap().is_empty() {
+                found = true;
+                break;
             }
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
         terminal.manager.close_all();
 
-        let output_str = String::from_utf8_lossy(&out);
-        assert!(
-            output_str.contains("PT_STARTUP_OK"),
-            "expected startup command output, got: {:?}",
-            output_str
-        );
+        assert!(found, "expected startup command output in the model");
         let _ = dir;
     }
 }
@@ -2265,7 +2224,12 @@ mod handshake_probe {
             return;
         }
         let manager = TerminalManager::new();
-        let profile = default_powershell_profile("p".into(), "proj".into());
+        let mut profile = default_powershell_profile("p".into(), "proj".into());
+        // The managed test environment can put a non-interactive PowerShell
+        // shim ahead of the system shell on PATH. Exercise the real inbox
+        // Windows PowerShell here so a PATH change cannot turn this probe into
+        // a ten-second orphaned child-process timeout.
+        profile.shell_executable = Some("powershell.exe".into());
         let (program, args) = crate::terminal::resolve_local_shell(&profile).unwrap();
         let session_id = "handshake-probe";
         let marker = format!("__PROJECT_TERMINAL_READY_{session_id}__");
@@ -2285,23 +2249,32 @@ mod handshake_probe {
                 rows: 24,
                 cols: 80,
                 scrollback_bytes: 1024 * 1024,
+                scrollback_lines: None,
             })
             .unwrap();
 
-        let visible_now = || {
+        let visible_now = |query: &str| {
             std::thread::sleep(std::time::Duration::from_millis(1200));
-            let (_, subscription) = manager
-                .attach(
+            !manager
+                .search(
                     session_id,
-                    format!("probe-{}", uuid::Uuid::new_v4()),
-                    crate::terminal::scrollback::ScrollbackSnapshotFormat::Flat,
+                    &crate::terminal_engine::TerminalSearchQuery {
+                        query: query.into(),
+                        case_sensitive: true,
+                        direction: crate::terminal_engine::TerminalSearchDirection::Forward,
+                        start: None,
+                    },
                 )
-                .unwrap();
-            String::from_utf8_lossy(&subscription.snapshot.bytes).to_string()
+                .unwrap()
+                .is_empty()
         };
 
-        wait_for_interactive_shell(&manager, &profile, session_id).unwrap();
-        let after_handshake = visible_now();
+        if let Err(error) = wait_for_interactive_shell(&manager, &profile, session_id) {
+            manager.close_all();
+            panic!("{error}");
+        }
+        let after_handshake_has_encoding = visible_now("OutputEncoding");
+        let after_handshake_has_marker = visible_now(&marker);
 
         // What the fix is worth: sending the same command a moment later -
         // which is what `execute_startup_commands` used to do - puts it on
@@ -2314,21 +2287,21 @@ mod handshake_probe {
                 shell_command_line(profile.shell_type, preamble).as_bytes(),
             )
             .unwrap();
-        let after_startup_commands = visible_now();
+        let after_startup_commands_has_encoding = visible_now("OutputEncoding");
         manager.close_all();
 
         assert!(
-            !after_handshake.contains("OutputEncoding"),
-            "folded into the handshake it still reached the terminal:\n{after_handshake}"
+            !after_handshake_has_encoding,
+            "the encoding command reached the model during the handshake"
         );
         assert!(
-            !after_handshake.contains(&marker),
-            "the readiness marker reached the terminal:\n{after_handshake}"
+            !after_handshake_has_marker,
+            "the readiness marker reached the model"
         );
         assert!(
-            after_startup_commands.contains("OutputEncoding"),
-            "sent after the handshake it should be visible, so this test is \
-             actually measuring the handshake:\n{after_startup_commands}"
+            after_startup_commands_has_encoding,
+            "sent after the handshake the encoding command should be visible, \
+             so this test is actually measuring the handshake"
         );
     }
 }

@@ -41,7 +41,7 @@ describe("insertCommand", () => {
 });
 
 describe("runCommand", () => {
-  it("writes the command followed by Enter (\\r, the xterm Enter sequence)", async () => {
+  it("writes the command followed by Enter (\\r, the terminal sequence)", async () => {
     await runCommand("session-1", "pnpm dev");
     expect(writeMock).toHaveBeenCalledTimes(1);
     expect(writeMock).toHaveBeenCalledWith("session-1", "pnpm dev\r");

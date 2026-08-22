@@ -16,8 +16,8 @@ const { terminalViewRender } = vi.hoisted(() => ({
   terminalViewRender: vi.fn(),
 }));
 
-vi.mock("./TerminalView", () => ({
-  TerminalView: (props: { sessionId: string }) => {
+vi.mock("./wezterm/WeztermTerminalView", () => ({
+  WeztermTerminalView: (props: { sessionId: string }) => {
     terminalViewRender(props.sessionId);
     return null;
   },

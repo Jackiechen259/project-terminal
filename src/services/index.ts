@@ -6,7 +6,12 @@
 
 import { Channel, invoke as tauriInvoke } from "@tauri-apps/api/core";
 
-import type { TerminalSessionFrame } from "@/lib/terminalFrames";
+import type {
+  TerminalRenderMessage,
+  TerminalSelectionPoint,
+  TerminalSearchMatch,
+  TerminalSearchQuery,
+} from "@/lib/terminalFrames";
 import type {
   PlatformInfo,
   ProfileTemplate,
@@ -146,8 +151,9 @@ export interface WindowsTerminalScanResult {
 /**
  * A colour scheme the user imported, as stored by the backend.
  *
- * Flat rather than an xterm `ITheme` because that is the shape both Windows
- * Terminal and the on-disk file use; `toTerminalColorScheme` reshapes it.
+ * Flat rather than a nested renderer theme because that is the shape both
+ * Windows Terminal and the on-disk file use; `toTerminalColorScheme` reshapes
+ * it.
  */
 export interface StoredColorScheme {
   id: string;
@@ -251,11 +257,15 @@ export interface CreateTerminalRequest {
   rows: number;
   cols: number;
   scrollbackMegabytes?: number;
+  /** Visible rows retained by the Rust terminal model. */
+  scrollbackLines?: number;
 }
 
 export type {
-  TerminalControlFrame,
-  TerminalSessionFrame,
+  TerminalRenderMessage,
+  TerminalSelectionPoint,
+  TerminalSearchMatch,
+  TerminalSearchQuery,
 } from "@/lib/terminalFrames";
 
 export interface SessionInfo {
@@ -267,16 +277,42 @@ export interface SessionInfo {
   createdAt: string;
 }
 
-export interface SessionAttachment {
+export interface RenderSessionAttachment {
   session: SessionInfo;
-  /** base64-encoded raw PTY history captured before live events. */
-  scrollback?: string;
-  /** Output and historical grid changes in their original order. */
-  replay?: Array<
-    | { type: "output"; data: string }
-    | { type: "resize"; rows: number; cols: number }
-  >;
-  truncated: boolean;
+}
+
+export interface TerminalKeyEvent {
+  key: string;
+  code?: string;
+  location?: number;
+  numLock?: boolean;
+  shift?: boolean;
+  alt?: boolean;
+  ctrl?: boolean;
+  meta?: boolean;
+}
+
+export type TerminalMouseEventKind = "press" | "release" | "move";
+export type TerminalMouseButton =
+  | "left"
+  | "middle"
+  | "right"
+  | "wheel-up"
+  | "wheel-down"
+  | "wheel-left"
+  | "wheel-right"
+  | "none";
+
+export interface TerminalMouseEvent {
+  kind: TerminalMouseEventKind;
+  button: TerminalMouseButton;
+  x: number;
+  y: number;
+  xPixelOffset?: number;
+  yPixelOffset?: number;
+  shift?: boolean;
+  alt?: boolean;
+  ctrl?: boolean;
 }
 
 export interface RemoteDirectoryListing {
@@ -318,30 +354,6 @@ async function invokeOrThrow<T>(
       message: typeof e === "string" ? e : "Unexpected error",
     } satisfies FrontendError;
   }
-}
-
-/**
- * Decode a base64 string into bytes the frontend can hand to xterm.write.
- *
- * Only attach replay still travels as base64; live output crosses the IPC
- * boundary as raw bytes. WebView2 has no `Uint8Array.fromBase64` yet, so the
- * per-byte fallback is the live path today and the native branch takes over
- * for free once it ships.
- */
-function decodeBase64(b64: string): Uint8Array {
-  const nativeDecoder = (
-    Uint8Array as typeof Uint8Array & {
-      fromBase64?: (value: string) => Uint8Array;
-    }
-  ).fromBase64;
-  if (nativeDecoder) {
-    return nativeDecoder.call(Uint8Array, b64);
-  }
-
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
 }
 
 export const projectService = {
@@ -497,15 +509,15 @@ export const terminalService = {
   readClipboardText: () => invokeOrThrow<string>("read_clipboard_text"),
   create: (request: CreateTerminalRequest): Promise<string> =>
     invokeOrThrow<string>("create_terminal", { request }),
-  attach: async (
+  attachRender: async (
     sessionId: string,
     clientId: string,
-    onFrame: (frame: TerminalSessionFrame) => void,
-  ): Promise<SessionAttachment> => {
-    const channel = new Channel<TerminalSessionFrame>();
+    onFrame: (frame: TerminalRenderMessage) => void,
+  ): Promise<RenderSessionAttachment> => {
+    const channel = new Channel<TerminalRenderMessage>();
     channel.onmessage = onFrame;
-    return invokeOrThrow<SessionAttachment>("session_attach", {
-      onOutput: channel,
+    return invokeOrThrow<RenderSessionAttachment>("session_attach_render", {
+      onFrame: channel,
       sessionId,
       clientId,
     });
@@ -528,11 +540,35 @@ export const terminalService = {
     invokeOrThrow<SessionInfo>("session_get", { sessionId }),
   write: (sessionId: string, data: string) =>
     invokeOrThrow<void>("write_terminal", { sessionId, data }),
-  // xterm's `onBinary` payload is not text; it must not be UTF-8 encoded.
-  writeBinary: (sessionId: string, data: Uint8Array) =>
-    invokeOrThrow<void>("write_terminal_binary", {
+  keyDown: (sessionId: string, event: TerminalKeyEvent) =>
+    invokeOrThrow<void>("terminal_key_down", { sessionId, event }),
+  textInput: (sessionId: string, text: string) =>
+    invokeOrThrow<void>("terminal_text_input", { sessionId, text }),
+  mouseEvent: (sessionId: string, event: TerminalMouseEvent) =>
+    invokeOrThrow<void>("terminal_mouse_event", { sessionId, event }),
+  paste: (sessionId: string, text: string) =>
+    invokeOrThrow<void>("terminal_paste", { sessionId, text }),
+  bracketedPasteEnabled: (sessionId: string) =>
+    invokeOrThrow<boolean>("terminal_bracketed_paste_enabled", { sessionId }),
+  search: (sessionId: string, query: TerminalSearchQuery) =>
+    invokeOrThrow<TerminalSearchMatch[]>("terminal_search", {
       sessionId,
-      data: Array.from(data),
+      query,
+    }),
+  selectionText: (
+    sessionId: string,
+    anchor: TerminalSelectionPoint,
+    focus: TerminalSelectionPoint,
+  ) =>
+    invokeOrThrow<string>("terminal_selection_text", {
+      sessionId,
+      anchor,
+      focus,
+    }),
+  setViewport: (sessionId: string, stableRow: number) =>
+    invokeOrThrow<void>("terminal_set_viewport", {
+      sessionId,
+      stableRow,
     }),
   resize: (
     sessionId: string,
@@ -552,7 +588,6 @@ export const terminalService = {
     invokeOrThrow<void>("close_terminal", { sessionId }),
   restart: (sessionId: string): Promise<string> =>
     invokeOrThrow<string>("restart_terminal", { sessionId }),
-  decodeBase64,
   /**
    * Open a link from terminal output in the user's browser. The backend
    * re-validates the scheme; never navigate the WebView to it.

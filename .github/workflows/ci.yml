@@ -54,20 +54,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      # src-tauri/build.rs vendors xterm assets out of node_modules for the
-      # mobile remote page, so the Rust build needs the frontend deps present.
-      - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
-
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 

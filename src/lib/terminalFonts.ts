@@ -213,7 +213,7 @@ export function hasNerdFontGlyphs(
 }
 
 /**
- * Build the `fontFamily` xterm should use.
+ * Build the `fontFamily` the terminal renderer should use.
  *
  * The user's choice leads; the bundled font and the shipped-with-Windows
  * faces follow so a stale saved family, or one uninstalled since, still
@@ -257,11 +257,11 @@ let bundledFontReady: Promise<void> | undefined;
 /**
  * Resolve once the bundled font is usable for measurement.
  *
- * xterm sizes its character cell by rendering into a hidden element the
- * moment it is constructed. Build it before the webfont has loaded and it
- * measures the fallback, leaving the grid wrong for the rest of the session -
- * a resize does not fix it, because the cached cell size is what the resize
- * is computed from.
+ * The renderer sizes its character cell by measuring the font when it is
+ * constructed. Build it before the webfont has loaded and it measures the
+ * fallback, leaving the grid wrong for the rest of the session - a resize
+ * does not fix it, because the cached cell size is what the resize is computed
+ * from.
  */
 export function whenTerminalFontReady(): Promise<void> {
   bundledFontReady ??= (async () => {

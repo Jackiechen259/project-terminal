@@ -24,7 +24,7 @@ Project Terminal 是一款以 Windows 为优先支持平台的桌面终端工作
 
 Project Terminal 并没有将无关会话混杂在全局标签栏中，而是按**项目 (Project)** 来组织终端。每个项目都拥有独立的终端标签页组与终端配置 (Profiles)。切换项目只会改变当前可见的工作区，而不会中断后台正在运行的 PTY 会话。
 
-当前发布版本为 **v0.5.1**。
+当前发布版本为 **v0.5.12**。
 
 ## 功能特性
 
@@ -152,26 +152,27 @@ remote-config.json    远程网关偏好设置与局域网访问控制
 ```text
 React / TypeScript UI 前端
         │
-        │ Tauri 命令与通道 (Channels)
+        │ Tauri 命令、RenderFrame 与语义化输入
         ▼
 Rust 应用后端
         │
         ├── 项目 (Project)、配置 (Profile)、SSH 与设置存储仓 (Repositories)
         ├── Shell 与开发环境解析器
         ├── 桌面进程唯一持有的终端会话管理器
+        │       ├── Rust wezterm-term 终端模型
+        │       └── portable-pty / ConPTY
         ├── 经身份验证的远程 HTTP/WebSocket 网关
-        └── portable-pty
-                │
-                ├── PowerShell / CMD / Git Bash
-                ├── WSL
-                └── 系统内置 OpenSSH 客户端
+        └── PowerShell / CMD / Git Bash / WSL / 系统内置 OpenSSH 客户端
 ```
 
 ### 终端会话 (Terminal Sessions)
 
-每个终端标签页都在 Rust 后端通过 `portable-pty` 创建并拥有独立的 PTY。前端向后端发送输入字节流，并通过与会话 ID 绑定的 Tauri Channel 实时接收终端输出。
+每个终端标签页都在 Rust 后端通过 `portable-pty` 创建独立 PTY，并拥有独立
+的 `wezterm-term` 终端模型。前端发送语义化的按键、文本、鼠标、粘贴、调整
+大小与视口事件；Rust 负责编码终端输入，并通过 Tauri Channel 返回带 dirty
+row 的 RenderFrame 与控制事件。
 
-桌面进程是实时 PTY 的唯一所有者。Tauri 命令适配器与可选远程网关共享同一个终端管理器，因此本地端与远程端的会话生命周期和状态不会产生分歧。隐藏窗口会保持该进程运行；完全退出应用时会停止全部 PTY。
+桌面进程是实时 PTY 与终端模型的唯一所有者。Tauri 命令适配器与可选远程网关共享同一个终端管理器，因此本地端与远程端的会话生命周期和状态不会产生分歧。隐藏或后台 renderer 被卸载时不会暂停或杀掉会话；完全退出应用时会停止全部 PTY。
 
 ### 终端内嵌图片 (Inline Images)
 
@@ -204,7 +205,7 @@ Profile 作为项目的一等资源进行存储。Rust 后端会根据已保存�
 - 未保存的密码与私钥口令直接在 PTY 终端内输入，不会持久化或记录日志。用户明确保存的密码由 Windows 凭据管理器保护，并通过应用内受限的 askpass 辅助入口提供给 OpenSSH。
 - 绝不存储任何私钥文件内容。
 - Shell 及 SSH 参数以参数数组形式传递，严禁使用拼接字符串。
-- 终端输入进行逐字节转发，不对内容进行解析或记录。
+- 终端输入以语义化事件发送，由 Rust 终端模型编码；输入内容不会被解析用于日志，也不会被记录。
 - Tauri 权限 (Capabilities) 严格限制为应用所需的最少权限。
 - 配置文件写入具备原子性保护，损坏文件自动保留以供恢复。
 
@@ -217,7 +218,8 @@ Profile 作为项目的一等资源进行存储。Rust 后端会根据已保存�
 | 前端 | React 18, TypeScript, Vite |
 | UI | Tailwind CSS, Radix UI, shadcn/ui, Lucide |
 | 状态管理 | Zustand |
-| 终端渲染 | xterm.js |
+| 终端模拟核心 | Rust 中的 `wezterm-term` |
+| 终端渲染 | Canvas2D，并可使用 WebGL2 加速/回退 |
 | PTY 后端 | portable-pty |
 | 持久化 | JSON 文件 |
 | SSH | 系统内置 OpenSSH 客户端 |
@@ -257,6 +259,12 @@ pnpm dev
 
 纯前端模式适用于 UI 开发，但 PTY、本地文件持久化、SSH 等 Tauri 原生能力需要运行完整的桌面应用。
 
+### 终端渲染器
+
+Rust/WezTerm 终端引擎现在是默认实现。可在「设置 › 外观」中选择 renderer：
+`auto` 会在可用时选择 WebGL2，否则回退到 Canvas2D；`dom` 是为已有设置保留
+的软件 renderer 持久化名称。
+
 ### 构建安装包
 
 ```powershell
@@ -283,6 +291,8 @@ src-tauri/target/release/bundle/
 | `pnpm format` | 使用 Prettier 格式化前端代码 |
 | `pnpm format:check` | 检查前端代码格式 |
 | `pnpm bump` | 自动升级并同步项目版本号 (package.json / Tauri 配置) |
+| `pwsh -NoLogo -NoProfile -File scripts/terminal-gui-performance.ps1 -Counts 1,5,10` | 在 Windows 可见 GUI 中运行真实 PTY 的 active/background 性能矩阵（受限 WebView2 环境需提升权限） |
+| `pwsh -NoLogo -NoProfile -File scripts/terminal-gui-interaction.ps1 -SplitAdditionalPanes 3` | 测量语义化输入、大输出、活动 PTY 快速 resize、四 pane 渲染与 GUI 正常退出（受限 WebView2 环境需提升权限） |
 
 Rust 代码检查与测试：
 
@@ -355,7 +365,7 @@ git push origin v0.3.0
 
 发布工作流将自动构建 Windows 与 Linux 安装包、为更新包签名、创建 GitHub Release 并发布更新元数据。
 
-仓库中必须设置 GitHub Actions secret `TAURI_SIGNING_PRIVATE_KEY`。私钥绝不可提交至代码库。请妥善保管备份，因为已安装的客户端信任与该私钥匹配并嵌入在 Tauri 配置中的公钥。
+仓库中必须设置 GitHub Actions secret `TAURI_SIGNING_PRIVATE_KEY`；如果私钥已加密，还必须设置 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。这两个 secret 都绝不可提交至代码库。请妥善保管备份，因为已安装的客户端信任与该私钥匹配并嵌入在 Tauri 配置中的公钥。
 
 ## 已知局限性
 
@@ -369,3 +379,6 @@ git push origin v0.3.0
 ## 开源协议
 
 基于 [Apache License 2.0](./LICENSE) 协议开源。
+
+WezTerm 直接依赖、许可证及固定 revision 记录在
+[`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md) 中。

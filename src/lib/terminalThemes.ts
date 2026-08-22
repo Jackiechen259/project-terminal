@@ -1,15 +1,37 @@
-import type { ISearchDecorationOptions } from "@xterm/addon-search";
-import type { ITheme } from "@xterm/xterm";
-
 import type { AppTheme } from "@/stores/settingsStore";
+
+export interface TerminalTheme {
+  background: string;
+  foreground: string;
+  cursor?: string;
+  cursorAccent?: string;
+  selectionBackground?: string;
+  selectionInactiveBackground?: string;
+  black?: string;
+  red?: string;
+  green?: string;
+  yellow?: string;
+  blue?: string;
+  magenta?: string;
+  cyan?: string;
+  white?: string;
+  brightBlack?: string;
+  brightRed?: string;
+  brightGreen?: string;
+  brightYellow?: string;
+  brightBlue?: string;
+  brightMagenta?: string;
+  brightCyan?: string;
+  brightWhite?: string;
+}
 
 // `selectionForeground` is deliberately left unset in every theme. Setting it
 // flattens selected text to a single colour, discarding the ANSI colours that
 // are the whole point of selecting terminal output. Readability of the
-// selection is instead handled by `minimumContrastRatio`, which xterm applies
-// against the selection background.
+// selection is instead handled by `minimumContrastRatio`, which the renderer
+// applies against the selection background.
 
-const dark: ITheme = {
+const dark: TerminalTheme = {
   background: "#09090b",
   foreground: "#fafafa",
   cursor: "#fafafa",
@@ -34,7 +56,7 @@ const dark: ITheme = {
   brightWhite: "#fafafa",
 };
 
-const eyeCare: ITheme = {
+const eyeCare: TerminalTheme = {
   background: "#f5f1e5",
   foreground: "#362f26",
   cursor: "#655b47",
@@ -59,7 +81,7 @@ const eyeCare: ITheme = {
   brightWhite: "#fffaf0",
 };
 
-const light: ITheme = {
+const light: TerminalTheme = {
   background: "#ffffff",
   foreground: "#18181b",
   cursor: "#27272a",
@@ -84,7 +106,7 @@ const light: ITheme = {
   brightWhite: "#fafafa",
 };
 
-export const TERMINAL_THEMES: Record<AppTheme, ITheme> = {
+export const TERMINAL_THEMES: Record<AppTheme, TerminalTheme> = {
   dark,
   "eye-care": eyeCare,
   light,
@@ -96,55 +118,11 @@ const TERMINAL_MINIMUM_CONTRAST: Record<AppTheme, number> = {
   light: 4.5,
 };
 
-export function getTerminalTheme(theme: AppTheme | undefined): ITheme {
+export function getTerminalTheme(theme: AppTheme | undefined): TerminalTheme {
   return TERMINAL_THEMES[theme ?? "dark"] ?? dark;
 }
 
 /** Keep agent-generated ANSI and truecolor text readable on pale backgrounds. */
 export function getTerminalMinimumContrast(theme: AppTheme | undefined) {
   return TERMINAL_MINIMUM_CONTRAST[theme ?? "dark"] ?? 1;
-}
-
-/**
- * Highlight colours for search matches, including the overview ruler marks
- * that make an off-screen match visible in the scrollbar gutter.
- *
- * Search decorations are opt-in per query: without this object the addon
- * renders no highlight at all, and the terminal only scrolls to each match.
- */
-const TERMINAL_SEARCH_DECORATIONS: Record<AppTheme, ISearchDecorationOptions> =
-  {
-    dark: {
-      matchBackground: "#3f3f46",
-      matchBorder: "#52525b",
-      matchOverviewRuler: "#a1a1aa",
-      activeMatchBackground: "#a16207",
-      activeMatchBorder: "#facc15",
-      activeMatchColorOverviewRuler: "#facc15",
-    },
-    "eye-care": {
-      matchBackground: "#e0d3b2",
-      matchBorder: "#b9a97f",
-      matchOverviewRuler: "#8a7b56",
-      activeMatchBackground: "#e8c46a",
-      activeMatchBorder: "#8a651d",
-      activeMatchColorOverviewRuler: "#8a651d",
-    },
-    light: {
-      matchBackground: "#dbeafe",
-      matchBorder: "#93c5fd",
-      matchOverviewRuler: "#60a5fa",
-      activeMatchBackground: "#fde68a",
-      activeMatchBorder: "#a16207",
-      activeMatchColorOverviewRuler: "#a16207",
-    },
-  };
-
-export function getTerminalSearchDecorations(
-  theme: AppTheme | undefined,
-): ISearchDecorationOptions {
-  return (
-    TERMINAL_SEARCH_DECORATIONS[theme ?? "dark"] ??
-    TERMINAL_SEARCH_DECORATIONS.dark
-  );
 }

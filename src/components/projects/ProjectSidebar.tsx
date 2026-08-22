@@ -146,7 +146,7 @@ function sameDropTarget(a: DropTarget | null, b: DropTarget): boolean {
 /**
  * Sidebar listing saved projects, optionally grouped into collections.
  * Selecting a project switches the terminal workspace to that project's tab
- * group without tearing down any PTY or xterm instance. Projects can be
+ * group without tearing down any PTY or terminal renderer. Projects can be
  * dragged into collections (or out to ungrouped) using pointer events, which
  * avoids platform-specific native drag-and-drop cursors.
  */

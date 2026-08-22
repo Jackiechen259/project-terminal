@@ -20,10 +20,19 @@ export function getAppShortcut(event: KeyboardEvent): AppShortcut | null {
   if (event.altKey && (key === "arrowleft" || key === "arrowup")) {
     return { type: "focus-pane", delta: -1 };
   }
-  if (event.shiftKey && key === "\\") {
+  // `Shift+Backslash` is reported as `|` by Chromium on a US keyboard. Use
+  // the physical code as the stable fallback so the split shortcut works
+  // across keyboard layouts.
+  if (
+    event.shiftKey &&
+    (key === "\\" || key === "|" || event.code === "Backslash")
+  ) {
     return { type: "split-pane", direction: "side-by-side" };
   }
-  if (event.shiftKey && key === "-") {
+  if (
+    event.shiftKey &&
+    (key === "-" || key === "_" || event.code === "Minus")
+  ) {
     return { type: "split-pane", direction: "stacked" };
   }
   if (event.shiftKey && key === "t") return { type: "new-terminal" };

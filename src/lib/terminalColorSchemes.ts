@@ -1,7 +1,5 @@
-import type { ITheme } from "@xterm/xterm";
-
 import type { StoredColorScheme } from "@/services";
-import { TERMINAL_THEMES } from "@/lib/terminalThemes";
+import { TERMINAL_THEMES, type TerminalTheme } from "@/lib/terminalThemes";
 import type { AppTheme } from "@/stores/settingsStore";
 
 /**
@@ -22,7 +20,7 @@ export interface TerminalColorScheme {
   name: string;
   /** Who to credit. Shown under the swatches; absent for our own. */
   attribution?: string;
-  theme: ITheme;
+  theme: TerminalTheme;
 }
 
 /**
@@ -54,7 +52,8 @@ export function relativeLuminance(color: string): number {
 const LIGHT_BACKGROUND_LUMINANCE = 0.5;
 
 /**
- * Minimum contrast xterm should enforce between text and its background.
+ * Minimum contrast the terminal renderer should enforce between text and its
+ * background.
  *
  * Derived from the scheme's own background rather than the application theme.
  * Keying it to the theme was correct while the two were the same setting and
@@ -65,7 +64,7 @@ const LIGHT_BACKGROUND_LUMINANCE = 0.5;
  * `1` disables the adjustment, which is what a dark background wants - it
  * preserves the palette exactly as its author intended.
  */
-export function minimumContrastFor(theme: ITheme): number {
+export function minimumContrastFor(theme: Partial<TerminalTheme>): number {
   const background = theme.background ?? "#000000";
   return relativeLuminance(background) > LIGHT_BACKGROUND_LUMINANCE ? 4.5 : 1;
 }
@@ -73,7 +72,7 @@ export function minimumContrastFor(theme: ITheme): number {
 function scheme(
   id: string,
   name: string,
-  theme: ITheme,
+  theme: TerminalTheme,
   attribution?: string,
 ): TerminalColorScheme {
   return { id, name, theme, attribution };
@@ -384,12 +383,12 @@ export const BUILT_IN_COLOR_SCHEMES: TerminalColorScheme[] = [
 ];
 
 /**
- * Reshape a stored scheme into the form xterm wants.
+ * Reshape a stored scheme into the form the terminal renderer wants.
  *
  * The stored form is flat because that is what Windows Terminal writes and
- * what a shared scheme file looks like; xterm wants a nested `ITheme`. Doing
- * the conversion here rather than at the storage boundary keeps the on-disk
- * format recognisable to anyone who opens it.
+ * what a shared scheme file looks like; the renderer consumes a nested theme.
+ * Doing the conversion here rather than at the storage boundary keeps the
+ * on-disk format recognisable to anyone who opens it.
  */
 export function toTerminalColorScheme(
   stored: StoredColorScheme,
@@ -416,7 +415,7 @@ export const ANSI_SWATCH_KEYS = [
   "brightMagenta",
   "brightCyan",
   "brightWhite",
-] as const satisfies readonly (keyof ITheme)[];
+] as const satisfies readonly (keyof TerminalTheme)[];
 
 /**
  * Resolve a saved selection to a palette.

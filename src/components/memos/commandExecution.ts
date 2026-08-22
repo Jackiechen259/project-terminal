@@ -5,7 +5,7 @@
  * same one the user is typing in - so Local / WSL / SSH all resolve through
  * the session's own environment. Nothing here spawns a shell; these helpers
  * only forward keystrokes into the live terminal, exactly like the user
- * typing. Enter is `\r` (the sequence xterm emits for the Enter key).
+ * typing. Enter is `\r`, the conventional terminal carriage-return key.
  */
 
 import { terminalService } from "@/services";

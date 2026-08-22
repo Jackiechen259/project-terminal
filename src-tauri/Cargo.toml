@@ -42,6 +42,14 @@ serde_json = "1"
 thiserror = "2"
 parking_lot = "0.12"
 portable-pty = "0.8"
+# Pin the terminal model to a reviewed upstream revision. Do not replace this
+# with branch = "main": the engine API and dependency graph are intentionally
+# reproducible during the migration.
+wezterm-term = { git = "https://github.com/wezterm/wezterm.git", rev = "770d8e1a7519a9a698090cd7d717d0c64aa0a755" }
+wezterm-cell = { git = "https://github.com/wezterm/wezterm.git", rev = "770d8e1a7519a9a698090cd7d717d0c64aa0a755" }
+# Terminal cursor enums are exposed by wezterm-term through this dependency's
+# public CursorPosition fields; keep the direct API pin aligned with the core.
+wezterm-surface = { git = "https://github.com/wezterm/wezterm.git", rev = "770d8e1a7519a9a698090cd7d717d0c64aa0a755" }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "io-util", "time", "net"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -49,7 +57,6 @@ dirs = "5"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 base64 = "0.22"
-bytes = "1"
 tempfile = "3"
 axum = { version = "0.8", features = ["ws"] }
 futures-util = "0.3"
@@ -57,16 +64,16 @@ futures-util = "0.3"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "Win32_UI_WindowsAndMessaging"] }
 # Reports the real OS build. `GetVersionExW` lies without an application
-# manifest; this reads the version resource instead. xterm.js needs the build
-# to pick the right ConPTY resize model.
+# manifest; this reads the version resource instead. The terminal engine needs
+# the build to pick the right ConPTY resize model.
 windows-version = "0.1"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
 
 [profile.release]
-# Cross-crate inlining matters here: the PTY hot path spans session, scrollback
-# and the Tauri IPC layer.
+# Cross-crate inlining matters here: the PTY hot path spans session, terminal
+# model parsing, and the Tauri IPC layer.
 lto = true
 codegen-units = 1
 strip = true

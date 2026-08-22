@@ -6,10 +6,12 @@ import { cn } from "@/lib/utils";
 import { useProfileStore } from "@/stores/profileStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 
-import { loadTerminalView } from "./terminalViewLoader";
+import { loadWeztermTerminalView } from "./terminalViewLoader";
 
 const LazyTerminalView = lazy(() =>
-  loadTerminalView().then((module) => ({ default: module.TerminalView })),
+  loadWeztermTerminalView().then((module) => ({
+    default: module.WeztermTerminalView,
+  })),
 );
 
 interface TerminalPaneProps {
@@ -25,7 +27,7 @@ interface TerminalPaneProps {
 }
 
 /**
- * Isolates a live xterm instance from workspace-level updates. A title or
+ * Isolates a live terminal renderer from workspace-level updates. A title or
  * session status change now reconciles only this pane instead of every mounted
  * terminal across every project.
  */
@@ -66,7 +68,7 @@ export const TerminalPane = memo(function TerminalPane({
   // Only arrives when the profile opted into shell integration. Until now
   // `cwd` was written as "" at creation and never updated.
   const handleCwdChange = useCallback(
-    (cwd: string) => updateTab(tabId, { cwd }),
+    (cwd: string | null) => updateTab(tabId, { cwd: cwd ?? "" }),
     [tabId, updateTab],
   );
   const handleCommandFinished = useCallback(
@@ -146,9 +148,9 @@ export const TerminalPane = memo(function TerminalPane({
       )}
       {splitActive && !focused ? (
         // A scrim rather than `opacity` on the pane itself: opacity promotes
-        // the xterm canvas into its own compositing layer, which can cost the
-        // WebGL fast path. Not focusable and click-through, so selecting this
-        // pane still works.
+        // the terminal canvas into its own compositing layer, which can cost
+        // the WebGL fast path. Not focusable and click-through, so selecting
+        // this pane still works.
         <div
           aria-hidden
           className="pointer-events-none absolute inset-0 bg-background/20"

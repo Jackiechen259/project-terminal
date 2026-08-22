@@ -86,8 +86,8 @@ interface CondaEnvOption {
  * Plan §10/§25.5: render EVERY project's TerminalViews at once. Non-active
  * projects have their containers hidden via CSS `display:none`. Switching
  * projects only changes which container is visible - the PTY readers and
- * xterm instances for other projects keep running. This is the core
- * invariant: project switching must NOT close sessions or dispose xterm.
+ * terminal renderers for other projects keep running. This is the core
+ * invariant: project switching must NOT close sessions or dispose renderers.
  *
  * The workspace creates/closes backend sessions. Each TerminalView only
  * attaches to its existing session and detaches when React disposes it.
@@ -202,8 +202,8 @@ export function TerminalWorkspace() {
   const handleNewTerminal = useCallback(
     async (projectId: string, preferredProfileId?: string) => {
       setError(null);
-      // xterm is intentionally absent from the initial bundle. Start loading
-      // it now so parsing overlaps the slower backend process launch.
+      // Start loading the renderer now so it overlaps the slower backend
+      // process launch.
       preloadTerminalView();
       let pendingTabId: string | null = null;
       try {
@@ -242,6 +242,7 @@ export function TerminalWorkspace() {
           cols: 80,
           scrollbackMegabytes:
             useSettingsStore.getState().terminalScrollbackMegabytes,
+          scrollbackLines: useSettingsStore.getState().terminalScrollbackLines,
         });
         // The user may close the loading tab while process creation is still
         // in flight. Do not leak the resulting backend session in that race.
@@ -490,6 +491,7 @@ export function TerminalWorkspace() {
           cols: 80,
           scrollbackMegabytes:
             useSettingsStore.getState().terminalScrollbackMegabytes,
+          scrollbackLines: useSettingsStore.getState().terminalScrollbackLines,
         });
         const tab: TerminalTab = {
           id: crypto.randomUUID(),
@@ -529,6 +531,8 @@ export function TerminalWorkspace() {
             cols: 80,
             scrollbackMegabytes:
               useSettingsStore.getState().terminalScrollbackMegabytes,
+            scrollbackLines:
+              useSettingsStore.getState().terminalScrollbackLines,
           });
       updateTab(tabId, {
         sessionId,
@@ -670,7 +674,7 @@ export function TerminalWorkspace() {
   useEffect(() => {
     const isEditableControl = (target: EventTarget | null) => {
       if (!(target instanceof Element)) return false;
-      if (target.closest(".xterm")) return false;
+      if (target.closest(".terminal-renderer")) return false;
       return Boolean(
         target.closest(
           "input, textarea, select, [contenteditable='true'], [role='dialog']",
@@ -744,7 +748,8 @@ export function TerminalWorkspace() {
     };
 
     // Capture phase ensures these commands win over WebView2's Edge-style
-    // browser accelerators, including while xterm's hidden textarea is focused.
+    // browser accelerators, including while the terminal's hidden textarea is
+    // focused.
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     return () =>
       window.removeEventListener("keydown", handleKeyDown, { capture: true });
@@ -1174,9 +1179,9 @@ export function TerminalWorkspace() {
               </div>
             ) : null}
             {/*
-              Every TerminalView stays in this same keyed list. Only its CSS
+              Every terminal view stays in this same keyed list. Only its CSS
               bounds change when entering or leaving a split, so a layout
-              change never disposes/recreates an xterm instance or its PTY.
+              change never disposes/recreates a renderer or its PTY.
             */}
             {Object.values(tabsById).map((tab) => {
               const pane = paneRenderByTabId.get(tab.id);

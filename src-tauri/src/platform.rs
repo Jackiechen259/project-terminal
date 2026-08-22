@@ -68,10 +68,10 @@ impl HostOs {
 
 /// The Windows build number, or `None` off Windows.
 ///
-/// xterm.js needs it to model ConPTY correctly: growing the window must push
-/// blank lines rather than pull rows out of scrollback, and scrollback reflow
-/// is only sound once ConPTY started marking wrapped lines (build 21376).
-/// Without a build number xterm cannot tell those two eras apart.
+/// The terminal engine needs it to model ConPTY correctly: growing the window
+/// must push blank lines rather than pull rows out of scrollback, and scrollback
+/// reflow is only sound once ConPTY started marking wrapped lines (build 21376).
+/// Without a build number those two eras cannot be distinguished safely.
 fn windows_build() -> Option<u32> {
     #[cfg(windows)]
     {
@@ -90,8 +90,8 @@ fn windows_build() -> Option<u32> {
 #[serde(rename_all = "camelCase")]
 pub struct PlatformInfo {
     pub os: HostOs,
-    /// Windows build number, `None` elsewhere. Drives the xterm `windowsPty`
-    /// option; see [`windows_build`].
+    /// Windows build number, `None` elsewhere. Drives the ConPTY compatibility
+    /// options; see [`windows_build`].
     pub windows_build: Option<u32>,
     pub wsl_supported: bool,
     pub available_project_types: Vec<ProjectType>,

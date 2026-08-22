@@ -1,8 +1,9 @@
 //! Terminal manager: holds all live sessions keyed by session id.
 //!
-//! Phase 3 wires local shells. The manager is process-wide state shared via
-//! Tauri's `manage()`. Closing a session kills the child process so it does
-//! not leak when the user closes the tab or quits the app.
+//! The manager owns all local, WSL, and interactive SSH sessions. It is
+//! process-wide state shared via Tauri's `manage()`. Closing a session kills
+//! the child process so it does not leak when the user closes the tab or quits
+//! the app.
 //!
 //! The sessions map lives behind an `Arc<RwLock<...>>` so independent
 //! lookups can proceed concurrently while the exit handler's `clone_handle()`
@@ -15,8 +16,9 @@ use parking_lot::RwLock;
 
 use crate::error::{AppError, AppResult};
 
-use super::scrollback::ScrollbackSnapshotFormat;
-use super::session::{SessionSpawn, SessionStatus, SessionSubscription, TerminalSession};
+use super::frame_scheduler::TerminalFrameSubscription;
+use super::session::{SessionSpawn, SessionStatus, TerminalSession, TerminalStatusEvent};
+use crate::terminal_engine::{TerminalKeyEvent, TerminalMouseEvent};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -97,18 +99,65 @@ impl TerminalManager {
         session.write(data)
     }
 
-    pub fn attach(
+    pub fn key_down(&self, session_id: &str, event: &TerminalKeyEvent) -> AppResult<()> {
+        self.get(session_id)?.key_down(event)
+    }
+
+    pub fn text_input(&self, session_id: &str, text: &str) -> AppResult<()> {
+        self.get(session_id)?.text_input(text)
+    }
+
+    pub fn mouse_event(&self, session_id: &str, event: &TerminalMouseEvent) -> AppResult<()> {
+        self.get(session_id)?.mouse_event(event)
+    }
+
+    pub fn send_paste(&self, session_id: &str, text: &str) -> AppResult<()> {
+        self.get(session_id)?.send_paste(text)
+    }
+
+    pub fn bracketed_paste_enabled(&self, session_id: &str) -> AppResult<bool> {
+        Ok(self.get(session_id)?.bracketed_paste_enabled())
+    }
+
+    pub fn search(
+        &self,
+        session_id: &str,
+        query: &crate::terminal_engine::TerminalSearchQuery,
+    ) -> AppResult<Vec<crate::terminal_engine::TerminalSearchMatch>> {
+        Ok(self.get(session_id)?.search(query))
+    }
+
+    pub fn selection_text(
+        &self,
+        session_id: &str,
+        anchor: &crate::terminal_engine::TerminalSelectionPoint,
+        focus: &crate::terminal_engine::TerminalSelectionPoint,
+    ) -> AppResult<String> {
+        Ok(self.get(session_id)?.selection_text(anchor, focus))
+    }
+
+    pub fn set_viewport_top(&self, session_id: &str, stable_row: i64) -> AppResult<()> {
+        self.get(session_id)?.set_viewport_top(stable_row);
+        Ok(())
+    }
+
+    pub fn attach_renderer(
         &self,
         session_id: &str,
         client_id: String,
-        snapshot_format: ScrollbackSnapshotFormat,
-    ) -> AppResult<(SessionInfo, SessionSubscription)> {
+    ) -> AppResult<(
+        SessionInfo,
+        TerminalFrameSubscription,
+        tokio::sync::broadcast::Receiver<TerminalStatusEvent>,
+    )> {
         let session = self.get(session_id)?;
-        let subscription = session.attach(client_id, snapshot_format);
-        // Read state after subscribing so an exit that races attach is
-        // represented either in this snapshot or in the event receiver.
+        let (subscription, status_receiver) = session.attach_renderer(client_id);
         let info = SessionInfo::from(session.as_ref());
-        Ok((info, subscription))
+        Ok((info, subscription, status_receiver))
+    }
+
+    pub fn renderer_count(&self, session_id: &str) -> AppResult<usize> {
+        Ok(self.get(session_id)?.renderer_count())
     }
 
     pub fn detach(&self, session_id: &str, client_id: &str) -> AppResult<()> {
@@ -203,38 +252,27 @@ mod tests {
             rows: 24,
             cols: 80,
             scrollback_bytes: 4 * 1024 * 1024,
+            scrollback_lines: None,
         }
     }
 
-    fn wait_for_text(
-        receiver: &mut tokio::sync::broadcast::Receiver<super::super::session::TerminalEvent>,
-        expected: &[u8],
-    ) {
-        use super::super::session::TerminalEventPayload;
+    fn wait_for_model_text(manager: &TerminalManager, session_id: &str, expected: &str) {
+        use crate::terminal_engine::{TerminalSearchDirection, TerminalSearchQuery};
 
         let deadline = Instant::now() + Duration::from_secs(3);
-        let mut output = Vec::new();
+        let query = TerminalSearchQuery {
+            query: expected.to_string(),
+            case_sensitive: true,
+            direction: TerminalSearchDirection::Forward,
+            start: None,
+        };
         while Instant::now() < deadline {
-            match receiver.try_recv() {
-                Ok(event) => {
-                    if let TerminalEventPayload::Output(bytes) = event.payload {
-                        output.extend_from_slice(&bytes);
-                    }
-                    if output.windows(expected.len()).any(|part| part == expected) {
-                        return;
-                    }
-                }
-                Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-                Err(error) => panic!("terminal event stream failed: {error}"),
+            if !manager.search(session_id, &query).unwrap().is_empty() {
+                return;
             }
+            std::thread::sleep(Duration::from_millis(10));
         }
-        panic!(
-            "timed out waiting for {:?}; got {:?}",
-            String::from_utf8_lossy(expected),
-            String::from_utf8_lossy(&output)
-        );
+        panic!("timed out waiting for model text {expected:?}");
     }
 
     #[test]
@@ -279,30 +317,35 @@ mod tests {
     }
 
     #[test]
-    fn detach_keeps_shell_running_and_other_subscriber_receives_output() {
+    fn detach_keeps_shell_running_and_other_renderer_receives_output() {
         let manager = TerminalManager::new();
         let id = manager.create(cmd_spawn("shared-session")).unwrap();
         manager.mark_running(&id).unwrap();
-        let (_, first) = manager
-            .attach(&id, "first".into(), ScrollbackSnapshotFormat::Replay)
-            .unwrap();
-        let (_, second) = manager
-            .attach(&id, "second".into(), ScrollbackSnapshotFormat::Replay)
-            .unwrap();
-        let mut first_receiver = first.receiver;
-        let mut second_receiver = second.receiver;
+        let (_, first, _first_status) = manager.attach_renderer(&id, "first".into()).unwrap();
+        let (_, mut second, _second_status) =
+            manager.attach_renderer(&id, "second".into()).unwrap();
 
         manager.write(&id, b"echo BOTH_CLIENTS\r\n").unwrap();
-        wait_for_text(&mut first_receiver, b"BOTH_CLIENTS");
-        wait_for_text(&mut second_receiver, b"BOTH_CLIENTS");
+        wait_for_model_text(&manager, &id, "BOTH_CLIENTS");
+        while second.frames.try_recv().is_ok() {}
 
+        // The command mirrors the renderer lifecycle: the stream task drops
+        // its subscription before the manager removes the attachment.
+        drop(first);
         manager.detach(&id, "first").unwrap();
-        assert!(
-            *first.cancellation.borrow(),
-            "detached subscription was not cancelled"
-        );
+        assert_eq!(manager.renderer_count(&id).unwrap(), 1);
         manager.write(&id, b"echo SECOND_STILL_LIVE\r\n").unwrap();
-        wait_for_text(&mut second_receiver, b"SECOND_STILL_LIVE");
+        wait_for_model_text(&manager, &id, "SECOND_STILL_LIVE");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut received_frame = false;
+        while Instant::now() < deadline {
+            if second.frames.try_recv().is_ok() {
+                received_frame = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(received_frame, "the remaining renderer received no frame");
         assert_eq!(manager.info(&id).unwrap().status, SessionStatus::Running);
 
         manager.close(&id).unwrap();
@@ -310,30 +353,101 @@ mod tests {
     }
 
     #[test]
-    fn attach_recovers_scrollback_written_without_subscribers() {
+    fn model_recovers_output_written_without_renderers() {
         let manager = TerminalManager::new();
         let id = manager.create(cmd_spawn("scrollback-session")).unwrap();
         manager.mark_running(&id).unwrap();
         manager.write(&id, b"echo RECOVERED_HISTORY\r\n").unwrap();
 
-        let deadline = Instant::now() + Duration::from_secs(3);
-        loop {
-            let (_, attachment) = manager
-                .attach(&id, "history-client".into(), ScrollbackSnapshotFormat::Flat)
-                .unwrap();
-            let history = String::from_utf8_lossy(&attachment.snapshot.bytes).into_owned();
-            if history.contains("RECOVERED_HISTORY") {
-                break;
-            }
-            manager.detach(&id, "history-client").unwrap();
-            assert!(Instant::now() < deadline, "scrollback was not updated");
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        wait_for_model_text(&manager, &id, "RECOVERED_HISTORY");
 
         let listed = manager.list();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].session_id, id);
         assert_eq!(listed[0].project_id, "project-1");
+        manager.close_all();
+    }
+
+    #[test]
+    #[ignore = "Windows multi-session stress probe; run with --ignored --nocapture"]
+    fn ten_sessions_keep_background_models_live_with_one_active_renderer() {
+        use crate::terminal_engine::{TerminalSearchDirection, TerminalSearchQuery};
+
+        let manager = TerminalManager::new();
+        let started = Instant::now();
+        let ids = (0..10)
+            .map(|index| {
+                let id = format!("multi-session-{index}");
+                manager.create(cmd_spawn(&id)).expect("spawn session");
+                manager.mark_running(&id).expect("mark running");
+                id
+            })
+            .collect::<Vec<_>>();
+
+        let (_, mut active_frames, _active_status) = manager
+            .attach_renderer(&ids[0], "active-renderer".into())
+            .expect("attach active renderer");
+        assert_eq!(manager.renderer_count(&ids[0]).unwrap(), 1);
+        for id in &ids[1..] {
+            assert_eq!(manager.renderer_count(id).unwrap(), 0);
+        }
+
+        for (index, id) in ids.iter().enumerate() {
+            manager
+                .write(id, format!("echo PT_MULTI_{index}\r\n").as_bytes())
+                .expect("write session output");
+        }
+
+        let query = |id: &str| {
+            manager.search(
+                id,
+                &TerminalSearchQuery {
+                    query: format!(
+                        "PT_MULTI_{}",
+                        ids.iter().position(|value| value == id).unwrap()
+                    ),
+                    case_sensitive: true,
+                    direction: TerminalSearchDirection::Forward,
+                    start: None,
+                },
+            )
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut all_models_ready = false;
+        let mut active_frame_ready = false;
+        while Instant::now() < deadline {
+            all_models_ready = ids.iter().all(|id| !query(id).unwrap().is_empty());
+            while let Ok(frame) = active_frames.frames.try_recv() {
+                active_frame_ready |= frame.full_snapshot
+                    || frame.dirty_rows.iter().any(|row| {
+                        row.cells
+                            .iter()
+                            .any(|cell| cell.text.contains("PT_MULTI_0"))
+                    });
+            }
+            if all_models_ready && active_frame_ready {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        assert!(
+            all_models_ready,
+            "all ten terminal models did not parse output"
+        );
+        assert!(
+            active_frame_ready,
+            "the active renderer did not receive a model frame"
+        );
+        assert!(
+            ids.iter()
+                .all(|id| manager.info(id).unwrap().status == SessionStatus::Running),
+            "a background session stopped while parsing output"
+        );
+        println!(
+            "terminal_multi_session_benchmark sessions=10 active_renderers=1 background_renderers=9 elapsed_ms={}",
+            started.elapsed().as_millis(),
+        );
         manager.close_all();
     }
 }

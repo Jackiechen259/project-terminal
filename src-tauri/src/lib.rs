@@ -19,6 +19,7 @@ mod ssh;
 mod state;
 mod storage;
 pub mod terminal;
+pub mod terminal_engine;
 mod window;
 
 use commands::terminal::TerminalState;
@@ -244,14 +245,21 @@ pub fn run() {
                 commands::ssh::read_ssh_host_fingerprint,
                 // Terminal (plan §12.3)
                 commands::terminal::create_terminal,
-                commands::terminal::session_attach,
+                commands::terminal::session_attach_render,
                 commands::terminal::session_detach,
                 commands::terminal::session_list,
                 commands::terminal::session_get,
                 commands::terminal::list_workspace_sessions,
                 commands::terminal::close_workspace_sessions,
                 commands::terminal::write_terminal,
-                commands::terminal::write_terminal_binary,
+                commands::terminal::terminal_key_down,
+                commands::terminal::terminal_text_input,
+                commands::terminal::terminal_mouse_event,
+                commands::terminal::terminal_paste,
+                commands::terminal::terminal_bracketed_paste_enabled,
+                commands::terminal::terminal_search,
+                commands::terminal::terminal_selection_text,
+                commands::terminal::terminal_set_viewport,
                 commands::terminal::resize_terminal,
                 commands::terminal::close_terminal,
                 commands::terminal::restart_terminal,

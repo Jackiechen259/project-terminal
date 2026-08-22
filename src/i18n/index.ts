@@ -131,10 +131,10 @@ const zhCN: Record<string, string> = {
   "Maximum history retained by each terminal view.":
     "每个终端视图保留的最大历史行数。",
   "Terminal scrollback lines": "终端回滚行数",
-  "Attach history memory": "重新连接历史内存",
-  "Maximum raw output retained for reattaching to a running session.":
-    "为重新连接运行中会话而保留的最大原始输出。",
-  "Terminal attach history memory": "终端重新连接历史内存",
+  "Scrollback memory": "回滚内存",
+  "Memory budget converted into a bounded terminal-model scrollback.":
+    "将内存预算转换为有界的终端模型回滚记录。",
+  "Terminal scrollback memory": "终端回滚内存",
   "Search terminal": "搜索终端",
   "Previous match": "上一个匹配项",
   "Next match": "下一个匹配项",

@@ -1,14 +1,14 @@
-//! Terminal module: PTY sessions, manager, shell escaping.
+//! Terminal module: PTY sessions, manager, shell escaping, and the
+//! portable-pty boundary shared by local, WSL, and interactive SSH sessions.
 //!
-//! Phase 3 supports local PowerShell/CMD/custom-shell sessions. SSH
-//! (`ssh.exe`) sessions arrive in Phase 6; environment initialization
-//! (Conda/venv/Poetry/uv) arrives in Phase 3.6/3.7.
+//! Environment initialization (Conda/venv/Poetry/uv) is resolved before local
+//! and remote shells become ready.
 
 pub mod conda;
 pub mod escaping;
+pub mod frame_scheduler;
 pub mod initializer;
 pub mod manager;
-pub mod scrollback;
 pub mod session;
 pub mod shell_integration;
 pub mod wsl;
@@ -21,10 +21,11 @@ use crate::error::{AppError, AppResult};
 use crate::profile::EnvironmentType;
 use crate::profile::{ShellType, TerminalProfile};
 use crate::project::ProjectType;
+pub use frame_scheduler::TerminalFrameSubscription;
 pub use initializer::{build_activation_script, build_remote_initialization_commands};
 pub use manager::{SessionInfo, TerminalManager};
 use serde::Serialize;
-pub use session::{SessionSpawn, TerminalEvent, TerminalEventPayload, TerminalOutput};
+pub use session::SessionSpawn;
 pub use wsl::{detect_wsl_distributions, DetectedWslDistribution};
 
 /// Terminal type for shells that may consult terminfo, directly or on a host
