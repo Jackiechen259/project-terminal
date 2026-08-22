@@ -762,6 +762,20 @@ mod tests {
         )
     }
 
+    fn image_engine() -> WeztermTerminalEngine {
+        WeztermTerminalEngine::new(
+            TerminalSize {
+                rows: 4,
+                cols: 12,
+                pixel_width: 1_200,
+                pixel_height: 400,
+                dpi: 96,
+            },
+            WeztermTerminalConfig::default(),
+            Box::new(NoopWriter),
+        )
+    }
+
     fn engine() -> WeztermTerminalEngine {
         engine_with_size(4, 12)
     }
@@ -868,6 +882,65 @@ mod tests {
         assert_eq!(
             row.cells[2].hyperlink.as_deref(),
             Some("https://example.com")
+        );
+    }
+
+    #[test]
+    fn decodes_iterm_inline_images_into_cached_render_cells() {
+        // A tiny valid PNG, encoded as required by OSC 1337 File=inline=1.
+        const TINY_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAsAAAALCAYAAACprHcmAAAACXBIWXMAAAGKAAABigEzlzBYAAAAOUlEQVQYlZXOwQ0AMAzCQEdi7yaT0xWAN7JuDCac2PQKYxflycOoICOKtPIuqFCg4/LzKxiz6xjyAYh9DR1sLUN1AAAAAElFTkSuQmCC";
+
+        let mut engine = image_engine();
+        let _ = engine.take_render_frame();
+        engine.feed(format!("\x1b]1337;File=inline=1:{TINY_PNG_BASE64}\x07").as_bytes());
+
+        let frame = engine.take_render_frame().expect("image frame");
+        let image = frame
+            .dirty_rows
+            .iter()
+            .flat_map(|row| row.cells.iter())
+            .flat_map(|cell| cell.images.iter())
+            .find(|image| image.data_base64.is_some())
+            .expect("inline image payload");
+
+        assert_eq!(image.mime_type, "image/png");
+        // EncodedFile intentionally leaves dimensions for the browser's image
+        // decoder; RGBA frames carry explicit dimensions in the protocol.
+        assert_eq!((image.width, image.height), (0, 0));
+        assert!(image
+            .cache_key
+            .chars()
+            .all(|character| character.is_ascii_hexdigit()));
+        assert!(image
+            .data_base64
+            .as_deref()
+            .is_some_and(|data| data == TINY_PNG_BASE64));
+    }
+
+    #[test]
+    fn decodes_sixel_graphics_into_model_owned_image_cells() {
+        let mut engine = image_engine();
+        let _ = engine.take_render_frame();
+
+        // One sixel column: define/select a red palette entry and paint one
+        // six-pixel-high column, then terminate the DCS image.
+        engine.feed(b"\x1bPq#0;2;100;0;0#0@\x1b\\");
+
+        let frame = engine.take_render_frame().expect("sixel frame");
+        let image = frame
+            .dirty_rows
+            .iter()
+            .flat_map(|row| row.cells.iter())
+            .flat_map(|cell| cell.images.iter())
+            .find(|image| image.data_base64.is_some())
+            .expect("sixel image payload");
+
+        assert_eq!(image.format, "rgba8");
+        assert_eq!(image.mime_type, "application/octet-stream");
+        assert_eq!((image.width, image.height), (1, 6));
+        assert_eq!(
+            image.data_base64.as_deref().map(|data| data.len()),
+            Some(32)
         );
     }
 
