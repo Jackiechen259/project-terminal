@@ -248,13 +248,13 @@ export function GeneralSettingsPanel() {
           </select>
         </SettingRow>
         <SettingRow
-          title={t("Attach history memory")}
+          title={t("Scrollback memory")}
           description={t(
-            "Maximum raw output retained for reattaching to a running session.",
+            "Memory budget converted into a bounded terminal-model scrollback.",
           )}
         >
           <select
-            aria-label={t("Terminal attach history memory")}
+            aria-label={t("Terminal scrollback memory")}
             className="h-9 w-24 rounded-md border border-input bg-background px-2 text-sm outline-none focus:ring-2 focus:ring-ring"
             value={terminalScrollbackMegabytes}
             onChange={(event) =>

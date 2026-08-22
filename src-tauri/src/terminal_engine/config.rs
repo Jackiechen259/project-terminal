@@ -15,9 +15,9 @@ pub fn normalize_scrollback_lines(lines: usize) -> usize {
     lines.clamp(MIN_SCROLLBACK_LINES, MAX_SCROLLBACK_LINES)
 }
 
-/// Convert the existing byte-budget setting into the line budget understood
-/// by wezterm-term. A line is estimated conservatively so the migration does
-/// not silently discard the user's configured history.
+/// Convert the compatibility memory budget into the line budget understood by
+/// wezterm-term. A line is estimated conservatively so the migration does not
+/// silently discard the user's configured history.
 pub fn scrollback_lines_for_bytes(max_bytes: usize, cols: u16) -> usize {
     let estimated_bytes_per_line = usize::from(cols.max(1)).saturating_mul(4);
     normalize_scrollback_lines(max_bytes / estimated_bytes_per_line)
@@ -102,7 +102,7 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_explicit_visible_scrollback_without_changing_raw_budget() {
+    fn normalizes_explicit_visible_scrollback_with_a_bounded_memory_budget() {
         assert_eq!(normalize_scrollback_lines(1), MIN_SCROLLBACK_LINES);
         assert_eq!(normalize_scrollback_lines(25_000), 25_000);
         assert_eq!(normalize_scrollback_lines(usize::MAX), MAX_SCROLLBACK_LINES);

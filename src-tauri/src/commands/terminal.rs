@@ -47,9 +47,12 @@ pub struct CreateTerminalRequest {
     pub rows: u16,
     pub cols: u16,
     #[serde(default)]
+    /// Compatibility memory budget used to derive a bounded model scrollback
+    /// when an explicit line count is not supplied. No raw PTY output is
+    /// retained for reattachment.
     pub scrollback_megabytes: Option<u8>,
-    /// Authoritative wezterm-term visible history. Optional for compatibility
-    /// with remote callers that only provide the raw attach-history budget.
+    /// Authoritative wezterm-term visible history. This takes precedence over
+    /// the compatibility memory budget when supplied.
     #[serde(default)]
     pub scrollback_lines: Option<u32>,
 }
@@ -95,7 +98,8 @@ struct SessionMeta {
     /// fragments into the terminal.
     rows: u16,
     cols: u16,
-    /// Attach-history budget the session was created with.
+    /// Compatibility memory budget used to derive the model scrollback when
+    /// explicit rows were not supplied.
     scrollback_megabytes: Option<u8>,
     /// Visible history rows used by the Rust terminal model.
     scrollback_lines: Option<u32>,
