@@ -298,6 +298,7 @@ src-tauri/target/release/bundle/
 | `pnpm format:check` | Check frontend formatting |
 | `pnpm bump` | Bump and sync project version across package and Tauri config files |
 | `pwsh -NoLogo -NoProfile -File scripts/terminal-gui-performance.ps1 -Counts 1,5,10` | Run the real Windows GUI/PTY active-background performance matrix (elevated WebView2 session) |
+| `pwsh -NoLogo -NoProfile -File scripts/terminal-gui-interaction.ps1 -SplitAdditionalPanes 3` | Measure semantic input, large output, active-PTY resize, four-pane rendering, and clean GUI shutdown (elevated WebView2 session) |
 Rust checks:
 
 ```powershell

@@ -292,6 +292,7 @@ src-tauri/target/release/bundle/
 | `pnpm format:check` | 检查前端代码格式 |
 | `pnpm bump` | 自动升级并同步项目版本号 (package.json / Tauri 配置) |
 | `pwsh -NoLogo -NoProfile -File scripts/terminal-gui-performance.ps1 -Counts 1,5,10` | 在 Windows 可见 GUI 中运行真实 PTY 的 active/background 性能矩阵（受限 WebView2 环境需提升权限） |
+| `pwsh -NoLogo -NoProfile -File scripts/terminal-gui-interaction.ps1 -SplitAdditionalPanes 3` | 测量语义化输入、大输出、活动 PTY 快速 resize、四 pane 渲染与 GUI 正常退出（受限 WebView2 环境需提升权限） |
 
 Rust 代码检查与测试：
 

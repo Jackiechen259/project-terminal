@@ -201,8 +201,36 @@ the complete Tauri + WebView2 + PTY process tree:
 
 All three cases exited through the application quit flow and returned
 `CleanExit=true`. This completes the current idle active/background matrix;
-historical xterm/WebGL comparison, active output throughput, input latency,
-split-pane, and rapid-resize measurements remain separate acceptance items.
+historical xterm/WebGL comparison and split-pane measurements remain separate
+acceptance items.
+
+The repeatable interaction probe at
+`scripts/terminal-gui-interaction.ps1` was run against the same elevated
+release executable on 2026-08-22. It injects text through the hidden semantic
+`Terminal input` element, sends Enter, and waits for the Rust-owned session to
+report an exited tab. It then runs a live-PTY output sample, creates another
+live session, and resizes the actual Tauri window while that session is active.
+The small acceptance sample produced:
+
+| input round trip | output sample | output elapsed / throughput | 100 resizes | final attachments | clean exit |
+| ---------------: | ------------: | -------------------------: | ----------: | ----------------: | ---------: |
+| 426.4 ms         | 10,000 x 256 bytes (2.58 MB) | 590.5 ms / 4.166 MiB/s | 581.9 ms | 1 canvas / 1 input | true |
+
+The same probe also completed an approximately 100 MiB sample (100,000 x
+1,024-byte payloads) in 453.4 ms at 215.82 MiB/s, with 100 resizes in
+716.2 ms, one canvas/input attachment after the resizes, and `CleanExit=true`.
+The throughput is an end-to-end GUI/PTY probe rather than a historical xterm
+comparison; the model's final grid dimensions are covered by the Rust resize
+tests, while the GUI sample verifies that the active renderer remains attached
+after rapid native-window resizes.
+
+The same release executable was then run with
+`-SplitAdditionalPanes 3`. The probe created four live side-by-side panes via
+the product shortcut, observed `4` canvas and `4` input attachments, completed
+10 active-window resizes in 63.7 ms, and exited cleanly. This also exposed and
+fixed a shortcut portability bug: Chromium reports the shifted backslash as
+`|` on a US keyboard, so the shortcut handler now accepts the physical
+`Backslash`/`Minus` key codes as well as the shifted characters.
 
 The formal Windows release build was rerun with the Tauri `custom-protocol`
 feature on 2026-08-22. `pnpm tauri build --bundles nsis --no-sign` completed
@@ -231,8 +259,8 @@ Rust-owned search path.
 ## Remaining acceptance work
 
 - Compare the measured GUI matrix against the historical xterm/WebGL baseline
-  and add active large-output throughput, input latency, four-pane rendering,
-  and rapid-resize samples. The non-elevated managed desktop session still
+  and capture renderer-FPS/IPC-volume comparisons where the old baseline is
+  available. The non-elevated managed desktop session still
   fails WebView2 creation with `0x800700AA` (resource in use); the matrix was
   collected in the elevated interactive session.
 - Run a signed release build when TAURI_SIGNING_PRIVATE_KEY is available.
