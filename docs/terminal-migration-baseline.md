@@ -195,9 +195,9 @@ the complete Tauri + WebView2 + PTY process tree:
 
 | sessions | shell processes | canvas/input attachments | CPU seconds | CPU % of one core | working set |
 | -------- | --------------- | ------------------------ | ----------- | ----------------- | ----------- |
-| 1        | 1               | 1 / 1                    | 0.219       | 2.19%             | 703.8 MiB  |
-| 5        | 5               | 1 / 1                    | 0.797       | 7.97%             | 1,181.7 MiB|
-| 10       | 10              | 1 / 1                    | 1.141       | 11.41%            | 1,737.1 MiB|
+| 1        | 1               | 1 / 1                    | 0.188       | 1.88%             | 633.2 MiB  |
+| 5        | 5               | 1 / 1                    | 0.766       | 7.66%             | 1,110.5 MiB|
+| 10       | 10              | 1 / 1                    | 1.156       | 11.56%            | 1,704.5 MiB|
 
 All three cases exited through the application quit flow and returned
 `CleanExit=true`. This completes the current idle active/background matrix;
