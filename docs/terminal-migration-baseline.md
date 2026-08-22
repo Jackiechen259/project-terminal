@@ -201,8 +201,25 @@ the complete Tauri + WebView2 + PTY process tree:
 
 All three cases exited through the application quit flow and returned
 `CleanExit=true`. This completes the current idle active/background matrix;
-historical xterm/WebGL comparison and split-pane measurements remain separate
-acceptance items.
+split-pane measurement is recorded below, and the historical xterm comparison
+is recorded in the next section.
+
+The historical comparison was built from detached `main` commit `d4bb44c`
+with its original `@xterm/*` runtime dependencies, using the same release
+flags, visible UI, bundled `pwsh`, and 10-second process-tree sample. The old
+UI exposed one input but did not expose a named canvas through UI Automation,
+so the table compares the complete Tauri + WebView2 + PTY CPU/RAM tree only:
+
+| sessions | old xterm CPU | wezterm CPU | CPU delta | old xterm working set | wezterm working set | RAM delta |
+| -------- | -------------: | ----------: | --------: | --------------------: | ------------------: | --------: |
+| 1        | 1.72%          | 1.88%       | +9.3%     | 602.9 MiB             | 633.2 MiB           | +5.0%    |
+| 5        | 8.28%          | 7.66%       | -7.5%     | 1,082.3 MiB           | 1,110.5 MiB         | +2.6%    |
+| 10       | 10.78%         | 11.56%      | +7.2%     | 1,681.1 MiB           | 1,704.5 MiB         | +1.4%    |
+
+Each old and new row had the expected shell count and returned
+`CleanExit=true`. These are single acceptance samples rather than a statistical
+benchmark; they show no unexplained memory growth and broadly comparable idle
+resource use, but they do not provide a renderer-FPS or IPC-byte comparison.
 
 The repeatable interaction probe at
 `scripts/terminal-gui-interaction.ps1` was run against the same elevated
@@ -217,12 +234,19 @@ The small acceptance sample produced:
 | 426.4 ms         | 10,000 x 256 bytes (2.58 MB) | 590.5 ms / 4.166 MiB/s | 581.9 ms | 1 canvas / 1 input | true |
 
 The same probe also completed an approximately 100 MiB sample (100,000 x
-1,024-byte payloads) in 453.4 ms at 215.82 MiB/s, with 100 resizes in
-716.2 ms, one canvas/input attachment after the resizes, and `CleanExit=true`.
-The throughput is an end-to-end GUI/PTY probe rather than a historical xterm
-comparison; the model's final grid dimensions are covered by the Rust resize
-tests, while the GUI sample verifies that the active renderer remains attached
-after rapid native-window resizes.
+1,024-byte payloads) in 532.2 ms at 183.86 MiB/s, with 100 resizes in
+645.6 ms, 687.9 MiB post-output working set, and `CleanExit=true`. The old
+xterm executable completed the same sample in 561.9 ms at 174.121 MiB/s,
+with 100 resizes in 651.7 ms and 756.3 MiB post-output working set. The
+wezterm sample was approximately 5.6% faster and used approximately 9.1%
+less post-output working set in this run. The model's final grid dimensions
+are covered by the Rust resize tests, while the GUI sample verifies that the
+active renderer remains attached after rapid native-window resizes.
+
+The corresponding semantic-input round trip was 555.8 ms for wezterm versus
+609.8 ms for the old xterm run. Input latency is sensitive to WebView2 startup
+and shell scheduling, so this is directional evidence rather than a latency
+distribution.
 
 The same release executable was then run with
 `-SplitAdditionalPanes 3`. The probe created four live side-by-side panes via
@@ -258,11 +282,15 @@ Rust-owned search path.
 
 ## Remaining acceptance work
 
-- Compare the measured GUI matrix against the historical xterm/WebGL baseline
-  and capture renderer-FPS/IPC-volume comparisons where the old baseline is
-  available. The non-elevated managed desktop session still
+- Capture renderer-FPS/IPC-volume comparisons if a historical trace becomes
+  available; the old xterm UI did not expose a named canvas through UI
+  Automation, and no old FPS/IPC trace exists in the repository. The
+  non-elevated managed desktop session still
   fails WebView2 creation with `0x800700AA` (resource in use); the matrix was
   collected in the elevated interactive session.
+- WSL distro enumeration is present on the host but returns `E_ACCESSDENIED`
+  in this managed session, so WSL GUI integration remains an optional manual
+  run outside this environment.
 - Run a signed release build when TAURI_SIGNING_PRIVATE_KEY is available.
 - Keep the xterm terminology in this document only where it identifies the
   historical baseline or the required comparison.

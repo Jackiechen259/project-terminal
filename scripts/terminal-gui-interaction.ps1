@@ -231,12 +231,21 @@ function Get-RendererAttachment {
     $input = 0
     $canvasRect = $null
     foreach ($element in @(Get-UiDescendants -Root $Root)) {
+        $rect = $element.Current.BoundingRectangle
+        $visible =
+            -not $element.Current.IsOffscreen -and
+            $rect.Width -gt 0 -and
+            $rect.Height -gt 0
         if ($element.Current.Name -eq "终端") {
-            $canvas++
-            $canvasRect = $element.Current.BoundingRectangle
+            if ($visible) {
+                $canvas++
+                $canvasRect = $rect
+            }
         }
         if ($element.Current.Name -eq "Terminal input") {
-            $input++
+            if ($visible) {
+                $input++
+            }
         }
     }
     return [pscustomobject]@{
