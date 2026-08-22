@@ -16,9 +16,9 @@ function normaliseTerminalTitle(value: string): string | null {
 export function resolveTerminalTabTitle(
   value: string,
   defaultTitle: string,
-): string | null {
+): string {
   const title = normaliseTerminalTitle(value);
-  if (!title) return null;
+  if (!title) return defaultTitle;
 
   return /^[a-z]:[\\/]/i.test(title) || title.startsWith("\\\\")
     ? defaultTitle

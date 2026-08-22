@@ -776,7 +776,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
             message.event.title,
             defaultTitle,
           );
-          if (title) onTitleChangeRef.current?.(title);
+          onTitleChangeRef.current?.(title);
         } else if (message.event.type === "cwdChanged") {
           onCwdChangeRef.current?.(message.event.cwd ?? null);
         } else if (message.event.type === "commandFinished") {

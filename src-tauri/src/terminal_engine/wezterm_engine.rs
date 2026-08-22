@@ -50,7 +50,11 @@ pub struct WeztermTerminalEngine {
     last_mouse_reporting: bool,
     last_viewport_top: Option<i64>,
     last_viewport_bottom: Option<i64>,
-    last_title: String,
+    /// The last title authored by the shell/application through an OSC title
+    /// sequence. This is deliberately separate from `Terminal::get_title()`:
+    /// wezterm-term initializes its internal window title to "wezterm", which
+    /// is model state rather than a user-authored terminal title.
+    last_title: Arc<Mutex<Option<String>>>,
     last_cwd: Option<String>,
     force_full_snapshot: bool,
     viewport_top: Option<i64>,
@@ -62,6 +66,7 @@ pub struct WeztermTerminalEngine {
 #[derive(Clone)]
 struct AlertCollector {
     events: Arc<Mutex<VecDeque<TerminalControlEvent>>>,
+    last_title: Arc<Mutex<Option<String>>>,
 }
 
 fn push_control_event(
@@ -77,8 +82,15 @@ fn push_control_event(
 
 impl AlertHandler for AlertCollector {
     fn alert(&mut self, alert: Alert) {
-        if matches!(alert, Alert::Bell) {
-            push_control_event(&self.events, TerminalControlEvent::Bell);
+        match alert {
+            Alert::Bell => {
+                push_control_event(&self.events, TerminalControlEvent::Bell);
+            }
+            Alert::WindowTitleChanged(title) => {
+                *self.last_title.lock().unwrap() = Some(title.clone());
+                push_control_event(&self.events, TerminalControlEvent::TitleChanged { title });
+            }
+            _ => {}
         }
     }
 }
@@ -90,6 +102,7 @@ impl WeztermTerminalEngine {
         writer: Box<dyn Write + Send>,
     ) -> Self {
         let events = Arc::new(Mutex::new(VecDeque::new()));
+        let last_title = Arc::new(Mutex::new(None));
         let mut terminal = Terminal::new(
             size,
             Arc::new(config) as Arc<dyn TerminalConfiguration + Send + Sync>,
@@ -101,8 +114,15 @@ impl WeztermTerminalEngine {
         // this upstream compatibility switch enabled is important for line
         // wrapping and resize behavior on PowerShell/cmd.
         terminal.enable_conpty_quirks();
+        // `enable_conpty_quirks` also suppresses the first OSC 0 as a
+        // ConPTY bootstrap workaround. This adapter has no GUI bootstrap
+        // title to discard, so clear that one-shot upstream state before any
+        // PTY bytes arrive. The terminal model still owns all parsing and the
+        // ConPTY compatibility behavior remains enabled.
+        terminal.advance_bytes(b"\x1bc");
         terminal.set_notification_handler(Box::new(AlertCollector {
             events: events.clone(),
+            last_title: last_title.clone(),
         }));
 
         let mut engine = Self {
@@ -115,7 +135,7 @@ impl WeztermTerminalEngine {
             last_mouse_reporting: false,
             last_viewport_top: None,
             last_viewport_bottom: None,
-            last_title: String::new(),
+            last_title,
             last_cwd: None,
             force_full_snapshot: true,
             viewport_top: None,
@@ -136,15 +156,9 @@ impl WeztermTerminalEngine {
     }
 
     fn collect_control_events(&mut self) {
-        let title = self.terminal.get_title().to_string();
-        if title != self.last_title {
-            self.last_title = title.clone();
-            push_control_event(
-                &self.control_events,
-                TerminalControlEvent::TitleChanged { title },
-            );
-        }
-
+        // Title changes are emitted by AlertCollector when wezterm-term
+        // receives a real OSC 0/2 sequence. CWD does not have an equivalent
+        // alert in this API, so it remains a state comparison here.
         let cwd = self.terminal.get_current_dir().map(ToString::to_string);
         if cwd != self.last_cwd {
             self.last_cwd = cwd.clone();
@@ -343,20 +357,24 @@ impl TerminalEngine for WeztermTerminalEngine {
     fn request_full_snapshot(&mut self) {
         self.force_full_snapshot = true;
         self.known_image_keys.clear();
-        // Title/cwd are stateful and are re-enqueued below. Bell and command
+        // A shell-authored title and cwd are stateful and are re-enqueued
+        // below. Bell and command
         // completion are edge-triggered; replaying events that accumulated
         // while a renderer was detached would make a newly attached view act
         // on stale history, so discard the old control queue during a full
         // resync.
         self.control_events.lock().unwrap().clear();
-        // An empty title is also state: it asks the frontend to restore the
-        // profile fallback instead of retaining a title from before detach.
-        push_control_event(
-            &self.control_events,
-            TerminalControlEvent::TitleChanged {
-                title: self.last_title.clone(),
-            },
-        );
+        // `None` means the shell has never authored a title. In that case do
+        // not expose wezterm-term's internal bootstrap title and let the
+        // frontend keep the profile's initial tab title. `Some("")` is a
+        // real empty OSC title and must be replayed so the frontend can
+        // restore that same profile fallback after a reconnect.
+        if let Some(title) = self.last_title.lock().unwrap().clone() {
+            push_control_event(
+                &self.control_events,
+                TerminalControlEvent::TitleChanged { title },
+            );
+        }
         // `None` is also state: it clears a cwd that a detached renderer may
         // still have cached from an earlier OSC 7 notification. Replaying the
         // explicit absence makes attach/resync deterministic.
@@ -865,6 +883,30 @@ mod tests {
     }
 
     #[test]
+    fn does_not_emit_wezterm_bootstrap_title() {
+        let mut engine = engine();
+
+        let events = engine.drain_control_events();
+
+        assert!(!events
+            .iter()
+            .any(|event| { matches!(event, TerminalControlEvent::TitleChanged { .. }) }));
+    }
+
+    #[test]
+    fn ordinary_output_does_not_change_title() {
+        let mut engine = engine();
+        let _ = engine.drain_control_events();
+
+        engine.feed(b"hello world\r\n");
+
+        assert!(!engine
+            .drain_control_events()
+            .iter()
+            .any(|event| { matches!(event, TerminalControlEvent::TitleChanged { .. }) }));
+    }
+
+    #[test]
     fn preserves_sgr_colors_wide_cells_and_hyperlinks() {
         let mut engine = engine();
         let _ = engine.take_render_frame();
@@ -972,6 +1014,62 @@ mod tests {
         }));
         assert!(events.iter().any(|event| {
             matches!(event, TerminalControlEvent::CwdChanged { cwd } if cwd.as_deref() == Some("file:///C:/work"))
+        }));
+    }
+
+    #[test]
+    fn osc_zero_updates_title() {
+        let mut engine = engine();
+        let _ = engine.drain_control_events();
+
+        engine.feed(b"\x1b]0;PowerShell - project\x07");
+
+        assert!(engine.drain_control_events().iter().any(|event| {
+            matches!(
+                event,
+                TerminalControlEvent::TitleChanged { title }
+                    if title == "PowerShell - project"
+            )
+        }));
+    }
+
+    #[test]
+    fn literal_wezterm_title_from_osc_is_preserved() {
+        let mut engine = engine();
+        let _ = engine.drain_control_events();
+
+        engine.feed(b"\x1b]2;wezterm\x07");
+
+        assert!(engine.drain_control_events().iter().any(|event| {
+            matches!(event, TerminalControlEvent::TitleChanged { title } if title == "wezterm")
+        }));
+    }
+
+    #[test]
+    fn full_snapshot_without_shell_title_does_not_emit_a_title() {
+        let mut engine = engine();
+        let _ = engine.drain_control_events();
+
+        engine.request_full_snapshot();
+
+        assert!(!engine
+            .drain_control_events()
+            .iter()
+            .any(|event| { matches!(event, TerminalControlEvent::TitleChanged { .. }) }));
+    }
+
+    #[test]
+    fn full_snapshot_replays_the_last_shell_title() {
+        let mut engine = engine();
+        let _ = engine.drain_control_events();
+
+        engine.feed(b"\x1b]2;nvim\x07");
+        let _ = engine.drain_control_events();
+
+        engine.request_full_snapshot();
+
+        assert!(engine.drain_control_events().iter().any(|event| {
+            matches!(event, TerminalControlEvent::TitleChanged { title } if title == "nvim")
         }));
     }
 
