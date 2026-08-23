@@ -10,6 +10,7 @@
 mod appearance;
 mod commands;
 mod config_dirs;
+mod database;
 pub mod error;
 mod platform;
 mod profile;

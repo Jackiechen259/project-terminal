@@ -60,6 +60,11 @@ impl ConfigDirs {
     pub fn ssh_connections_path(&self) -> PathBuf {
         self.root.join("ssh-connections.json")
     }
+    /// SQLite durable datastore. Legacy JSON helpers remain below so an
+    /// upgraded installation can be imported without deleting its originals.
+    pub fn database_path(&self) -> PathBuf {
+        self.root.join("project-terminal.db")
+    }
     pub fn remote_audit_path(&self) -> PathBuf {
         self.root.join("remote-audit.jsonl")
     }
@@ -113,6 +118,10 @@ mod tests {
             .ssh_connections_path()
             .to_string_lossy()
             .ends_with("ssh-connections.json"));
+        assert!(dirs
+            .database_path()
+            .to_string_lossy()
+            .ends_with("project-terminal.db"));
         assert!(dirs
             .remote_audit_path()
             .to_string_lossy()
