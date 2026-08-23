@@ -310,6 +310,22 @@ mod tests {
     #[test]
     fn create_profile_from_template_copies_fields() {
         let state = test_state();
+        state
+            .projects
+            .upsert(crate::project::Project {
+                id: "proj-1".into(),
+                name: "Project".into(),
+                project_type: crate::project::ProjectType::Local,
+                local: Some(crate::project::LocalProjectConfig {
+                    path: "D:\\Project".into(),
+                }),
+                ssh: None,
+                wsl: None,
+                default_profile_id: None,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            })
+            .unwrap();
         let template = create_profile_template_inner(&state, sample_input("Codex")).unwrap();
         let profile =
             create_profile_from_template_inner(&state, &template.id, "proj-1", "Codex").unwrap();

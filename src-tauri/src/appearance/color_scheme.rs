@@ -1,12 +1,12 @@
 //! Imported terminal colour schemes.
 
-use std::path::PathBuf;
-
 use chrono::{DateTime, Utc};
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
+use crate::database::{self, Database};
 use crate::error::{AppError, AppResult};
-use crate::storage;
+use std::sync::Arc;
 
 /// A complete terminal palette.
 ///
@@ -117,47 +117,93 @@ pub struct ColorSchemeCollection {
     pub schemes: Vec<TerminalColorScheme>,
 }
 
-/// Imported schemes on disk. Mirrors `TemplateRepository`.
+/// Imported schemes persisted in SQLite. Built-in schemes remain code-defined
+/// in the frontend.
 pub struct ColorSchemeRepository {
-    store: storage::CachedJsonFile<ColorSchemeCollection>,
+    db: Arc<Database>,
 }
 
 impl ColorSchemeRepository {
-    pub fn new(path: PathBuf) -> Self {
+    pub fn new(source: impl Into<database::DatabaseSource>) -> Self {
         Self {
-            store: storage::CachedJsonFile::new(path),
+            db: source.into().into_database(),
         }
     }
 
+    pub fn database(&self) -> Arc<Database> {
+        Arc::clone(&self.db)
+    }
+
     pub fn load(&self) -> AppResult<ColorSchemeCollection> {
-        self.store.load(ColorSchemeCollection::default)
+        Ok(ColorSchemeCollection {
+            schemes: self.list()?,
+        })
     }
 
     pub fn list(&self) -> AppResult<Vec<TerminalColorScheme>> {
-        Ok(self.load()?.schemes)
+        self.db.with_connection(|connection| {
+            let mut statement = connection
+                .prepare("SELECT data_json FROM color_schemes ORDER BY name COLLATE NOCASE, id")
+                .map_err(|error| database::error::sqlite("prepare color scheme list", error))?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|error| database::error::sqlite("query color schemes", error))?;
+            rows.map(|row| {
+                let data =
+                    row.map_err(|error| database::error::sqlite("read color scheme row", error))?;
+                database::schema::parse_json(&data, "color scheme")
+            })
+            .collect()
+        })
     }
 
     pub fn upsert(&self, scheme: TerminalColorScheme) -> AppResult<TerminalColorScheme> {
         scheme.validate()?;
-        let mut collection = self.load()?;
-        match collection.schemes.iter().position(|s| s.id == scheme.id) {
-            Some(index) => collection.schemes[index] = scheme.clone(),
-            None => collection.schemes.push(scheme.clone()),
-        }
-        self.store.save(&collection)?;
+        let data_json = database::schema::json(&scheme, "color scheme")?;
+        self.db.with_connection(|connection| {
+            connection
+                .execute(
+                    "INSERT INTO color_schemes(
+                        id, name, data_json, created_at, updated_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5)
+                     ON CONFLICT(id) DO UPDATE SET
+                        name = excluded.name,
+                        data_json = excluded.data_json,
+                        updated_at = excluded.updated_at",
+                    params![
+                        scheme.id,
+                        scheme.name,
+                        data_json,
+                        database::schema::timestamp(&scheme.created_at),
+                        database::schema::timestamp(&scheme.updated_at),
+                    ],
+                )
+                .map_err(|error| database::error::sqlite("upsert color scheme", error))?;
+            Ok(())
+        })?;
         Ok(scheme)
     }
 
     pub fn delete(&self, id: &str) -> AppResult<()> {
-        let mut collection = self.load()?;
-        let before = collection.schemes.len();
-        collection.schemes.retain(|s| s.id != id);
-        if collection.schemes.len() == before {
-            return Err(AppError::Configuration(format!(
-                "Color scheme was not found: {id}"
-            )));
-        }
-        self.store.save(&collection)
+        self.db.with_connection(|connection| {
+            let changed = connection
+                .execute("DELETE FROM color_schemes WHERE id = ?1", params![id])
+                .map_err(|error| database::error::sqlite("delete color scheme", error))?;
+            if changed == 0 {
+                return Err(AppError::Configuration(format!(
+                    "Color scheme was not found: {id}"
+                )));
+            }
+            Ok(())
+        })
+    }
+
+    pub(crate) fn count(&self) -> AppResult<i64> {
+        self.db.with_connection(|connection| {
+            connection
+                .query_row("SELECT COUNT(*) FROM color_schemes", [], |row| row.get(0))
+                .map_err(|error| database::error::sqlite("count color schemes", error))
+        })
     }
 }
 
@@ -198,9 +244,9 @@ mod tests {
     }
 
     fn repository() -> ColorSchemeRepository {
-        let root = std::env::temp_dir().join(format!("pt-scheme-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&root).unwrap();
-        ColorSchemeRepository::new(root.join("color-schemes.json"))
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("project-terminal.db");
+        ColorSchemeRepository::new(Database::open(path).unwrap())
     }
 
     #[test]
