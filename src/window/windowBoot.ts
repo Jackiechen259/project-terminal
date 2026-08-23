@@ -21,9 +21,14 @@
  * on screen forever.
  */
 
-import { terminalService } from "@/services";
+import * as appServices from "@/services";
+import { isTauriRuntime } from "@/lib/runtime";
+import { useCollectionStore } from "@/stores/collectionStore";
+import { useSettingsStore } from "@/stores/settingsStore";
+import { migrateLocalPersistence } from "./persistenceBridge";
 import {
   getTerminalWorkspaceStore,
+  hydrateTerminalWorkspaceStore,
   LEGACY_WORKSPACE_ID,
   setCurrentWorkspaceId,
   TERMINAL_WORKSPACE_STORAGE_KEY,
@@ -97,9 +102,35 @@ export async function prepareWorkspace(
   );
   setCurrentWorkspaceId(info.workspaceId);
   migrateLegacyWorkspaceLayout(info);
+
+  if (isTauriRuntime()) {
+    await withTimeout(
+      migrateLocalPersistence(),
+      timeoutMs,
+      "frontend_persistence_migration",
+    ).catch((error) => {
+      // A failed migration must not strand the startup shell. The bridge
+      // keeps its source keys, so the next launch can retry the transaction.
+      console.error("Frontend persistence migration was skipped", error);
+    });
+    await Promise.allSettled([
+      useSettingsStore.getState().hydrateFromBackend(),
+      useCollectionStore.getState().hydrateFromBackend(),
+    ]);
+  }
+
   const store = getTerminalWorkspaceStore(info.workspaceId);
   try {
-    await store.persist.rehydrate();
+    if (isTauriRuntime() && appServices.persistenceService) {
+      const persisted = await appServices.persistenceService.loadWorkspaceState(
+        info.workspaceId,
+      );
+      if (persisted) {
+        hydrateTerminalWorkspaceStore(info.workspaceId, persisted);
+      }
+    } else {
+      await store.persist.rehydrate();
+    }
   } catch (error) {
     // A corrupted or unreadable persisted layout must not block the UI: the
     // store starts from its empty defaults instead.
@@ -111,7 +142,7 @@ export async function prepareWorkspace(
   try {
     // Ownership is derived by the backend from the calling webview; the
     // workspace id here is only a label for the user-facing listing.
-    const sessions = await terminalService.listWorkspaceSessions();
+    const sessions = await appServices.terminalService.listWorkspaceSessions();
     store.getState().reconcileWorkspaceSessions(sessions);
   } catch {
     // Backend unreachable (plain browser dev, tests): restored tabs stay

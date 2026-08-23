@@ -10,11 +10,14 @@
 mod appearance;
 mod commands;
 mod config_dirs;
+mod database;
 pub mod error;
+mod legacy_migration;
 mod platform;
 mod profile;
 mod project;
 mod remote;
+mod repositories;
 mod ssh;
 mod state;
 mod storage;
@@ -209,6 +212,17 @@ pub fn run() {
                 commands::project::delete_project,
                 commands::project::delete_project_workspace,
                 commands::project::open_project_in_explorer,
+                // Frontend-owned durable state
+                commands::persistence::get_general_settings,
+                commands::persistence::save_general_settings,
+                commands::persistence::load_collections,
+                commands::persistence::save_collections,
+                commands::persistence::list_project_memos,
+                commands::persistence::save_project_memos,
+                commands::persistence::delete_project_memo,
+                commands::persistence::load_workspace_state,
+                commands::persistence::save_workspace_state,
+                commands::persistence::migrate_frontend_persistence,
                 // Project-scoped local / WSL / SSH file browsing and transfer
                 commands::file_manager::list_project_files,
                 commands::file_manager::upload_project_files,

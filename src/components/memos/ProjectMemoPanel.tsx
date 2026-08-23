@@ -45,10 +45,10 @@ interface ProjectMemoPanelProps {
 /**
  * Memo sidebar: per-project notes and commands.
  *
- * Notes autosave straight into the memo store (the throttled persistence
- * layer debounces). Commands are edited with an explicit Save, and executed
- * through the project's existing, focused terminal session - never a spawned
- * shell.
+ * Notes autosave straight into the memo store (the persistence layer
+ * debounces desktop SQLite writes). Commands are edited with an explicit
+ * Save, and executed through the project's existing, focused terminal
+ * session - never a spawned shell.
  */
 export function ProjectMemoPanel({
   onClose,
@@ -65,6 +65,11 @@ export function ProjectMemoPanel({
       ? (state.memosByProjectId[activeProjectId] ?? EMPTY_MEMOS)
       : EMPTY_MEMOS,
   );
+  const saveState = useMemoStore((state) => state.saveState);
+  const saveError = useMemoStore((state) => state.saveError);
+  const hydrateProjectMemos = useMemoStore(
+    (state) => state.hydrateProjectMemos,
+  );
   const createMarkdownMemo = useMemoStore((state) => state.createMarkdownMemo);
   const createCommandMemo = useMemoStore((state) => state.createCommandMemo);
   const deleteMemo = useMemoStore((state) => state.deleteMemo);
@@ -78,6 +83,13 @@ export function ProjectMemoPanel({
 
   const targetTab = useMemoTerminalTarget(activeProjectId);
   const canSend = isMemoTerminalRunnable(targetTab);
+
+  useEffect(() => {
+    if (!activeProjectId) return;
+    void hydrateProjectMemos(activeProjectId).catch((error) => {
+      setActionError(String(error));
+    });
+  }, [activeProjectId, hydrateProjectMemos]);
 
   // A different project's memos are never shown: close any editor opened for
   // the previous project.
@@ -274,6 +286,19 @@ export function ProjectMemoPanel({
               >
                 <X className="h-3 w-3" />
               </button>
+            </div>
+          ) : null}
+
+          {saveError ? (
+            <div
+              role="alert"
+              className="shrink-0 border-b border-border bg-destructive/10 px-3 py-1.5 text-[11px] text-destructive"
+            >
+              Failed to save memos: {saveError}
+            </div>
+          ) : saveState === "saving" ? (
+            <div className="shrink-0 border-b border-border px-3 py-1.5 text-[11px] text-muted-foreground">
+              Saving…
             </div>
           ) : null}
 

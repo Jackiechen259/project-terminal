@@ -20,9 +20,11 @@ use serde::{Deserialize, Serialize};
 use crate::commands::terminal::TerminalState;
 use crate::commands::ListResponse;
 use crate::error::{AppError, AppResult};
-use crate::profile::{default_local_profile, default_remote_profile, default_wsl_profile};
+use crate::profile::{
+    default_local_profile, default_remote_profile, default_wsl_profile, ProfileRepository,
+};
 use crate::project::{
-    LocalProjectConfig, Project, ProjectType, SshProjectConfig, WslProjectConfig,
+    LocalProjectConfig, Project, ProjectRepository, ProjectType, SshProjectConfig, WslProjectConfig,
 };
 use crate::state::{new_id, AppState};
 
@@ -141,7 +143,6 @@ pub fn create_project_inner(state: &AppState, input: ProjectInput) -> AppResult<
         let id = new_id("project");
         let project = build_project_from_input(input, id)?;
         project.validate()?;
-        state.projects.upsert(project.clone())?;
 
         // Every project gets an immediately usable, target-appropriate profile.
         let profile_id = new_id("profile");
@@ -160,15 +161,12 @@ pub fn create_project_inner(state: &AppState, input: ProjectInput) -> AppResult<
                 )
             }
         };
-        if let Err(profile_error) = state.profiles.upsert(profile) {
-            if let Err(rollback_error) = state.projects.delete(&project.id) {
-                return Err(AppError::Configuration(format!(
-                    "Failed to create the default profile ({profile_error}); \
-                     project rollback also failed ({rollback_error})"
-                )));
-            }
-            return Err(profile_error);
-        }
+        profile.validate()?;
+        state.db.transaction(|transaction| {
+            ProjectRepository::upsert_tx(transaction, &project)?;
+            ProfileRepository::upsert_tx(transaction, &profile)?;
+            Ok(())
+        })?;
         Ok(project)
     })
 }
@@ -201,25 +199,9 @@ pub fn delete_project_inner(state: &AppState, id: &str) -> AppResult<()> {
     // first if it has open terminals (those would be closed via
     // close_terminal commands before this is called).
     state.with_config_write(|| {
-        state.projects.get(id)?;
-        let profiles = state.profiles.list_for_project(id)?;
-        state.profiles.delete_all_for_project(id)?;
-        if let Err(project_error) = state.projects.delete(id) {
-            let mut rollback_errors = Vec::new();
-            for profile in profiles {
-                if let Err(error) = state.profiles.upsert(profile) {
-                    rollback_errors.push(error.to_string());
-                }
-            }
-            if !rollback_errors.is_empty() {
-                return Err(AppError::Configuration(format!(
-                    "Failed to delete project ({project_error}); profile rollback also failed: {}",
-                    rollback_errors.join("; ")
-                )));
-            }
-            return Err(project_error);
-        }
-        Ok(())
+        state
+            .db
+            .transaction(|transaction| ProjectRepository::delete_tx(transaction, id))
     })
 }
 
@@ -349,7 +331,7 @@ mod tests {
     use super::*;
     use crate::profile::{ProfileRepository, TemplateRepository};
     use crate::project::ProjectRepository;
-    use crate::ssh::SshConnectionRepository;
+    use crate::ssh::{SshAuthenticationType, SshConnection, SshConnectionRepository};
     use std::fs;
     use std::path::PathBuf;
     fn test_state() -> AppState {
@@ -396,6 +378,32 @@ mod tests {
         }
     }
 
+    fn seed_connection(state: &AppState) {
+        state
+            .ssh
+            .upsert(SshConnection {
+                id: "c1".into(),
+                name: "Test connection".into(),
+                host: "host.example.com".into(),
+                port: 22,
+                username: "user".into(),
+                authentication_type: SshAuthenticationType::Agent,
+                password_saved: false,
+                identity_file: None,
+                use_ssh_agent: true,
+                jump_host: None,
+                connect_timeout_seconds: 15,
+                server_alive_interval_seconds: 30,
+                server_alive_count_max: 3,
+                strict_host_key_checking: true,
+                known_hosts_file: None,
+                extra_args: vec![],
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            })
+            .unwrap();
+    }
+
     #[test]
     fn create_local_project_persists_and_seeds_default_profile() {
         let state = test_state();
@@ -438,20 +446,18 @@ mod tests {
     }
 
     #[test]
-    fn create_project_rolls_back_when_default_profile_cannot_be_saved() {
-        let root = std::env::temp_dir().join(format!("pt-cmd-rollback-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&root).unwrap();
-        let invalid_profile_path = root.join("profiles-as-directory");
-        fs::create_dir_all(&invalid_profile_path).unwrap();
-        let state = AppState::from_repositories(
-            ProjectRepository::new(root.join("projects.json")),
-            ProfileRepository::new(invalid_profile_path),
-            TemplateRepository::new(root.join("templates.json")),
-            SshConnectionRepository::new(root.join("ssh.json")),
-        );
+    fn create_project_transaction_rolls_back_when_related_write_fails() {
+        let state = test_state();
         let dir = temp_local_dir();
-
-        let result = create_project_inner(&state, local_input("Demo", dir.to_str().unwrap()));
+        let project =
+            build_project_from_input(local_input("Demo", dir.to_str().unwrap()), "p1".into())
+                .unwrap();
+        let invalid_profile = default_local_profile("profile-1".into(), "missing-project".into());
+        let result = state.db.transaction(|transaction| {
+            ProjectRepository::upsert_tx(transaction, &project)?;
+            ProfileRepository::upsert_tx(transaction, &invalid_profile)?;
+            Ok(())
+        });
 
         assert!(result.is_err());
         assert!(state.projects.list().unwrap().is_empty());
@@ -526,6 +532,7 @@ mod tests {
     #[test]
     fn create_ssh_project_seeds_a_remote_profile() {
         let state = test_state();
+        seed_connection(&state);
         let input = ProjectInput {
             id: None,
             name: "SSH".into(),
@@ -600,6 +607,7 @@ mod tests {
     #[test]
     fn explorer_rejects_ssh_projects() {
         let state = test_state();
+        seed_connection(&state);
         let input = ProjectInput {
             id: None,
             name: "SSH".into(),

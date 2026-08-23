@@ -62,5 +62,8 @@ jobs:
         with:
           workspaces: src-tauri -> target
 
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
       - name: Test
         run: cargo test --manifest-path src-tauri/Cargo.toml
