@@ -112,21 +112,27 @@ impl Database {
     }
 
     pub fn foreign_key_check(&self) -> AppResult<Vec<String>> {
-        self.with_connection(|connection| {
-            let mut statement = connection
-                .prepare("PRAGMA foreign_key_check")
-                .map_err(|error| super::error::sqlite("prepare foreign key check", error))?;
-            let rows = statement
-                .query_map([], |row| {
-                    let table: String = row.get(0)?;
-                    let rowid: i64 = row.get(1)?;
-                    let parent: String = row.get(2)?;
-                    Ok(format!("{table}:{rowid}->{parent}"))
-                })
-                .map_err(|error| super::error::sqlite("run foreign key check", error))?;
-            rows.collect::<Result<Vec<_>, _>>()
-                .map_err(|error| super::error::sqlite("read foreign key check", error))
-        })
+        self.with_connection(|connection| Self::foreign_key_check_connection(connection))
+    }
+
+    pub fn foreign_key_check_tx(transaction: &Transaction<'_>) -> AppResult<Vec<String>> {
+        Self::foreign_key_check_connection(transaction)
+    }
+
+    fn foreign_key_check_connection(connection: &Connection) -> AppResult<Vec<String>> {
+        let mut statement = connection
+            .prepare("PRAGMA foreign_key_check")
+            .map_err(|error| super::error::sqlite("prepare foreign key check", error))?;
+        let rows = statement
+            .query_map([], |row| {
+                let table: String = row.get(0)?;
+                let rowid: i64 = row.get(1)?;
+                let parent: String = row.get(2)?;
+                Ok(format!("{table}:{rowid}->{parent}"))
+            })
+            .map_err(|error| super::error::sqlite("run foreign key check", error))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| super::error::sqlite("read foreign key check", error))
     }
 }
 

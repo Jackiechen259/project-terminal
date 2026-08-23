@@ -11,6 +11,8 @@
 
 import type { PersistStorage, StorageValue } from "zustand/middleware";
 
+import { isTauriRuntime } from "@/lib/runtime";
+
 export interface ThrottledJSONStorage<S> extends PersistStorage<S> {
   /** Write any pending value immediately. Exposed for tests and teardown. */
   flush: () => void;
@@ -19,6 +21,7 @@ export interface ThrottledJSONStorage<S> extends PersistStorage<S> {
 export function createThrottledJSONStorage<S>(
   delayMs = 300,
 ): ThrottledJSONStorage<S> {
+  const backendOwned = isTauriRuntime();
   let pending: { name: string; value: StorageValue<S> } | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -28,6 +31,10 @@ export function createThrottledJSONStorage<S>(
       timer = null;
     }
     if (!pending) return;
+    if (backendOwned) {
+      pending = null;
+      return;
+    }
     const { name, value } = pending;
     pending = null;
     try {
@@ -49,6 +56,7 @@ export function createThrottledJSONStorage<S>(
 
   return {
     getItem: (name) => {
+      if (backendOwned) return null;
       // Deliberately does not flush: `getItem` only runs during hydration,
       // where the in-memory store already holds anything still pending, and
       // flushing here would clobber a value written straight to localStorage.
@@ -61,11 +69,13 @@ export function createThrottledJSONStorage<S>(
       }
     },
     setItem: (name, value) => {
+      if (backendOwned) return;
       // Zustand snapshots are immutable, so deferring the stringify is safe.
       pending = { name, value };
       if (timer === null) timer = setTimeout(flush, delayMs);
     },
     removeItem: (name) => {
+      if (backendOwned) return;
       if (pending?.name === name) pending = null;
       localStorage.removeItem(name);
     },

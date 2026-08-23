@@ -1,7 +1,7 @@
 //! Imported terminal colour schemes.
 
 use chrono::{DateTime, Utc};
-use rusqlite::params;
+use rusqlite::{params, Transaction};
 use serde::{Deserialize, Serialize};
 
 use crate::database::{self, Database};
@@ -159,29 +159,35 @@ impl ColorSchemeRepository {
 
     pub fn upsert(&self, scheme: TerminalColorScheme) -> AppResult<TerminalColorScheme> {
         scheme.validate()?;
-        let data_json = database::schema::json(&scheme, "color scheme")?;
-        self.db.with_connection(|connection| {
-            connection
-                .execute(
-                    "INSERT INTO color_schemes(
-                        id, name, data_json, created_at, updated_at
-                     ) VALUES (?1, ?2, ?3, ?4, ?5)
-                     ON CONFLICT(id) DO UPDATE SET
-                        name = excluded.name,
-                        data_json = excluded.data_json,
-                        updated_at = excluded.updated_at",
-                    params![
-                        scheme.id,
-                        scheme.name,
-                        data_json,
-                        database::schema::timestamp(&scheme.created_at),
-                        database::schema::timestamp(&scheme.updated_at),
-                    ],
-                )
-                .map_err(|error| database::error::sqlite("upsert color scheme", error))?;
-            Ok(())
-        })?;
+        self.db
+            .transaction(|transaction| Self::upsert_tx(transaction, &scheme))?;
         Ok(scheme)
+    }
+
+    pub(crate) fn upsert_tx(
+        transaction: &Transaction<'_>,
+        scheme: &TerminalColorScheme,
+    ) -> AppResult<()> {
+        let data_json = database::schema::json(scheme, "color scheme")?;
+        transaction
+            .execute(
+                "INSERT INTO color_schemes(
+                    id, name, data_json, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    data_json = excluded.data_json,
+                    updated_at = excluded.updated_at",
+                params![
+                    scheme.id,
+                    scheme.name,
+                    data_json,
+                    database::schema::timestamp(&scheme.created_at),
+                    database::schema::timestamp(&scheme.updated_at),
+                ],
+            )
+            .map_err(|error| database::error::sqlite("upsert color scheme", error))?;
+        Ok(())
     }
 
     pub fn delete(&self, id: &str) -> AppResult<()> {
@@ -204,6 +210,12 @@ impl ColorSchemeRepository {
                 .query_row("SELECT COUNT(*) FROM color_schemes", [], |row| row.get(0))
                 .map_err(|error| database::error::sqlite("count color schemes", error))
         })
+    }
+
+    pub(crate) fn count_tx(transaction: &Transaction<'_>) -> AppResult<i64> {
+        transaction
+            .query_row("SELECT COUNT(*) FROM color_schemes", [], |row| row.get(0))
+            .map_err(|error| database::error::sqlite("count color schemes", error))
     }
 }
 

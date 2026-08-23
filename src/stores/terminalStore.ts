@@ -20,6 +20,7 @@ import type { Mutate, StoreApi } from "zustand/vanilla";
 import { persist, type PersistStorage } from "zustand/middleware";
 
 import type { RightSidebarMode } from "@/components/layout/rightSidebarState";
+import { isTauriRuntime } from "@/lib/runtime";
 import { createThrottledJSONStorage } from "@/lib/throttledStorage";
 import {
   closePane,
@@ -31,7 +32,7 @@ import {
   resizePaneSplit,
   splitPane,
 } from "@/lib/paneLayout";
-import type { SessionInfo } from "@/services";
+import { persistenceService, type SessionInfo } from "@/services";
 import type {
   ProjectTabGroup,
   TerminalSplitDirection,
@@ -144,7 +145,7 @@ export function workspaceStorageKey(workspaceId: string): string {
   return `${TERMINAL_WORKSPACE_STORAGE_PREFIX}:${workspaceId}`;
 }
 
-type PersistedTerminalState = Pick<
+export type PersistedTerminalState = Pick<
   TerminalWorkspaceState,
   | "activeProjectId"
   | "tabsById"
@@ -200,6 +201,7 @@ export function getTerminalWorkspaceStore(
   if (!store) {
     store = createTerminalWorkspaceStore(workspaceId);
     workspaceStores.set(workspaceId, store);
+    attachWorkspacePersistence(store, workspaceId);
   }
   return store;
 }
@@ -213,6 +215,121 @@ export function setCurrentWorkspaceId(workspaceId: string) {
 
 export function getCurrentWorkspaceId(): string {
   return currentWorkspaceId ?? LEGACY_WORKSPACE_ID;
+}
+
+function persistedTerminalState(
+  state: TerminalWorkspaceState,
+): PersistedTerminalState {
+  return {
+    activeProjectId: state.activeProjectId,
+    tabsById: state.tabsById,
+    tabGroupsByProjectId: state.tabGroupsByProjectId,
+    splitViewsByProjectId: state.splitViewsByProjectId,
+    sidebarCollapsed: state.sidebarCollapsed,
+    rightSidebarCollapsed: state.rightSidebarCollapsed,
+    rightSidebarMode: state.rightSidebarMode,
+  };
+}
+
+/** Apply a backend or legacy Zustand snapshot while parking saved PTY ids. */
+export function mergePersistedTerminalState(
+  persisted: unknown,
+  current: TerminalWorkspaceState,
+): TerminalWorkspaceState {
+  const raw = persisted as
+    | (Partial<PersistedTerminalState> & {
+        state?: Partial<PersistedTerminalState>;
+      })
+    | null
+    | undefined;
+  const saved = (raw?.state ?? raw ?? {}) as Partial<PersistedTerminalState>;
+  const tabsById = Object.fromEntries(
+    Object.entries(saved.tabsById ?? {}).map(([id, tab]) => [
+      id,
+      {
+        ...(tab as TerminalTab),
+        sessionId: null,
+        status: "exited" as const,
+        exitCode: undefined,
+      },
+    ]),
+  );
+  const savedSessionIdsByTabId: Record<string, string | null> = {};
+  for (const [id, tab] of Object.entries(saved.tabsById ?? {})) {
+    const sessionId = (tab as TerminalTab | undefined)?.sessionId;
+    if (sessionId) savedSessionIdsByTabId[id] = sessionId;
+  }
+  const splitViewsByProjectId = Object.fromEntries(
+    Object.entries(saved.splitViewsByProjectId ?? {}).flatMap(
+      ([projectId, rawView]) => {
+        const view = rawView as TerminalSplitView & {
+          direction?: TerminalSplitDirection;
+          tabIds?: [string, string];
+        };
+        if (view.root) return [[projectId, view]];
+        if (view.tabIds?.length === 2 && view.direction) {
+          return [
+            [
+              projectId,
+              createSplitView(view.tabIds[0], view.tabIds[1], view.direction),
+            ],
+          ];
+        }
+        return [];
+      },
+    ),
+  );
+  return {
+    ...current,
+    ...saved,
+    tabsById,
+    splitViewsByProjectId,
+    savedSessionIdsByTabId,
+    sidebarCollapsed: saved.sidebarCollapsed ?? false,
+    rightSidebarCollapsed: saved.rightSidebarCollapsed ?? false,
+    rightSidebarMode: saved.rightSidebarMode ?? "files",
+  };
+}
+
+export function hydrateTerminalWorkspaceStore(
+  workspaceId: string,
+  persisted: unknown,
+) {
+  const store = getTerminalWorkspaceStore(workspaceId);
+  store.setState(mergePersistedTerminalState(persisted, store.getState()));
+}
+
+function attachWorkspacePersistence(
+  store: TerminalWorkspaceStore,
+  workspaceId: string,
+) {
+  if (!isTauriRuntime()) return;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  store.subscribe((state, previous) => {
+    if (
+      state.activeProjectId === previous.activeProjectId &&
+      state.tabsById === previous.tabsById &&
+      state.tabGroupsByProjectId === previous.tabGroupsByProjectId &&
+      state.splitViewsByProjectId === previous.splitViewsByProjectId &&
+      state.sidebarCollapsed === previous.sidebarCollapsed &&
+      state.rightSidebarCollapsed === previous.rightSidebarCollapsed &&
+      state.rightSidebarMode === previous.rightSidebarMode
+    ) {
+      return;
+    }
+    if (timer !== null) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      void persistenceService
+        .saveWorkspaceState(
+          workspaceId,
+          persistedTerminalState(store.getState()),
+        )
+        .catch((error) => {
+          console.error(`Failed to save workspace ${workspaceId}`, error);
+        });
+    }, 300);
+  });
 }
 
 /**
@@ -624,61 +741,8 @@ export function createTerminalWorkspaceStore(
           rightSidebarCollapsed: state.rightSidebarCollapsed,
           rightSidebarMode: state.rightSidebarMode,
         }),
-        merge: (persisted, current) => {
-          const saved = persisted as Partial<TerminalWorkspaceState>;
-          const tabsById = Object.fromEntries(
-            Object.entries(saved.tabsById ?? {}).map(([id, tab]) => [
-              id,
-              {
-                ...tab,
-                sessionId: null,
-                status: "exited" as const,
-                exitCode: undefined,
-              },
-            ]),
-          );
-          // Park the persisted session ids so a live-session reconcile can
-          // revive them after a "keep running" window close.
-          const savedSessionIdsByTabId: Record<string, string | null> = {};
-          for (const [id, tab] of Object.entries(saved.tabsById ?? {})) {
-            const sessionId = (tab as TerminalTab | undefined)?.sessionId;
-            if (sessionId) savedSessionIdsByTabId[id] = sessionId;
-          }
-          const splitViewsByProjectId = Object.fromEntries(
-            Object.entries(saved.splitViewsByProjectId ?? {}).flatMap(
-              ([projectId, rawView]) => {
-                const view = rawView as TerminalSplitView & {
-                  direction?: TerminalSplitDirection;
-                  tabIds?: [string, string];
-                };
-                if (view.root) return [[projectId, view]];
-                if (view.tabIds?.length === 2 && view.direction) {
-                  return [
-                    [
-                      projectId,
-                      createSplitView(
-                        view.tabIds[0],
-                        view.tabIds[1],
-                        view.direction,
-                      ),
-                    ],
-                  ];
-                }
-                return [];
-              },
-            ),
-          );
-          return {
-            ...current,
-            ...saved,
-            tabsById,
-            splitViewsByProjectId,
-            savedSessionIdsByTabId,
-            sidebarCollapsed: saved.sidebarCollapsed ?? false,
-            rightSidebarCollapsed: saved.rightSidebarCollapsed ?? false,
-            rightSidebarMode: saved.rightSidebarMode ?? "files",
-          };
-        },
+        merge: (persisted, current) =>
+          mergePersistedTerminalState(persisted, current),
       },
     ),
   );

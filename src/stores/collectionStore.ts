@@ -2,15 +2,18 @@
  * Zustand store for project collections (user-defined groups in the sidebar).
  *
  * Collections are a UI grouping concern: they reference projects by id and
- * do not need backend validation, so they persist via `localStorage` (matching
- * `settingsStore`). A project id appears in at most one collection at a time -
- * dragging a project into a collection removes it from its previous one.
+ * do not need a separate backend resource. Browser/dev runs persist via
+ * localStorage; the desktop runtime debounces the same snapshots into SQLite.
+ * A project id appears in at most one collection at a time - dragging a
+ * project into a collection removes it from its previous one.
  */
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+import { isTauriRuntime } from "@/lib/runtime";
 import { createId, nowIso } from "@/lib/utils";
+import { persistenceService, type DurableCollectionSnapshot } from "@/services";
 
 export interface ProjectCollection {
   id: string;
@@ -61,6 +64,8 @@ export interface CollectionStoreState {
   toggleCollapsed: (id: string) => void;
   /** Drop project ids that no longer exist. Called after projects load. */
   pruneDeletedProjects: (existingProjectIds: Set<string>) => void;
+  hydrateFromBackend: () => Promise<void>;
+  persistToBackend: () => Promise<void>;
 }
 
 function withoutProject(
@@ -222,6 +227,27 @@ export const useCollectionStore = create<CollectionStoreState>()(
           set({ collections: next, ungroupedProjectIds });
         }
       },
+
+      hydrateFromBackend: async () => {
+        if (!isTauriRuntime()) return;
+        const snapshot = await persistenceService.loadCollections();
+        set({
+          collections: snapshot.collections,
+          collapsed: snapshot.collapsed,
+          ungroupedProjectIds: snapshot.ungroupedProjectIds,
+        });
+      },
+
+      persistToBackend: async () => {
+        if (!isTauriRuntime()) return;
+        const state = get();
+        const snapshot: DurableCollectionSnapshot = {
+          collections: state.collections,
+          collapsed: state.collapsed,
+          ungroupedProjectIds: state.ungroupedProjectIds,
+        };
+        await persistenceService.saveCollections(snapshot);
+      },
     }),
     {
       name: "project-terminal.collections",
@@ -234,6 +260,34 @@ export const useCollectionStore = create<CollectionStoreState>()(
     },
   ),
 );
+
+let collectionSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleCollectionSave() {
+  if (!isTauriRuntime()) return;
+  if (collectionSaveTimer !== null) clearTimeout(collectionSaveTimer);
+  collectionSaveTimer = setTimeout(() => {
+    collectionSaveTimer = null;
+    void useCollectionStore
+      .getState()
+      .persistToBackend()
+      .catch((error) => {
+        console.error("Failed to save project collections", error);
+      });
+  }, 250);
+}
+
+useCollectionStore.subscribe((state, previous) => {
+  if (!isTauriRuntime()) return;
+  if (
+    state.collections === previous.collections &&
+    state.collapsed === previous.collapsed &&
+    state.ungroupedProjectIds === previous.ungroupedProjectIds
+  ) {
+    return;
+  }
+  scheduleCollectionSave();
+});
 
 function stripKey<T extends Record<string, unknown>>(obj: T, key: string): T {
   if (!(key in obj)) return obj;

@@ -10,11 +10,14 @@ use crate::database::Database;
 use crate::error::AppResult;
 use crate::profile::{ProfileRepository, TemplateRepository};
 use crate::project::ProjectRepository;
+use crate::repositories::{
+    MemoRepository, ProjectCollectionsRepository, SettingsRepository, WorkspaceStateRepository,
+};
 use crate::ssh::SshConnectionRepository;
 
-/// Holds the configuration repositories and serializes every read-modify-write
-/// mutation. The repositories are file-backed, so allowing two commands to
-/// mutate them concurrently could otherwise lose one command's update.
+/// Holds the SQLite repositories and serializes every read-modify-write
+/// configuration mutation so related command operations have one application
+/// lock in addition to SQLite's transaction boundary.
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Database>,
@@ -23,17 +26,22 @@ pub struct AppState {
     pub templates: Arc<TemplateRepository>,
     pub ssh: Arc<SshConnectionRepository>,
     pub color_schemes: Arc<ColorSchemeRepository>,
+    pub settings: Arc<SettingsRepository>,
+    pub collections: Arc<ProjectCollectionsRepository>,
+    pub memos: Arc<MemoRepository>,
+    pub workspace_state: Arc<WorkspaceStateRepository>,
     config_write_lock: Arc<Mutex<()>>,
 }
 
 impl AppState {
-    /// Resolve config dirs, ensure the directory exists, and wire
-    /// repositories against the resolved file paths. Callers MUST surface any
+    /// Resolve config dirs, ensure the directory exists, open SQLite, and wire
+    /// all repositories to the shared database. Callers MUST surface any
     /// error structurally - never panic.
     pub fn init() -> AppResult<(Self, ConfigDirs)> {
         let dirs = ConfigDirs::resolve()?;
         dirs.ensure_root()?;
         let database = Database::open(dirs.database_path())?;
+        crate::legacy_migration::migrate(&database, &dirs)?;
         let state = Self::from_database(database);
         Ok((state, dirs))
     }
@@ -45,7 +53,11 @@ impl AppState {
             profiles: Arc::new(ProfileRepository::new(Arc::clone(&database))),
             templates: Arc::new(TemplateRepository::new(Arc::clone(&database))),
             ssh: Arc::new(SshConnectionRepository::new(Arc::clone(&database))),
-            color_schemes: Arc::new(ColorSchemeRepository::new(database)),
+            color_schemes: Arc::new(ColorSchemeRepository::new(Arc::clone(&database))),
+            settings: Arc::new(SettingsRepository::new(Arc::clone(&database))),
+            collections: Arc::new(ProjectCollectionsRepository::new(Arc::clone(&database))),
+            memos: Arc::new(MemoRepository::new(Arc::clone(&database))),
+            workspace_state: Arc::new(WorkspaceStateRepository::new(database)),
             config_write_lock: Arc::new(Mutex::new(())),
         }
     }

@@ -10,7 +10,6 @@ mod migrations;
 pub mod schema;
 
 pub use connection::Database;
-pub use migrations::CURRENT_SCHEMA_VERSION;
 
 use std::path::PathBuf;
 use std::sync::Arc;

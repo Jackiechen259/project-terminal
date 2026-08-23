@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+#[cfg(test)]
 use chrono::Utc;
 use rusqlite::{params, Row, Transaction};
 

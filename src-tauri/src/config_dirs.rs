@@ -65,6 +65,10 @@ impl ConfigDirs {
     pub fn database_path(&self) -> PathBuf {
         self.root.join("project-terminal.db")
     }
+
+    pub fn backups_dir(&self) -> PathBuf {
+        self.root.join("backups")
+    }
     pub fn remote_audit_path(&self) -> PathBuf {
         self.root.join("remote-audit.jsonl")
     }

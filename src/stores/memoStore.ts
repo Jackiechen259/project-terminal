@@ -1,8 +1,9 @@
 /**
  * Zustand store for per-project memos.
  *
- * Memos are a UI-local resource: they live in localStorage (throttled), never
- * in the backend Project model, and are strictly isolated by `projectId`.
+ * Memos are a UI-local resource: browser/dev runs keep them in throttled
+ * localStorage, while the desktop runtime stores them in SQLite outside the
+ * backend Project model. They are strictly isolated by `projectId`.
  * Deleting a backend project also clears its memos via `removeProjectMemos`,
  * but only after the backend delete has succeeded.
  */
@@ -11,6 +12,8 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 import { createThrottledJSONStorage } from "@/lib/throttledStorage";
+import { isTauriRuntime } from "@/lib/runtime";
+import { persistenceService, type DurableProjectMemo } from "@/services";
 
 export const PROJECT_MEMO_STORAGE_KEY = "project-terminal.project-memos.v1";
 
@@ -49,6 +52,8 @@ export const EMPTY_MEMOS: readonly ProjectMemo[] = [];
 
 export interface MemoStoreState {
   memosByProjectId: Record<string, ProjectMemo[]>;
+  saveState: "idle" | "saving" | "saved" | "error";
+  saveError: string | null;
 
   /** Create an empty markdown memo for a project; returns its id. */
   createMarkdownMemo: (projectId: string) => string;
@@ -71,6 +76,9 @@ export interface MemoStoreState {
 
   /** Drop every memo belonging to a project (after its backend delete). */
   removeProjectMemos: (projectId: string) => void;
+  /** Load one project's memos on demand when its panel is opened. */
+  hydrateProjectMemos: (projectId: string) => Promise<void>;
+  persistToBackend: (projectId: string) => Promise<void>;
 }
 
 /** `crypto.randomUUID()` with a timestamp fallback for odd environments. */
@@ -91,6 +99,8 @@ export const useMemoStore = create<MemoStoreState>()(
   persist(
     (set, get) => ({
       memosByProjectId: {},
+      saveState: "idle",
+      saveError: null,
 
       createMarkdownMemo: (projectId) => {
         const now = Date.now();
@@ -198,7 +208,44 @@ export const useMemoStore = create<MemoStoreState>()(
         if (!(projectId in get().memosByProjectId)) return;
         const memosByProjectId = { ...get().memosByProjectId };
         delete memosByProjectId[projectId];
+        removedProjects.add(projectId);
         set({ memosByProjectId });
+        removedProjects.delete(projectId);
+      },
+
+      hydrateProjectMemos: async (projectId) => {
+        if (!isTauriRuntime() || projectId in get().memosByProjectId) return;
+        hydratingProjects.add(projectId);
+        try {
+          const memos = await persistenceService.listProjectMemos(projectId);
+          set({
+            memosByProjectId: {
+              ...get().memosByProjectId,
+              [projectId]: memos as ProjectMemo[],
+            },
+          });
+        } catch (error) {
+          set({ saveState: "error", saveError: String(error) });
+          throw error;
+        } finally {
+          hydratingProjects.delete(projectId);
+        }
+      },
+
+      persistToBackend: async (projectId) => {
+        if (!isTauriRuntime()) return;
+        const memos = get().memosByProjectId[projectId] ?? [];
+        set({ saveState: "saving", saveError: null });
+        try {
+          await persistenceService.saveProjectMemos(
+            projectId,
+            memos.map(toDurableMemo),
+          );
+          set({ saveState: "saved", saveError: null });
+        } catch (error) {
+          set({ saveState: "error", saveError: String(error) });
+          throw error;
+        }
       },
     }),
     {
@@ -211,3 +258,62 @@ export const useMemoStore = create<MemoStoreState>()(
     },
   ),
 );
+
+const memoSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const hydratingProjects = new Set<string>();
+const removedProjects = new Set<string>();
+
+function toDurableMemo(memo: ProjectMemo): DurableProjectMemo {
+  return {
+    id: memo.id,
+    projectId: memo.projectId,
+    kind: memo.kind,
+    title: memo.title,
+    content: memo.kind === "markdown" ? memo.content : "",
+    description: memo.kind === "command" ? memo.description : "",
+    command: memo.kind === "command" ? memo.command : "",
+    createdAt: memo.createdAt,
+    updatedAt: memo.updatedAt,
+  };
+}
+
+function scheduleMemoSave(projectId: string) {
+  if (!isTauriRuntime()) return;
+  const previous = memoSaveTimers.get(projectId);
+  if (previous) clearTimeout(previous);
+  memoSaveTimers.set(
+    projectId,
+    setTimeout(() => {
+      memoSaveTimers.delete(projectId);
+      void useMemoStore
+        .getState()
+        .persistToBackend(projectId)
+        .catch((error) => {
+          console.error(`Failed to save memos for ${projectId}`, error);
+        });
+    }, 300),
+  );
+}
+
+useMemoStore.subscribe((state, previous) => {
+  if (
+    !isTauriRuntime() ||
+    state.memosByProjectId === previous.memosByProjectId
+  ) {
+    return;
+  }
+  const projectIds = new Set([
+    ...Object.keys(state.memosByProjectId),
+    ...Object.keys(previous.memosByProjectId),
+  ]);
+  for (const projectId of projectIds) {
+    if (hydratingProjects.has(projectId) || removedProjects.has(projectId)) {
+      continue;
+    }
+    if (
+      state.memosByProjectId[projectId] !== previous.memosByProjectId[projectId]
+    ) {
+      scheduleMemoSave(projectId);
+    }
+  }
+});
