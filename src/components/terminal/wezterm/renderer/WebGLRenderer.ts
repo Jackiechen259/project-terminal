@@ -427,8 +427,11 @@ export class WebGLRenderer implements TerminalRenderer {
     if (this.canvas) {
       this.canvas.style.width = `${this.width}px`;
       this.canvas.style.height = `${this.height}px`;
-      this.canvas.width = Math.ceil(this.width * this.dpr);
-      this.canvas.height = Math.ceil(this.height * this.dpr);
+      const backingWidth = Math.ceil(this.width * this.dpr);
+      const backingHeight = Math.ceil(this.height * this.dpr);
+      if (this.canvas.width !== backingWidth) this.canvas.width = backingWidth;
+      if (this.canvas.height !== backingHeight)
+        this.canvas.height = backingHeight;
     }
     this.updateMetrics();
     this.atlas?.configure(
@@ -447,11 +450,9 @@ export class WebGLRenderer implements TerminalRenderer {
         this.frameRequest = null;
       }
       this.pendingFrame = null;
-      this.rowCache.clear();
-      this.frame = null;
     }
     this.drawBackground();
-    if (!gridChanged && this.frame) this.paintFrame(this.frame);
+    if (this.frame) this.paintCurrentFrame();
   }
 
   measureGrid(width: number, height: number) {
@@ -469,6 +470,19 @@ export class WebGLRenderer implements TerminalRenderer {
       this.pendingFrame = null;
       if (next) this.paintFrame(next);
     });
+  }
+
+  renderImmediate(frame: TerminalRenderFrame) {
+    if (this.frameRequest !== null) {
+      window.cancelAnimationFrame(this.frameRequest);
+      this.frameRequest = null;
+    }
+    this.pendingFrame = null;
+    this.paintFrame(frame, true);
+  }
+
+  redraw() {
+    this.paintCurrentFrame();
   }
 
   setTheme(theme: TerminalRendererTheme) {
@@ -507,6 +521,10 @@ export class WebGLRenderer implements TerminalRenderer {
 
   setFocused(focused: boolean) {
     this.canvasRenderer.setFocused(focused);
+  }
+
+  setVisible(visible: boolean) {
+    this.canvasRenderer.setVisible(visible);
   }
 
   setSelection(selection: TerminalSelection | null) {
@@ -565,7 +583,7 @@ export class WebGLRenderer implements TerminalRenderer {
     this.frame = null;
   }
 
-  private paintFrame(frame: TerminalRenderFrame) {
+  private paintFrame(frame: TerminalRenderFrame, immediate = false) {
     const cacheUpdate = applyFrameToRowCache(this.rowCache, this.frame, frame, {
       rows: this.rows,
       cols: this.cols,
@@ -574,7 +592,8 @@ export class WebGLRenderer implements TerminalRenderer {
     if (!cacheUpdate.accepted) return;
     this.frame = frame;
     if (this.gpuFallback) {
-      this.canvasRenderer.render(frame);
+      if (immediate) this.canvasRenderer.renderImmediate(frame);
+      else this.canvasRenderer.render(frame);
       return;
     }
     this.drawBackground();
@@ -584,10 +603,12 @@ export class WebGLRenderer implements TerminalRenderer {
       this.canvasRenderer.setBackgroundVisible(true);
       this.canvasRenderer.setCellBackgroundVisible(true);
       this.canvasRenderer.setTextVisible(true);
-      this.canvasRenderer.render(frame);
+      if (immediate) this.canvasRenderer.renderImmediate(frame);
+      else this.canvasRenderer.render(frame);
       return;
     }
-    this.canvasRenderer.render(frame);
+    if (immediate) this.canvasRenderer.renderImmediate(frame);
+    else this.canvasRenderer.render(frame);
   }
 
   private paintCurrentFrame() {

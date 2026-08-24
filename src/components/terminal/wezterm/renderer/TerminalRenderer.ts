@@ -58,6 +58,8 @@ export interface TerminalRenderer {
   resize(width: number, height: number, rows: number, cols: number): void;
   measureGrid(width: number, height: number): { rows: number; cols: number };
   render(frame: TerminalRenderFrame): void;
+  renderImmediate(frame: TerminalRenderFrame): void;
+  redraw(): void;
   setTheme(theme: TerminalRendererTheme): void;
   setFont(font: TerminalFontOptions): void;
   setCursorStyle(
@@ -66,6 +68,7 @@ export interface TerminalRenderer {
   ): void;
   setCursorBlink(enabled: boolean): void;
   setFocused(focused: boolean): void;
+  setVisible(visible: boolean): void;
   setSelection(selection: TerminalSelection | null): void;
   setSearchMatch(match: TerminalSearchMatch | null): void;
   selectionText(

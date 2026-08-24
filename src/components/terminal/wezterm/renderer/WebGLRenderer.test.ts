@@ -52,6 +52,7 @@ describe("WebGLRenderer stable-row cache", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -90,6 +91,44 @@ describe("WebGLRenderer stable-row cache", () => {
     ).rowCache;
     expect(cache.has(101)).toBe(true);
     expect(cache.has(102)).toBe(true);
+    renderer.dispose();
+  });
+
+  it("paints authoritative frames without waiting for animation frame batching", () => {
+    const renderer = new WebGLRenderer();
+    configureGrid(renderer);
+    configureGpu(renderer, document.createElement("canvas"));
+
+    const snapshot = frame(1, 0, [row(0)], true);
+    renderer.renderImmediate(snapshot);
+
+    expect(callbacks.size).toBe(0);
+    expect(
+      (renderer as unknown as { frame: TerminalRenderFrame | null }).frame,
+    ).toBe(snapshot);
+    renderer.dispose();
+  });
+
+  it("retains the previous frame through a grid resize", () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      measureText: vi.fn(() => ({
+        width: 16,
+        actualBoundingBoxAscent: 10,
+        actualBoundingBoxDescent: 3,
+      })),
+    } as unknown as CanvasRenderingContext2D);
+    const renderer = new WebGLRenderer();
+    const canvas = document.createElement("canvas");
+    configureGrid(renderer);
+    configureGpu(renderer, canvas);
+
+    const previous = frame(1, 0, [row(0)], true);
+    renderer.renderImmediate(previous);
+    renderer.resize(96, 51, 3, 4);
+
+    expect(
+      (renderer as unknown as { frame: TerminalRenderFrame | null }).frame,
+    ).toBe(previous);
     renderer.dispose();
   });
 });

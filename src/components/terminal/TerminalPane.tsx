@@ -83,7 +83,8 @@ export const TerminalPane = memo(function TerminalPane({
     <div
       className={cn(
         "absolute min-h-0 min-w-0",
-        visible ? panePosition : "hidden",
+        panePosition,
+        visible ? "visible" : "invisible pointer-events-none",
         // Ring the pane the keyboard is talking to. `cursorInactiveStyle`
         // already outlines the cursor in the others; this reads at a glance
         // from across the window, which a cursor does not.
@@ -91,6 +92,7 @@ export const TerminalPane = memo(function TerminalPane({
           focused &&
           "ring-1 ring-inset ring-[color:var(--profile-accent,hsl(var(--primary)/0.4))]",
       )}
+      aria-hidden={!visible}
       style={{
         ...style,
         // One variable, consumed by the focus ring here and by the tab in the

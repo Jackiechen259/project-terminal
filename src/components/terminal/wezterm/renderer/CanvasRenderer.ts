@@ -231,6 +231,7 @@ export class CanvasRenderer implements TerminalRenderer {
   private transparentBackground = false;
   private textVisible = true;
   private cellBackgroundVisible = true;
+  private visible = true;
 
   mount(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -274,8 +275,11 @@ export class CanvasRenderer implements TerminalRenderer {
     if (this.canvas) {
       this.canvas.style.width = `${this.width}px`;
       this.canvas.style.height = `${this.height}px`;
-      this.canvas.width = Math.ceil(this.width * this.dpr);
-      this.canvas.height = Math.ceil(this.height * this.dpr);
+      const backingWidth = Math.ceil(this.width * this.dpr);
+      const backingHeight = Math.ceil(this.height * this.dpr);
+      if (this.canvas.width !== backingWidth) this.canvas.width = backingWidth;
+      if (this.canvas.height !== backingHeight)
+        this.canvas.height = backingHeight;
     }
     this.updateMetrics();
     if (gridChanged) {
@@ -284,10 +288,9 @@ export class CanvasRenderer implements TerminalRenderer {
         this.frameRequest = null;
       }
       this.pendingFrame = null;
-      this.rowCache.clear();
-      this.frame = null;
-      this.clear();
-      return;
+      // Keep the last coherent frame visible while the backend produces the
+      // authoritative snapshot for the new grid. The next full snapshot is
+      // responsible for replacing this retained cache atomically.
     }
     if (this.frame) {
       this.redrawVisibleRows();
@@ -315,6 +318,15 @@ export class CanvasRenderer implements TerminalRenderer {
       this.pendingFrame = null;
       if (next) this.paintFrame(next);
     });
+  }
+
+  renderImmediate(frame: TerminalRenderFrame) {
+    if (this.frameRequest !== null) {
+      window.cancelAnimationFrame(this.frameRequest);
+      this.frameRequest = null;
+    }
+    this.pendingFrame = null;
+    this.paintFrame(frame);
   }
 
   private paintFrame(frame: TerminalRenderFrame) {
@@ -378,16 +390,8 @@ export class CanvasRenderer implements TerminalRenderer {
     if (this.cursorBlink === enabled) return;
     this.cursorBlink = enabled;
     this.cursorBlinkVisible = true;
-    if (this.cursorBlinkTimer !== null) {
-      window.clearInterval(this.cursorBlinkTimer);
-      this.cursorBlinkTimer = null;
-    }
-    if (enabled) {
-      this.cursorBlinkTimer = window.setInterval(() => {
-        this.cursorBlinkVisible = !this.cursorBlinkVisible;
-        this.redrawVisibleRows();
-      }, 500);
-    }
+    this.stopCursorBlink();
+    this.startCursorBlink();
     this.redrawVisibleRows();
   }
 
@@ -396,6 +400,32 @@ export class CanvasRenderer implements TerminalRenderer {
     this.focused = focused;
     this.cursorBlinkVisible = true;
     this.redrawVisibleRows();
+  }
+
+  setVisible(visible: boolean) {
+    if (this.visible === visible) return;
+    this.visible = visible;
+    if (visible) {
+      this.cursorBlinkVisible = true;
+      this.startCursorBlink();
+    } else {
+      this.stopCursorBlink();
+    }
+  }
+
+  private startCursorBlink() {
+    if (!this.visible || !this.cursorBlink || this.cursorBlinkTimer !== null)
+      return;
+    this.cursorBlinkTimer = window.setInterval(() => {
+      this.cursorBlinkVisible = !this.cursorBlinkVisible;
+      this.redrawVisibleRows();
+    }, 500);
+  }
+
+  private stopCursorBlink() {
+    if (this.cursorBlinkTimer === null) return;
+    window.clearInterval(this.cursorBlinkTimer);
+    this.cursorBlinkTimer = null;
   }
 
   setSelection(selection: TerminalSelection | null) {

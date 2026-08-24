@@ -2,6 +2,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -650,23 +651,16 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     });
   }, [sessionId]);
 
-  // Renderer resources follow visibility. A hidden terminal keeps its PTY and
-  // Rust model alive, but does not retain a Canvas/WebGL context or receive
-  // render frames.
+  // Renderer resources follow the terminal session lifetime. A hidden
+  // terminal keeps its renderer, canvas, glyph atlas, and last coherent frame
+  // alive; only the backend render subscription is suspended below.
   useEffect(() => {
-    if (!active) {
-      resizeRequestRef.current += 1;
-      rendererRef.current?.dispose();
-      rendererRef.current = null;
-      return;
-    }
     const canvas = canvasRef.current;
     if (!canvas) return;
     lastResizeRef.current = null;
-    if (frameRef.current) {
-      frameRef.current = null;
-      requestRenderSnapshot();
-    }
+    frameRef.current = null;
+    awaitingSnapshotRef.current = true;
+    snapshotRequestedRef.current = false;
     let renderer = createTerminalRenderer(terminalRendererPreference);
     try {
       renderer.mount(canvas);
@@ -677,16 +671,24 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     }
     renderer.setTheme(rendererTheme);
     renderer.setFont(font);
+    renderer.setVisible(active);
+    renderer.setFocused(focused);
     rendererRef.current = renderer;
     return () => {
       resizeRequestRef.current += 1;
       renderer.dispose();
       if (rendererRef.current === renderer) rendererRef.current = null;
+      lastResizeRef.current = null;
+      frameRef.current = null;
+      awaitingSnapshotRef.current = false;
+      snapshotRequestedRef.current = false;
+      selectionRef.current = null;
+      setSelection(null);
     };
     // The current theme/font are applied by the effects below without
     // recreating the canvas renderer.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, terminalRendererPreference]);
+  }, [sessionId, terminalRendererPreference]);
 
   useEffect(() => {
     const renderer = rendererRef.current;
@@ -706,9 +708,13 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     typography.cursorStyle,
   ]);
 
-  useEffect(() => {
-    rendererRef.current?.setFocused(focused);
-  }, [focused]);
+  useLayoutEffect(() => {
+    const renderer = rendererRef.current;
+    if (!renderer) return;
+    renderer.setVisible(active);
+    renderer.setFocused(focused);
+    if (active) renderer.redraw();
+  }, [active, focused]);
 
   const resizeSurface = useCallback(() => {
     const surface = surfaceRef.current;
@@ -733,10 +739,8 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     renderer.resize(width, height, grid.rows, grid.cols);
     const rendererNeedsSnapshot = previousResize === null || gridChanged;
     if (rendererNeedsSnapshot) {
-      // The renderer cache was invalidated (or this is the first resize of a
-      // newly mounted renderer). A previous frame may only be a delta, so
-      // wait for resize/attach resync instead of replaying it.
-      frameRef.current = null;
+      // Resize preserves the last coherent pixels. The renderer will replace
+      // them atomically when the authoritative full snapshot arrives.
       renderer.setSearchMatch(null);
       snapshotRequestedRef.current = false;
       awaitingSnapshotRef.current = true;
@@ -780,7 +784,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     observer.observe(surface);
     resizeSurface();
     return () => observer.disconnect();
-  }, [active, resizeSurface, terminalRendererPreference]);
+  }, [active, resizeSurface, sessionId, terminalRendererPreference]);
 
   useEffect(() => {
     if (!active) return;
@@ -788,15 +792,12 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     let cancelled = false;
 
     reportedExitRef.current = false;
-    frameRef.current = null;
     // attach_renderer() requests a full snapshot on the backend. Treat that
     // request as in flight until a matching full frame arrives; if the frame
     // races a resize, the resize completion handler will replace it with a
     // snapshot taken after the resize boundary.
     awaitingSnapshotRef.current = true;
     snapshotRequestedRef.current = true;
-    updateSelection(null);
-    setSearchResults([]);
 
     const reportExit = (status: "exited" | "error", code: number | null) => {
       if (reportedExitRef.current) return;
@@ -812,7 +813,11 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
         // Tauri preserves channel order, but keeping the sequence guard at
         // the attachment boundary makes a late callback harmless if a
         // renderer is replaced or a platform transport retries delivery.
-        if (previousFrame && frame.sequence <= previousFrame.sequence) {
+        if (
+          previousFrame &&
+          (frame.sequence < previousFrame.sequence ||
+            (frame.sequence === previousFrame.sequence && !frame.fullSnapshot))
+        ) {
           return;
         }
         const expectedResize = lastResizeRef.current;
@@ -822,10 +827,8 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
             frame.cols !== expectedResize.cols)
         ) {
           // A frame from before a grid resize cannot rebuild the newly sized
-          // renderer. Keep waiting for the resize-triggered authoritative
-          // snapshot instead of allowing it to satisfy resync state.
-          frameRef.current = null;
-          rendererRef.current?.setSearchMatch(null);
+          // renderer. Keep the old coherent frame visible while waiting for
+          // the resize-triggered authoritative snapshot.
           requestRenderSnapshot();
           return;
         }
@@ -835,11 +838,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
           !frame.fullSnapshot &&
           (awaitingSnapshotRef.current || previousFrame === null || sequenceGap)
         ) {
-          if (previousFrame === null || sequenceGap) {
-            frameRef.current = null;
-            rendererRef.current?.setSearchMatch(null);
-            requestRenderSnapshot();
-          }
+          if (previousFrame === null || sequenceGap) requestRenderSnapshot();
           return;
         }
         if (frame.fullSnapshot) {
@@ -847,7 +846,11 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
           snapshotRequestedRef.current = false;
         }
         frameRef.current = frame;
-        rendererRef.current?.render(frame);
+        if (frame.fullSnapshot) {
+          rendererRef.current?.renderImmediate(frame);
+        } else {
+          rendererRef.current?.render(frame);
+        }
         return;
       }
       if (message.type === "control") {
@@ -876,7 +879,6 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       // full snapshot. The renderer keeps its last coherent pixels until that
       // snapshot arrives, then clears its stable-row cache authoritatively.
       if (message.type === "lagged") {
-        frameRef.current = null;
         awaitingSnapshotRef.current = true;
         // The Tauri attach task requests the snapshot before sending lagged.
         snapshotRequestedRef.current = true;
@@ -900,7 +902,9 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
             attachment.session.exitCode ?? null,
           );
         }
-        requestAnimationFrame(resizeSurface);
+        requestAnimationFrame(() => {
+          if (!cancelled) resizeSurface();
+        });
       })
       .catch(() => reportExit("error", null));
 
@@ -908,11 +912,8 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       cancelled = true;
       resizeRequestRef.current += 1;
       void terminalService.detach(sessionId, clientId);
-      frameRef.current = null;
       awaitingSnapshotRef.current = false;
       snapshotRequestedRef.current = false;
-      updateSelection(null);
-      rendererRef.current?.setSearchMatch(null);
     };
   }, [
     active,
@@ -922,7 +923,6 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     requestRenderSnapshot,
     resizeSurface,
     sessionId,
-    updateSelection,
   ]);
 
   useEffect(() => {

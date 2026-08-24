@@ -144,6 +144,47 @@ describe("CanvasRenderer", () => {
     renderer.dispose();
   });
 
+  it("paints an authoritative frame synchronously", () => {
+    const renderer = new CanvasRenderer();
+    const canvas = document.createElement("canvas");
+    renderer.mount(canvas);
+    renderer.resize(80, 34, 2, 4);
+
+    renderer.renderImmediate(frame([row(0, "now")], true));
+
+    expect(callbacks.size).toBe(0);
+    expect(context.fillText).toHaveBeenCalled();
+    renderer.dispose();
+  });
+
+  it("keeps the last frame visible while the grid waits for a snapshot", () => {
+    const renderer = new CanvasRenderer();
+    const canvas = document.createElement("canvas");
+    renderer.mount(canvas);
+    renderer.resize(80, 34, 2, 4);
+    const previous = frame([row(0, "old")], true);
+    renderer.renderImmediate(previous);
+    context.fillText.mockClear();
+
+    renderer.resize(96, 51, 3, 4);
+
+    expect(
+      (renderer as unknown as { frame: TerminalRenderFrame | null }).frame,
+    ).toBe(previous);
+    expect(context.fillText).toHaveBeenCalled();
+
+    const next = frame([row(0, "new")], true, {
+      sequence: 2,
+      rows: 3,
+      cols: 4,
+    });
+    renderer.renderImmediate(next);
+    expect(
+      (renderer as unknown as { frame: TerminalRenderFrame | null }).frame,
+    ).toBe(next);
+    renderer.dispose();
+  });
+
   it("retains overlapping stable rows when the viewport scrolls", () => {
     const renderer = new CanvasRenderer();
     const canvas = document.createElement("canvas");

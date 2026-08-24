@@ -54,7 +54,7 @@ beforeEach(() => {
 describe("TerminalPane", () => {
   it("isolates unrelated terminal views from tab metadata updates", async () => {
     const onSelect = vi.fn();
-    render(
+    const { container } = render(
       <>
         <TerminalPane
           tabId="one"
@@ -81,6 +81,13 @@ describe("TerminalPane", () => {
         ["session-two"],
       ]),
     );
+
+    const hiddenPane = container.children[1] as HTMLElement;
+    expect(hiddenPane.className).toContain("inset-0");
+    expect(hiddenPane.className).toContain("invisible");
+    expect(hiddenPane.className).toContain("pointer-events-none");
+    expect(hiddenPane.className).not.toContain("hidden");
+    expect(hiddenPane).toHaveAttribute("aria-hidden", "true");
 
     act(() => {
       useTerminalStore.getState().updateTab("one", { title: "updated" });
