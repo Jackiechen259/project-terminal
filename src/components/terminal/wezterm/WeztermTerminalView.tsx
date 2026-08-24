@@ -156,6 +156,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     width: number;
     height: number;
   } | null>(null);
+  const resizeRequestRef = useRef(0);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -654,6 +655,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
   // render frames.
   useEffect(() => {
     if (!active) {
+      resizeRequestRef.current += 1;
       rendererRef.current?.dispose();
       rendererRef.current = null;
       return;
@@ -677,6 +679,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     renderer.setFont(font);
     rendererRef.current = renderer;
     return () => {
+      resizeRequestRef.current += 1;
       renderer.dispose();
       if (rendererRef.current === renderer) rendererRef.current = null;
     };
@@ -728,10 +731,13 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       previousResize !== null &&
       (previousResize.rows !== grid.rows || previousResize.cols !== grid.cols);
     renderer.resize(width, height, grid.rows, grid.cols);
-    if (gridChanged || (previousResize === null && frameRef.current !== null)) {
-      // The renderer cache was invalidated. A previous frame may only be a
-      // delta, so wait for resize/attach resync instead of replaying it.
+    const rendererNeedsSnapshot = previousResize === null || gridChanged;
+    if (rendererNeedsSnapshot) {
+      // The renderer cache was invalidated (or this is the first resize of a
+      // newly mounted renderer). A previous frame may only be a delta, so
+      // wait for resize/attach resync instead of replaying it.
       frameRef.current = null;
+      renderer.setSearchMatch(null);
       snapshotRequestedRef.current = false;
       awaitingSnapshotRef.current = true;
     }
@@ -741,10 +747,28 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       width,
       height,
     };
+    const resizeRequest = ++resizeRequestRef.current;
     void terminalService
       .resize(sessionId, grid.rows, grid.cols, width, height)
+      .then(() => {
+        if (resizeRequest !== resizeRequestRef.current) return;
+        if (!awaitingSnapshotRef.current) return;
+
+        // A snapshot sent by attachRender or an earlier request may have been
+        // produced before the backend resize completed. Make resize
+        // completion the synchronization boundary and force one fresh
+        // authoritative snapshot for the current grid.
+        snapshotRequestedRef.current = false;
+        requestRenderSnapshot();
+      })
       .catch(() => {
-        if (gridChanged) requestRenderSnapshot();
+        if (resizeRequest !== resizeRequestRef.current) return;
+        if (!awaitingSnapshotRef.current) return;
+
+        // If resize fails, make one recovery request rather than leaving the
+        // renderer permanently guarded by a stale in-flight request.
+        snapshotRequestedRef.current = false;
+        requestRenderSnapshot();
       });
   }, [requestRenderSnapshot, sessionId]);
 
@@ -765,8 +789,12 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
 
     reportedExitRef.current = false;
     frameRef.current = null;
-    awaitingSnapshotRef.current = false;
-    snapshotRequestedRef.current = false;
+    // attach_renderer() requests a full snapshot on the backend. Treat that
+    // request as in flight until a matching full frame arrives; if the frame
+    // races a resize, the resize completion handler will replace it with a
+    // snapshot taken after the resize boundary.
+    awaitingSnapshotRef.current = true;
+    snapshotRequestedRef.current = true;
     updateSelection(null);
     setSearchResults([]);
 
@@ -878,6 +906,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
 
     return () => {
       cancelled = true;
+      resizeRequestRef.current += 1;
       void terminalService.detach(sessionId, clientId);
       frameRef.current = null;
       awaitingSnapshotRef.current = false;

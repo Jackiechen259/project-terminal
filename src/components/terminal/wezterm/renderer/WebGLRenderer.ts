@@ -437,13 +437,10 @@ export class WebGLRenderer implements TerminalRenderer {
       this.baseline,
       this.dpr,
     );
-    this.gl?.viewport(
-      0,
-      0,
-      Math.ceil(this.width * this.dpr),
-      Math.ceil(this.height * this.dpr),
-    );
-    this.canvasRenderer.resize(width, height, rows, cols);
+    this.canvasRenderer.resize(width, height, nextRows, nextCols);
+    this.syncOverlayBackingStore();
+    const drawingBuffer = this.drawingBufferSize();
+    this.gl?.viewport(0, 0, drawingBuffer.width, drawingBuffer.height);
     if (gridChanged) {
       if (this.frameRequest !== null) {
         window.cancelAnimationFrame(this.frameRequest);
@@ -594,13 +591,13 @@ export class WebGLRenderer implements TerminalRenderer {
   }
 
   private paintCurrentFrame() {
-    const frame = this.frame;
-    if (!frame) return;
     if (this.gpuFallback) {
       this.canvasRenderer.redraw();
       return;
     }
     this.drawBackground();
+    const frame = this.frame;
+    if (!frame) return;
     this.drawCellBackgrounds(frame);
     if (!this.drawGlyphs(frame)) {
       this.gpuFallback = true;
@@ -631,13 +628,46 @@ export class WebGLRenderer implements TerminalRenderer {
     );
   }
 
+  /**
+   * Return the actual physical drawing-buffer size used by WebGL.
+   *
+   * CSS size multiplied by DPR can be fractional, while both the canvas
+   * backing store and the WebGL viewport are integer pixel dimensions. Every
+   * shader resolution must use this same final size or the last row/column of
+   * the opaque framebuffer can remain untouched.
+   */
+  private drawingBufferSize() {
+    const fallbackWidth = Math.ceil(this.width * this.dpr);
+    const fallbackHeight = Math.ceil(this.height * this.dpr);
+    return {
+      width: Math.max(
+        1,
+        this.gl?.drawingBufferWidth || this.canvas?.width || fallbackWidth,
+      ),
+      height: Math.max(
+        1,
+        this.gl?.drawingBufferHeight || this.canvas?.height || fallbackHeight,
+      ),
+    };
+  }
+
+  /** Keep the transparent Canvas2D overlay on the same backing store. */
+  private syncOverlayBackingStore() {
+    if (!this.canvas || !this.overlay) return;
+    if (this.overlay.width !== this.canvas.width) {
+      this.overlay.width = this.canvas.width;
+    }
+    if (this.overlay.height !== this.canvas.height) {
+      this.overlay.height = this.canvas.height;
+    }
+  }
+
   private drawBackground() {
     const gl = this.gl;
     const program = this.solidProgram;
     const buffer = this.solidBuffer;
     if (!gl || !program || !buffer) return;
-    const width = this.width * this.dpr;
-    const height = this.height * this.dpr;
+    const { width, height } = this.drawingBufferSize();
     gl.viewport(0, 0, width, height);
     gl.useProgram(program);
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
@@ -712,8 +742,7 @@ export class WebGLRenderer implements TerminalRenderer {
       }
     }
     if (!values.length) return;
-    const width = this.width * this.dpr;
-    const height = this.height * this.dpr;
+    const { width, height } = this.drawingBufferSize();
     gl.useProgram(program);
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(values), gl.STREAM_DRAW);
@@ -774,8 +803,7 @@ export class WebGLRenderer implements TerminalRenderer {
       }
     }
     if (!values.length) return true;
-    const width = this.width * this.dpr;
-    const height = this.height * this.dpr;
+    const { width, height } = this.drawingBufferSize();
     gl.useProgram(program);
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(values), gl.STREAM_DRAW);
