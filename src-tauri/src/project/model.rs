@@ -40,7 +40,7 @@ pub struct WslProjectConfig {
     pub working_directory: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
     pub id: String,

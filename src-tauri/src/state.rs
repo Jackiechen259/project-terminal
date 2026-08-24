@@ -6,66 +6,74 @@ use parking_lot::Mutex;
 
 use crate::appearance::ColorSchemeRepository;
 use crate::config_dirs::ConfigDirs;
+use crate::database::Database;
 use crate::error::AppResult;
 use crate::profile::{ProfileRepository, TemplateRepository};
 use crate::project::ProjectRepository;
+use crate::repositories::{
+    MemoRepository, ProjectCollectionsRepository, SettingsRepository, WorkspaceStateRepository,
+};
 use crate::ssh::SshConnectionRepository;
 
-/// Holds the configuration repositories and serializes every read-modify-write
-/// mutation. The repositories are file-backed, so allowing two commands to
-/// mutate them concurrently could otherwise lose one command's update.
+/// Holds the SQLite repositories and serializes every read-modify-write
+/// configuration mutation so related command operations have one application
+/// lock in addition to SQLite's transaction boundary.
 #[derive(Clone)]
 pub struct AppState {
+    pub db: Arc<Database>,
     pub projects: Arc<ProjectRepository>,
     pub profiles: Arc<ProfileRepository>,
     pub templates: Arc<TemplateRepository>,
     pub ssh: Arc<SshConnectionRepository>,
     pub color_schemes: Arc<ColorSchemeRepository>,
+    pub settings: Arc<SettingsRepository>,
+    pub collections: Arc<ProjectCollectionsRepository>,
+    pub memos: Arc<MemoRepository>,
+    pub workspace_state: Arc<WorkspaceStateRepository>,
     config_write_lock: Arc<Mutex<()>>,
 }
 
 impl AppState {
-    /// Resolve config dirs, ensure the directory exists, and wire
-    /// repositories against the resolved file paths. Callers MUST surface any
+    /// Resolve config dirs, ensure the directory exists, open SQLite, and wire
+    /// all repositories to the shared database. Callers MUST surface any
     /// error structurally - never panic.
     pub fn init() -> AppResult<(Self, ConfigDirs)> {
         let dirs = ConfigDirs::resolve()?;
         dirs.ensure_root()?;
-        let state = Self::from_repositories(
-            ProjectRepository::new(dirs.projects_path()),
-            ProfileRepository::new(dirs.profiles_path()),
-            TemplateRepository::new(dirs.templates_path()),
-            SshConnectionRepository::new(dirs.ssh_connections_path()),
-        )
-        .with_color_schemes(ColorSchemeRepository::new(dirs.color_schemes_path()));
+        let database = Database::open(dirs.database_path())?;
+        crate::legacy_migration::migrate(&database, &dirs)?;
+        let state = Self::from_database(database);
         Ok((state, dirs))
     }
 
-    pub(crate) fn from_repositories(
-        projects: ProjectRepository,
-        profiles: ProfileRepository,
-        templates: TemplateRepository,
-        ssh: SshConnectionRepository,
-    ) -> Self {
-        // Colour schemes default to a file beside the others. They are given
-        // separately rather than as a fifth argument because most callers -
-        // every test helper - have no interest in them, and threading an
-        // unused path through all of them would obscure the ones that do.
-        let color_schemes =
-            ColorSchemeRepository::new(projects.path().with_file_name("color-schemes.json"));
+    pub(crate) fn from_database(database: Arc<Database>) -> Self {
         Self {
-            projects: Arc::new(projects),
-            profiles: Arc::new(profiles),
-            templates: Arc::new(templates),
-            ssh: Arc::new(ssh),
-            color_schemes: Arc::new(color_schemes),
+            db: Arc::clone(&database),
+            projects: Arc::new(ProjectRepository::new(Arc::clone(&database))),
+            profiles: Arc::new(ProfileRepository::new(Arc::clone(&database))),
+            templates: Arc::new(TemplateRepository::new(Arc::clone(&database))),
+            ssh: Arc::new(SshConnectionRepository::new(Arc::clone(&database))),
+            color_schemes: Arc::new(ColorSchemeRepository::new(Arc::clone(&database))),
+            settings: Arc::new(SettingsRepository::new(Arc::clone(&database))),
+            collections: Arc::new(ProjectCollectionsRepository::new(Arc::clone(&database))),
+            memos: Arc::new(MemoRepository::new(Arc::clone(&database))),
+            workspace_state: Arc::new(WorkspaceStateRepository::new(database)),
             config_write_lock: Arc::new(Mutex::new(())),
         }
     }
 
-    fn with_color_schemes(mut self, repository: ColorSchemeRepository) -> Self {
-        self.color_schemes = Arc::new(repository);
-        self
+    pub(crate) fn from_repositories(
+        projects: ProjectRepository,
+        _profiles: ProfileRepository,
+        _templates: TemplateRepository,
+        _ssh: SshConnectionRepository,
+    ) -> Self {
+        // Keep older unit-test fixtures source-compatible while enforcing the
+        // production invariant that every repository in an AppState shares one
+        // SQLite connection. The project repository is the anchor because
+        // existing fixtures already pass it first.
+        let database = projects.database();
+        Self::from_database(database)
     }
 
     /// Serialize a complete configuration mutation, including validation reads

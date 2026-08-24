@@ -1936,6 +1936,7 @@ mod tests {
     fn build_session_spawn_rejects_profile_from_other_project() {
         let app = test_state();
         seed_project(&app, "p1");
+        seed_project(&app, "p2");
         let profile = default_powershell_profile("profile-1".into(), "p2".into());
         app.profiles.upsert(profile).unwrap();
 

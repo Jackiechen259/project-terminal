@@ -178,6 +178,7 @@ export function ProjectSidebar() {
     }),
   );
   const loadProjects = useProjectStore((s) => s.loadProjects);
+  const hydrateCollections = useCollectionStore((s) => s.hydrateFromBackend);
   const setActiveProject = useTerminalStore((s) => s.setActiveProject);
   const restoreLastProject = useSettingsStore((s) => s.restoreLastProject);
   const lastProjectId = useSettingsStore((s) => s.lastProjectId);
@@ -221,6 +222,12 @@ export function ProjectSidebar() {
   useEffect(() => {
     void loadProjects();
   }, [loadProjects]);
+
+  useEffect(() => {
+    void hydrateCollections().catch((error) => {
+      console.error("Failed to load project collections", error);
+    });
+  }, [hydrateCollections]);
 
   useEffect(() => {
     return listenForAppCommands((command) => {

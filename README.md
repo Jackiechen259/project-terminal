@@ -40,7 +40,7 @@ The current release is **v0.5.12**.
 - **Development environment activation** — Conda, Python venv, Poetry, uv, or a custom activation command.
 - **Interactive SSH authentication** — password, keyboard-interactive, and private-key passphrase prompts stay inside the terminal.
 - **Project file sidebar** — browse local, WSL, and SSH project folders, drag local files in to upload, and drag remote items to the download area. SSH transfers prefer `rsync` when it is available locally and remotely, then fall back to `scp`.
-- **Safe local persistence** — project settings are stored as atomic JSON files instead of requiring a database.
+- **Safe local persistence** — durable project and workspace state is stored in a transactional SQLite database with one-time migration backups.
 - **Signed update support** — packaged builds can check GitHub Releases for newer versions.
 
 ## Project types
@@ -135,17 +135,20 @@ Application data is stored under:
 %APPDATA%\ProjectTerminal\
 ```
 
-Files include:
+The main durable store and recovery directory are:
 
 ```text
-projects.json         Saved local, WSL, and SSH projects
-profiles.json         Terminal profiles and environment settings
-ssh-connections.json  SSH connection definitions
-settings.json         Application preferences
-remote-config.json    Remote gateway preferences and LAN settings
+project-terminal.db                 SQLite application database
+backups/legacy-before-sqlite-*      One-time migration backups
+remote-config.json                  Remote gateway preferences and LAN settings
+remote-audit.jsonl                  Remote gateway audit log
 ```
 
-Writes are atomic: data is serialized to a temporary file, flushed, and then renamed. When a corrupt configuration file is detected, it is backed up with a timestamp rather than silently overwritten.
+Legacy `projects.json`, `profiles.json`, `profile-templates.json`,
+`ssh-connections.json`, and `color-schemes.json` files are retained after the
+one-time migration for recovery; normal application writes go to SQLite.
+See [Persistence v2](./docs/persistence-v2.md) for the migration and recovery
+contract.
 
 ## Architecture
 
@@ -156,7 +159,7 @@ React / TypeScript UI
         ▼
 Rust application backend
         │
-        ├── Project, profile, SSH, and settings repositories
+        ├── SQLite persistence repositories and schema migrations
         ├── Shell and environment resolution
         ├── Single desktop-owned terminal session manager
         │       ├── wezterm-term terminal model
@@ -226,7 +229,7 @@ For an SSH project, Project Terminal first establishes the interactive SSH sessi
 | Terminal emulator core | `wezterm-term` in Rust |
 | Terminal renderer | Canvas2D with WebGL2 acceleration/fallback |
 | PTY backend | portable-pty |
-| Persistence | JSON files |
+| Persistence | SQLite (`rusqlite`, bundled SQLite) + Windows Credential Manager for SSH passwords |
 | SSH | System OpenSSH client |
 | Testing | Vitest and Rust tests |
 

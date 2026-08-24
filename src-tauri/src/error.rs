@@ -62,6 +62,21 @@ pub enum AppError {
 
     #[error("Terminal input failed: {0}")]
     TerminalInputFailed(String),
+
+    #[error("Database error: {0}")]
+    Database(String),
+
+    #[error("Database migration failed: {0}")]
+    DatabaseMigration(String),
+
+    #[error("Legacy persistence migration failed: {0}")]
+    LegacyMigration(String),
+
+    #[error("Frontend persistence migration failed: {0}")]
+    FrontendPersistenceMigration(String),
+
+    #[error("Database constraint failed: {0}")]
+    DatabaseConstraint(String),
 }
 
 impl AppError {
@@ -89,6 +104,11 @@ impl AppError {
             AppError::Configuration(_) => "configuration",
             AppError::Io(_) => "io",
             AppError::TerminalInputFailed(_) => "terminal_input_failed",
+            AppError::Database(_) => "database_error",
+            AppError::DatabaseMigration(_) => "database_migration_failed",
+            AppError::LegacyMigration(_) => "legacy_migration_failed",
+            AppError::FrontendPersistenceMigration(_) => "frontend_persistence_migration_failed",
+            AppError::DatabaseConstraint(_) => "database_constraint",
         }
     }
 }
@@ -178,6 +198,23 @@ mod tests {
             (
                 AppError::TerminalInputFailed("x".into()),
                 "terminal_input_failed",
+            ),
+            (AppError::Database("x".into()), "database_error"),
+            (
+                AppError::DatabaseMigration("x".into()),
+                "database_migration_failed",
+            ),
+            (
+                AppError::LegacyMigration("x".into()),
+                "legacy_migration_failed",
+            ),
+            (
+                AppError::FrontendPersistenceMigration("x".into()),
+                "frontend_persistence_migration_failed",
+            ),
+            (
+                AppError::DatabaseConstraint("x".into()),
+                "database_constraint",
             ),
         ];
         for (err, expected_code) in cases {

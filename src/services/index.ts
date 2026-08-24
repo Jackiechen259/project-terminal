@@ -77,6 +77,19 @@ const FILE_CMD = {
   download: "download_project_file",
 } as const;
 
+const PERSISTENCE_CMD = {
+  getSettings: "get_general_settings",
+  saveSettings: "save_general_settings",
+  loadCollections: "load_collections",
+  saveCollections: "save_collections",
+  listMemos: "list_project_memos",
+  saveMemos: "save_project_memos",
+  deleteMemo: "delete_project_memo",
+  loadWorkspace: "load_workspace_state",
+  saveWorkspace: "save_workspace_state",
+  migrateFrontend: "migrate_frontend_persistence",
+} as const;
+
 export interface ProjectInput {
   id?: string;
   name: string;
@@ -181,6 +194,46 @@ export interface StoredColorScheme {
   brightWhite: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface DurableProjectCollection {
+  id: string;
+  name: string;
+  projectIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DurableCollectionSnapshot {
+  collections: DurableProjectCollection[];
+  collapsed: Record<string, boolean>;
+  ungroupedProjectIds: string[];
+}
+
+export interface DurableProjectMemo {
+  id: string;
+  projectId: string;
+  kind: "markdown" | "command";
+  title: string;
+  content: string;
+  description: string;
+  command: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface FrontendPersistencePayload {
+  generalSettings?: Record<string, unknown>;
+  collections?: DurableCollectionSnapshot;
+  projectMemos?: Record<string, DurableProjectMemo[]>;
+  workspaceStates?: Record<string, Record<string, unknown>>;
+}
+
+export interface FrontendPersistenceMigrationResult {
+  generalSettings: boolean;
+  collections: boolean;
+  projectMemos: boolean;
+  workspaces: string[];
 }
 
 export interface WindowsTerminalSchemeCandidate {
@@ -431,6 +484,39 @@ export const colorSchemeService = {
     invokeOrThrow<WindowsTerminalSchemeImportResult>(
       "import_windows_terminal_color_schemes",
       { keys },
+    ),
+};
+
+export const persistenceService = {
+  getGeneralSettings: () =>
+    invokeOrThrow<Record<string, unknown> | null>(PERSISTENCE_CMD.getSettings),
+  saveGeneralSettings: (value: unknown) =>
+    invokeOrThrow<void>(PERSISTENCE_CMD.saveSettings, { value }),
+  loadCollections: () =>
+    invokeOrThrow<DurableCollectionSnapshot>(PERSISTENCE_CMD.loadCollections),
+  saveCollections: (snapshot: DurableCollectionSnapshot) =>
+    invokeOrThrow<void>(PERSISTENCE_CMD.saveCollections, { snapshot }),
+  listProjectMemos: (projectId: string) =>
+    invokeOrThrow<ListResponse<DurableProjectMemo>>(PERSISTENCE_CMD.listMemos, {
+      projectId,
+    }).then((response) => response.items),
+  saveProjectMemos: (projectId: string, memos: DurableProjectMemo[]) =>
+    invokeOrThrow<void>(PERSISTENCE_CMD.saveMemos, { projectId, memos }),
+  deleteProjectMemo: (memoId: string) =>
+    invokeOrThrow<void>(PERSISTENCE_CMD.deleteMemo, { memoId }),
+  loadWorkspaceState: (workspaceId: string) =>
+    invokeOrThrow<Record<string, unknown> | null>(
+      PERSISTENCE_CMD.loadWorkspace,
+      {
+        workspaceId,
+      },
+    ),
+  saveWorkspaceState: (workspaceId: string, value: unknown) =>
+    invokeOrThrow<void>(PERSISTENCE_CMD.saveWorkspace, { workspaceId, value }),
+  migrateFrontendPersistence: (payload: FrontendPersistencePayload) =>
+    invokeOrThrow<FrontendPersistenceMigrationResult>(
+      PERSISTENCE_CMD.migrateFrontend,
+      { payload },
     ),
 };
 

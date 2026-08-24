@@ -40,7 +40,7 @@ Project Terminal 并没有将无关会话混杂在全局标签栏中，而是按
 - **开发环境自动激活** — 支持 Conda、Python venv、Poetry、uv 或自定义激活命令。
 - **交互式 SSH 身份验证** — 密码、键盘交互 (keyboard-interactive) 以及私钥口令 (passphrase) 提示均在终端内完成。
 - **项目文件侧边栏** — 浏览本地、WSL 与 SSH 项目目录，拖入本地文件即可上传，也可将远程项目拖到下载区。SSH 传输会在本机和远端均可用时优先使用 `rsync`，否则自动回退到 `scp`。
-- **安全的本地持久化存储** — 项目设置保存为原子化 JSON 文件，无需任何数据库依赖。
+- **安全的本地持久化存储** — 项目与工作区状态保存于事务型 SQLite，并在升级时提供一次性迁移备份。
 - **签名自动更新** — 打包版支持检查 GitHub Releases 获取最新版本。
 
 ## 项目类型
@@ -135,17 +135,19 @@ ssh user@example.com
 %APPDATA%\ProjectTerminal\
 ```
 
-主要配置文件包括：
+主要持久化文件与恢复目录包括：
 
 ```text
-projects.json         已保存的本地、WSL 及 SSH 项目
-profiles.json         终端配置 (Profile) 与环境设置
-ssh-connections.json  SSH 连接配置
-settings.json         应用偏好设置
-remote-config.json    远程网关偏好设置与局域网访问控制
+project-terminal.db                 SQLite 应用数据库
+backups/legacy-before-sqlite-*      一次性迁移备份
+remote-config.json                  远程网关偏好设置与局域网访问控制
+remote-audit.jsonl                  远程网关审计日志
 ```
 
-配置写入采用原子化写入机制：数据首先写入临时文件，刷新刷盘后再重命名覆盖。若检测到配置文件损坏，应用会将其带时间戳进行备份，而不会直接覆盖破坏数据。
+首次迁移后的 `projects.json`、`profiles.json`、`profile-templates.json`、
+`ssh-connections.json` 与 `color-schemes.json` 会保留以便恢复；应用后续
+写入统一进入 SQLite。迁移与恢复约定见
+[Persistence v2](./docs/persistence-v2.md)。
 
 ## 架构设计
 
@@ -156,7 +158,7 @@ React / TypeScript UI 前端
         ▼
 Rust 应用后端
         │
-        ├── 项目 (Project)、配置 (Profile)、SSH 与设置存储仓 (Repositories)
+        ├── SQLite 持久化仓储与 schema migration
         ├── Shell 与开发环境解析器
         ├── 桌面进程唯一持有的终端会话管理器
         │       ├── Rust wezterm-term 终端模型
@@ -221,7 +223,7 @@ Profile 作为项目的一等资源进行存储。Rust 后端会根据已保存�
 | 终端模拟核心 | Rust 中的 `wezterm-term` |
 | 终端渲染 | Canvas2D，并可使用 WebGL2 加速/回退 |
 | PTY 后端 | portable-pty |
-| 持久化 | JSON 文件 |
+| 持久化 | SQLite（内置 `rusqlite`）+ Windows 凭据管理器（SSH 密码） |
 | SSH | 系统内置 OpenSSH 客户端 |
 | 测试 | Vitest 与 Rust 原生测试 |
 

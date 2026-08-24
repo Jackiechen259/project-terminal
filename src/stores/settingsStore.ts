@@ -3,7 +3,9 @@ import { persist } from "zustand/middleware";
 
 import { FOLLOW_APP_THEME } from "@/lib/terminalColorSchemes";
 import { sanitizeFontFamily } from "@/lib/terminalFonts";
+import { isTauriRuntime } from "@/lib/runtime";
 import { createThrottledJSONStorage } from "@/lib/throttledStorage";
+import { persistenceService } from "@/services";
 
 export const MIN_TERMINAL_FONT_SIZE = 10;
 export const MAX_TERMINAL_FONT_SIZE = 24;
@@ -122,6 +124,8 @@ interface SettingsStoreState extends GeneralSettings {
   updateGeneralSettings: (patch: Partial<GeneralSettings>) => void;
   rememberProject: (projectId: string | null) => void;
   resetGeneralSettings: () => void;
+  hydrateFromBackend: () => Promise<void>;
+  persistToBackend: () => Promise<void>;
 }
 
 export function clampTerminalFontSize(value: number): number {
@@ -224,13 +228,57 @@ type PersistedSettings = GeneralSettings & { lastProjectId: string | null };
 export const generalSettingsStorage =
   createThrottledJSONStorage<PersistedSettings>();
 
+function persistedSettings(state: SettingsStoreState): PersistedSettings {
+  return {
+    language: state.language,
+    theme: state.theme,
+    restoreLastProject: state.restoreLastProject,
+    confirmCloseTerminal: state.confirmCloseTerminal,
+    confirmDeleteProject: state.confirmDeleteProject,
+    showTerminalCount: state.showTerminalCount,
+    openFileSidebarByDefault: state.openFileSidebarByDefault,
+    terminalColorScheme: state.terminalColorScheme,
+    terminalFontFamily: state.terminalFontFamily,
+    terminalFontSize: state.terminalFontSize,
+    terminalFontWeight: state.terminalFontWeight,
+    terminalFontWeightBold: state.terminalFontWeightBold,
+    terminalLineHeight: state.terminalLineHeight,
+    terminalLetterSpacing: state.terminalLetterSpacing,
+    terminalCursorStyle: state.terminalCursorStyle,
+    terminalCursorInactiveStyle: state.terminalCursorInactiveStyle,
+    terminalPadding: state.terminalPadding,
+    terminalMinimumContrast: state.terminalMinimumContrast,
+    terminalRenderer: state.terminalRenderer,
+    terminalPasteShortcut: state.terminalPasteShortcut,
+    terminalScrollbackLines: state.terminalScrollbackLines,
+    terminalScrollbackMegabytes: state.terminalScrollbackMegabytes,
+    cursorBlink: state.cursorBlink,
+    autoCheckForUpdates: state.autoCheckForUpdates,
+    lastProjectId: state.lastProjectId,
+  };
+}
+
+let backendSaveTimer: number | undefined;
+
+function scheduleBackendSave(get: () => SettingsStoreState) {
+  if (!isTauriRuntime()) return;
+  if (backendSaveTimer !== undefined) window.clearTimeout(backendSaveTimer);
+  backendSaveTimer = window.setTimeout(() => {
+    void get()
+      .persistToBackend()
+      .catch((error) => {
+        console.error("Failed to save general settings", error);
+      });
+  }, 250);
+}
+
 export const useSettingsStore = create<SettingsStoreState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       ...DEFAULT_GENERAL_SETTINGS,
       lastProjectId: null,
 
-      updateGeneralSettings: (patch) =>
+      updateGeneralSettings: (patch) => {
         set((state) => ({
           ...patch,
           // This value is interpolated into a CSS font-family declaration.
@@ -276,11 +324,61 @@ export const useSettingsStore = create<SettingsStoreState>()(
             patch.terminalMinimumContrast === undefined
               ? state.terminalMinimumContrast
               : clampTerminalMinimumContrast(patch.terminalMinimumContrast),
-        })),
+        }));
+        scheduleBackendSave(get);
+      },
 
-      rememberProject: (lastProjectId) => set({ lastProjectId }),
+      rememberProject: (lastProjectId) => {
+        set({ lastProjectId });
+        scheduleBackendSave(get);
+      },
 
-      resetGeneralSettings: () => set({ ...DEFAULT_GENERAL_SETTINGS }),
+      resetGeneralSettings: () => {
+        set({
+          ...DEFAULT_GENERAL_SETTINGS,
+          lastProjectId: get().lastProjectId,
+        });
+        scheduleBackendSave(get);
+      },
+
+      hydrateFromBackend: async () => {
+        if (!isTauriRuntime()) return;
+        const value = await persistenceService.getGeneralSettings();
+        if (!value) return;
+        const next = {
+          ...DEFAULT_GENERAL_SETTINGS,
+          ...value,
+        } as GeneralSettings & { lastProjectId?: unknown };
+        set({
+          ...next,
+          terminalFontSize: clampTerminalFontSize(next.terminalFontSize),
+          terminalFontWeight: clampTerminalFontWeight(next.terminalFontWeight),
+          terminalFontWeightBold: clampTerminalFontWeight(
+            next.terminalFontWeightBold,
+          ),
+          terminalLineHeight: clampTerminalLineHeight(next.terminalLineHeight),
+          terminalLetterSpacing: clampTerminalLetterSpacing(
+            next.terminalLetterSpacing,
+          ),
+          terminalPadding: clampTerminalPadding(next.terminalPadding),
+          terminalMinimumContrast: clampTerminalMinimumContrast(
+            next.terminalMinimumContrast,
+          ),
+          terminalScrollbackLines: clampTerminalScrollbackLines(
+            next.terminalScrollbackLines,
+          ),
+          terminalScrollbackMegabytes: clampTerminalScrollbackMegabytes(
+            next.terminalScrollbackMegabytes,
+          ),
+          lastProjectId:
+            typeof next.lastProjectId === "string" ? next.lastProjectId : null,
+        });
+      },
+
+      persistToBackend: async () => {
+        if (!isTauriRuntime()) return;
+        await persistenceService.saveGeneralSettings(persistedSettings(get()));
+      },
     }),
     {
       name: "project-terminal.general-settings",
@@ -297,33 +395,7 @@ export const useSettingsStore = create<SettingsStoreState>()(
         delete state.restoreWindowsFromPreviousSession;
         return state;
       },
-      partialize: (state): PersistedSettings => ({
-        language: state.language,
-        theme: state.theme,
-        restoreLastProject: state.restoreLastProject,
-        confirmCloseTerminal: state.confirmCloseTerminal,
-        confirmDeleteProject: state.confirmDeleteProject,
-        showTerminalCount: state.showTerminalCount,
-        openFileSidebarByDefault: state.openFileSidebarByDefault,
-        terminalColorScheme: state.terminalColorScheme,
-        terminalFontFamily: state.terminalFontFamily,
-        terminalFontSize: state.terminalFontSize,
-        terminalFontWeight: state.terminalFontWeight,
-        terminalFontWeightBold: state.terminalFontWeightBold,
-        terminalLineHeight: state.terminalLineHeight,
-        terminalLetterSpacing: state.terminalLetterSpacing,
-        terminalCursorStyle: state.terminalCursorStyle,
-        terminalCursorInactiveStyle: state.terminalCursorInactiveStyle,
-        terminalPadding: state.terminalPadding,
-        terminalMinimumContrast: state.terminalMinimumContrast,
-        terminalRenderer: state.terminalRenderer,
-        terminalPasteShortcut: state.terminalPasteShortcut,
-        terminalScrollbackLines: state.terminalScrollbackLines,
-        terminalScrollbackMegabytes: state.terminalScrollbackMegabytes,
-        cursorBlink: state.cursorBlink,
-        autoCheckForUpdates: state.autoCheckForUpdates,
-        lastProjectId: state.lastProjectId,
-      }),
+      partialize: persistedSettings,
     },
   ),
 );
