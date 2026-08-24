@@ -128,9 +128,15 @@ pub struct RenderRow {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderFrame {
+    /// Monotonic attachment sequence. A gap means the incremental cache must
+    /// be resynchronized from a later full snapshot.
     pub sequence: u64,
     pub rows: u16,
     pub cols: u16,
+    /// When `full_snapshot` is false this contains only changed stable rows in
+    /// the current viewport. Automatic scrolling may move `viewport_top`
+    /// without making the frame a full snapshot; stable row identity lets the
+    /// frontend retain overlapping rows across that move.
     pub dirty_rows: Vec<RenderRow>,
     pub cursor: CursorState,
     pub scrollback_length: usize,
@@ -138,6 +144,8 @@ pub struct RenderFrame {
     pub viewport_bottom: i64,
     pub alternate_screen: bool,
     pub mouse_reporting: bool,
+    /// When true, `dirty_rows` is the authoritative complete visible snapshot.
+    /// It is the only frame that can rebuild an empty/incompatible cache.
     pub full_snapshot: bool,
 }
 

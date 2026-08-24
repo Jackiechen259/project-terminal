@@ -955,9 +955,7 @@ mod tests {
         let session = make_session("cmd.exe", &["/Q"]);
 
         session.write(b"ping 127.0.0.1 -t\r\n").expect("write ping");
-        // Give it time to start pinging.
-        std::thread::sleep(Duration::from_millis(400));
-        assert!(model_contains(&session, "Ping"), "ping did not start");
+        assert!(wait_for_model_text(&session, "Ping"), "ping did not start");
         // Send Ctrl+C.
         session
             .key_down(&TerminalKeyEvent {

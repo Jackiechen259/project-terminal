@@ -524,6 +524,8 @@ export const terminalService = {
   },
   detach: (sessionId: string, clientId: string) =>
     invokeOrThrow<void>("session_detach", { sessionId, clientId }),
+  requestRenderSnapshot: (sessionId: string) =>
+    invokeOrThrow<void>("terminal_request_render_snapshot", { sessionId }),
   list: () =>
     invokeOrThrow<ListResponse<SessionInfo>>("session_list").then(
       (response) => response.items,

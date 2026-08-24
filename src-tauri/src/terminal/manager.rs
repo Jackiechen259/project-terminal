@@ -209,6 +209,11 @@ impl TerminalManager {
         session.resize(rows, cols, pixel_width, pixel_height)
     }
 
+    pub fn request_render_snapshot(&self, session_id: &str) -> AppResult<()> {
+        self.get(session_id)?.request_render_snapshot();
+        Ok(())
+    }
+
     /// Close a session and remove it from the map. Idempotent - closing an
     /// unknown session id is a no-op rather than an error, so the frontend
     /// can always call it on tab teardown.

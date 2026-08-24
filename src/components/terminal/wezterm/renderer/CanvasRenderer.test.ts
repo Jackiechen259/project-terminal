@@ -42,11 +42,17 @@ function row(stableRow: number, text: string): TerminalRenderRow {
 function frame(
   dirtyRows: TerminalRenderRow[],
   fullSnapshot = false,
+  overrides: Partial<
+    Pick<
+      TerminalRenderFrame,
+      "sequence" | "rows" | "cols" | "viewportTop" | "viewportBottom"
+    >
+  > = {},
 ): TerminalRenderFrame {
   return {
-    sequence: fullSnapshot ? 1 : 2,
-    rows: 2,
-    cols: 4,
+    sequence: overrides.sequence ?? (fullSnapshot ? 1 : 2),
+    rows: overrides.rows ?? 2,
+    cols: overrides.cols ?? 4,
     dirtyRows,
     cursor: {
       column: 0,
@@ -55,8 +61,8 @@ function frame(
       visibility: "hidden",
     },
     scrollbackLength: 0,
-    viewportTop: 0,
-    viewportBottom: 0,
+    viewportTop: overrides.viewportTop ?? 0,
+    viewportBottom: overrides.viewportBottom ?? 0,
     alternateScreen: false,
     mouseReporting: false,
     fullSnapshot,
@@ -134,6 +140,173 @@ describe("CanvasRenderer", () => {
 
     expect(context.fillText.mock.calls.map(([text]) => text)).toEqual(
       expect.arrayContaining(["n", "e", "w"]),
+    );
+    renderer.dispose();
+  });
+
+  it("retains overlapping stable rows when the viewport scrolls", () => {
+    const renderer = new CanvasRenderer();
+    const canvas = document.createElement("canvas");
+    renderer.mount(canvas);
+    renderer.resize(80, 68, 4, 4);
+    renderer.render(
+      frame(
+        [row(100, "AAA"), row(101, "BBB"), row(102, "CCC"), row(103, "DDD")],
+        true,
+        {
+          sequence: 1,
+          rows: 4,
+          cols: 4,
+          viewportTop: 100,
+          viewportBottom: 120,
+        },
+      ),
+    );
+    const [, initialPaint] = [...callbacks.entries()][0];
+    callbacks.clear();
+    initialPaint(16);
+    context.fillText.mockClear();
+
+    renderer.render(
+      frame([row(104, "EEE")], false, {
+        sequence: 2,
+        rows: 4,
+        cols: 4,
+        viewportTop: 101,
+        viewportBottom: 120,
+      }),
+    );
+    const [, scrollPaint] = [...callbacks.entries()][0];
+    callbacks.clear();
+    scrollPaint(32);
+
+    expect(context.fillText.mock.calls.map(([text]) => text)).toEqual(
+      expect.arrayContaining(["B", "C", "D", "E"]),
+    );
+    renderer.dispose();
+  });
+
+  it("keeps both dirty rows when coalescing a pending viewport shift", () => {
+    const renderer = new CanvasRenderer();
+    const canvas = document.createElement("canvas");
+    renderer.mount(canvas);
+    renderer.resize(80, 68, 4, 4);
+    renderer.render(
+      frame(
+        [row(100, "AAA"), row(101, "BBB"), row(102, "CCC"), row(103, "DDD")],
+        true,
+        {
+          sequence: 1,
+          rows: 4,
+          cols: 4,
+          viewportTop: 100,
+          viewportBottom: 120,
+        },
+      ),
+    );
+    const [, initialPaint] = [...callbacks.entries()][0];
+    callbacks.clear();
+    initialPaint(16);
+    context.fillText.mockClear();
+
+    renderer.render(
+      frame([row(102, "changed-A")], false, {
+        sequence: 10,
+        rows: 4,
+        cols: 4,
+        viewportTop: 100,
+        viewportBottom: 120,
+      }),
+    );
+    renderer.render(
+      frame([row(104, "changed-B")], false, {
+        sequence: 11,
+        rows: 4,
+        cols: 4,
+        viewportTop: 101,
+        viewportBottom: 120,
+      }),
+    );
+    const [, mergedPaint] = [...callbacks.entries()][0];
+    callbacks.clear();
+    mergedPaint(32);
+
+    expect(context.fillText.mock.calls.map(([text]) => text)).toEqual(
+      expect.arrayContaining(["A", "B"]),
+    );
+    renderer.dispose();
+  });
+
+  it("uses the latest stable-row update when two pending frames overlap", () => {
+    const renderer = new CanvasRenderer();
+    const canvas = document.createElement("canvas");
+    renderer.mount(canvas);
+    renderer.resize(80, 34, 2, 4);
+    renderer.render(
+      frame([row(0, "old"), row(1, "line")], true, {
+        sequence: 1,
+        viewportTop: 0,
+      }),
+    );
+    const [, initialPaint] = [...callbacks.entries()][0];
+    callbacks.clear();
+    initialPaint(16);
+    context.fillText.mockClear();
+
+    renderer.render(frame([row(1, "A")], false, { sequence: 10 }));
+    renderer.render(frame([row(1, "B")], false, { sequence: 11 }));
+    const [, mergedPaint] = [...callbacks.entries()][0];
+    callbacks.clear();
+    mergedPaint(32);
+
+    expect(context.fillText.mock.calls.map(([text]) => text)).toContain("B");
+    expect(context.fillText.mock.calls.map(([text]) => text)).not.toContain(
+      "A",
+    );
+    renderer.dispose();
+  });
+
+  it("clears stale rows when an authoritative full snapshot arrives", () => {
+    const renderer = new CanvasRenderer();
+    const canvas = document.createElement("canvas");
+    renderer.mount(canvas);
+    renderer.resize(80, 34, 2, 4);
+    renderer.render(
+      frame([row(100, "OLD"), row(101, "KEEP")], true, {
+        sequence: 1,
+        viewportTop: 100,
+        viewportBottom: 120,
+      }),
+    );
+    const [, initialPaint] = [...callbacks.entries()][0];
+    callbacks.clear();
+    initialPaint(16);
+
+    renderer.render(
+      frame([row(101, "FRESH"), row(102, "NEW")], true, {
+        sequence: 2,
+        viewportTop: 101,
+        viewportBottom: 120,
+      }),
+    );
+    const [, snapshotPaint] = [...callbacks.entries()][0];
+    callbacks.clear();
+    snapshotPaint(32);
+    context.fillText.mockClear();
+
+    renderer.render(
+      frame([row(103, "DELTA")], false, {
+        sequence: 3,
+        viewportTop: 100,
+        viewportBottom: 120,
+      }),
+    );
+    const [, deltaPaint] = [...callbacks.entries()][0];
+    callbacks.clear();
+    deltaPaint(48);
+
+    expect(context.fillText.mock.calls.map(([text]) => text)).not.toContain(
+      "O",
     );
     renderer.dispose();
   });

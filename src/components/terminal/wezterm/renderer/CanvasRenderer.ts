@@ -16,6 +16,7 @@ import type {
   TerminalCursorStyle,
   TerminalRendererTheme,
 } from "./TerminalRenderer";
+import { applyFrameToRowCache, mergePendingFrame } from "./renderFrameMerge";
 
 const ANSI_THEME_KEYS = [
   "black",
@@ -184,9 +185,10 @@ function fontFor(cell: TerminalRenderCell, font: TerminalFontOptions) {
 /**
  * Correctness-first Canvas2D renderer.
  *
- * Rows are retained by stable row id and only dirty rows (plus old/new cursor
- * rows) are repainted. React never renders cells and no PTY read schedules a
- * paint directly; the backend frame scheduler controls update cadence.
+ * Rows are retained by stable row id. Ordinary deltas repaint only dirty rows
+ * (plus old/new cursor rows); a viewport move repaints the new visible rows
+ * from that retained cache. React never renders cells and no PTY read schedules
+ * a paint directly; the backend frame scheduler controls update cadence.
  */
 export class CanvasRenderer implements TerminalRenderer {
   private canvas: HTMLCanvasElement | null = null;
@@ -261,10 +263,13 @@ export class CanvasRenderer implements TerminalRenderer {
   }
 
   resize(width: number, height: number, rows: number, cols: number) {
+    const nextRows = Math.max(1, rows);
+    const nextCols = Math.max(1, cols);
+    const gridChanged = this.rows !== nextRows || this.cols !== nextCols;
     this.width = Math.max(1, width);
     this.height = Math.max(1, height);
-    this.rows = Math.max(1, rows);
-    this.cols = Math.max(1, cols);
+    this.rows = nextRows;
+    this.cols = nextCols;
     this.dpr = window.devicePixelRatio || 1;
     if (this.canvas) {
       this.canvas.style.width = `${this.width}px`;
@@ -273,9 +278,22 @@ export class CanvasRenderer implements TerminalRenderer {
       this.canvas.height = Math.ceil(this.height * this.dpr);
     }
     this.updateMetrics();
-    this.rowCache.clear();
-    this.frame = null;
-    this.clear();
+    if (gridChanged) {
+      if (this.frameRequest !== null) {
+        window.cancelAnimationFrame(this.frameRequest);
+        this.frameRequest = null;
+      }
+      this.pendingFrame = null;
+      this.rowCache.clear();
+      this.frame = null;
+      this.clear();
+      return;
+    }
+    if (this.frame) {
+      this.redrawVisibleRows();
+    } else {
+      this.clear();
+    }
   }
 
   measureGrid(width: number, height: number) {
@@ -304,19 +322,15 @@ export class CanvasRenderer implements TerminalRenderer {
     if (!context) return;
 
     const oldFrame = this.frame;
-    const viewportChanged = oldFrame?.viewportTop !== frame.viewportTop;
-    if (
-      viewportChanged ||
-      oldFrame?.rows !== frame.rows ||
-      oldFrame?.cols !== frame.cols
-    ) {
-      this.rowCache.clear();
-      this.clear();
-    }
-    for (const row of frame.dirtyRows) this.rowCache.set(row.stableRow, row);
+    const cacheUpdate = applyFrameToRowCache(this.rowCache, oldFrame, frame, {
+      rows: this.rows,
+      cols: this.cols,
+    });
+    if (cacheUpdate.cacheCleared) this.clear();
+    if (!cacheUpdate.accepted) return;
 
     const rowsToPaint = new Set<number>();
-    if (frame.fullSnapshot || viewportChanged) {
+    if (frame.fullSnapshot || cacheUpdate.viewportChanged) {
       for (let row = 0; row < frame.rows; row++) {
         rowsToPaint.add(frame.viewportTop + row);
       }
@@ -342,21 +356,13 @@ export class CanvasRenderer implements TerminalRenderer {
 
   setTheme(theme: TerminalRendererTheme) {
     this.theme = theme;
-    if (this.frame) {
-      const frame = this.frame;
-      this.clear();
-      this.render({ ...frame, fullSnapshot: true });
-    }
+    this.redrawVisibleRows();
   }
 
   setFont(font: TerminalFontOptions) {
     this.font = font;
     this.updateMetrics();
-    if (this.frame) {
-      const frame = this.frame;
-      this.clear();
-      this.render({ ...frame, fullSnapshot: true });
-    }
+    this.redrawVisibleRows();
   }
 
   setCursorStyle(
@@ -788,30 +794,11 @@ export class CanvasRenderer implements TerminalRenderer {
     }
     this.paintCursor(frame, true);
   }
-}
 
-function mergePendingFrame(
-  pending: TerminalRenderFrame | null,
-  next: TerminalRenderFrame,
-): TerminalRenderFrame {
-  if (!pending) return next;
-  if (
-    next.fullSnapshot ||
-    pending.rows !== next.rows ||
-    pending.cols !== next.cols ||
-    pending.viewportTop !== next.viewportTop
-  ) {
-    return next;
+  /** Redraw the retained model without pretending the last delta is a snapshot. */
+  redraw() {
+    this.redrawVisibleRows();
   }
-
-  const rows = new Map<number, TerminalRenderRow>();
-  for (const row of pending.dirtyRows) rows.set(row.stableRow, row);
-  for (const row of next.dirtyRows) rows.set(row.stableRow, row);
-  return {
-    ...next,
-    dirtyRows: [...rows.values()],
-    fullSnapshot: pending.fullSnapshot,
-  };
 }
 
 function imageSourceWidth(source: CanvasImageSource) {

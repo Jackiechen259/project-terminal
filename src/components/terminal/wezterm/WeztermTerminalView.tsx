@@ -23,7 +23,6 @@ import { buildTerminalFontStack } from "@/lib/terminalFonts";
 import {
   isTerminalRenderMessage,
   type TerminalRenderFrame,
-  type TerminalRenderRow,
   type TerminalSearchMatch,
 } from "@/lib/terminalFrames";
 import {
@@ -137,7 +136,8 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const rendererRef = useRef<TerminalRenderer | null>(null);
   const frameRef = useRef<TerminalRenderFrame | null>(null);
-  const rowsRef = useRef(new Map<number, TerminalRenderRow>());
+  const awaitingSnapshotRef = useRef(false);
+  const snapshotRequestedRef = useRef(false);
   const selectionRef = useRef<TerminalSelection | null>(null);
   const draggingRef = useRef(false);
   const compositionRef = useRef(false);
@@ -640,6 +640,15 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     [copySelection, pasteClipboard],
   );
 
+  const requestRenderSnapshot = useCallback(() => {
+    awaitingSnapshotRef.current = true;
+    if (snapshotRequestedRef.current) return;
+    snapshotRequestedRef.current = true;
+    void terminalService.requestRenderSnapshot(sessionId).catch(() => {
+      snapshotRequestedRef.current = false;
+    });
+  }, [sessionId]);
+
   // Renderer resources follow visibility. A hidden terminal keeps its PTY and
   // Rust model alive, but does not retain a Canvas/WebGL context or receive
   // render frames.
@@ -651,6 +660,11 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     }
     const canvas = canvasRef.current;
     if (!canvas) return;
+    lastResizeRef.current = null;
+    if (frameRef.current) {
+      frameRef.current = null;
+      requestRenderSnapshot();
+    }
     let renderer = createTerminalRenderer(terminalRendererPreference);
     try {
       renderer.mount(canvas);
@@ -701,9 +715,6 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     const width = surface.clientWidth;
     const height = surface.clientHeight;
     const grid = renderer.measureGrid(width, height);
-    renderer.resize(width, height, grid.rows, grid.cols);
-    const frame = frameRef.current;
-    if (frame) renderer.render(frame);
     const previousResize = lastResizeRef.current;
     if (
       previousResize?.rows === grid.rows &&
@@ -713,6 +724,17 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     ) {
       return;
     }
+    const gridChanged =
+      previousResize !== null &&
+      (previousResize.rows !== grid.rows || previousResize.cols !== grid.cols);
+    renderer.resize(width, height, grid.rows, grid.cols);
+    if (gridChanged || (previousResize === null && frameRef.current !== null)) {
+      // The renderer cache was invalidated. A previous frame may only be a
+      // delta, so wait for resize/attach resync instead of replaying it.
+      frameRef.current = null;
+      snapshotRequestedRef.current = false;
+      awaitingSnapshotRef.current = true;
+    }
     lastResizeRef.current = {
       rows: grid.rows,
       cols: grid.cols,
@@ -721,8 +743,10 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     };
     void terminalService
       .resize(sessionId, grid.rows, grid.cols, width, height)
-      .catch(() => {});
-  }, [sessionId]);
+      .catch(() => {
+        if (gridChanged) requestRenderSnapshot();
+      });
+  }, [requestRenderSnapshot, sessionId]);
 
   useEffect(() => {
     if (!active) return;
@@ -732,7 +756,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     observer.observe(surface);
     resizeSurface();
     return () => observer.disconnect();
-  }, [active, resizeSurface]);
+  }, [active, resizeSurface, terminalRendererPreference]);
 
   useEffect(() => {
     if (!active) return;
@@ -740,9 +764,9 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     let cancelled = false;
 
     reportedExitRef.current = false;
-    const attachedRows = rowsRef.current;
-    attachedRows.clear();
     frameRef.current = null;
+    awaitingSnapshotRef.current = false;
+    snapshotRequestedRef.current = false;
     updateSelection(null);
     setSearchResults([]);
 
@@ -756,14 +780,44 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       if (cancelled || !isTerminalRenderMessage(message)) return;
       if (message.type === "frame") {
         const frame = message.frame;
+        const previousFrame = frameRef.current;
         // Tauri preserves channel order, but keeping the sequence guard at
         // the attachment boundary makes a late callback harmless if a
         // renderer is replaced or a platform transport retries delivery.
-        if (frameRef.current && frame.sequence < frameRef.current.sequence) {
+        if (previousFrame && frame.sequence <= previousFrame.sequence) {
           return;
         }
-        if (frame.fullSnapshot) attachedRows.clear();
-        for (const row of frame.dirtyRows) attachedRows.set(row.stableRow, row);
+        const expectedResize = lastResizeRef.current;
+        if (
+          expectedResize &&
+          (frame.rows !== expectedResize.rows ||
+            frame.cols !== expectedResize.cols)
+        ) {
+          // A frame from before a grid resize cannot rebuild the newly sized
+          // renderer. Keep waiting for the resize-triggered authoritative
+          // snapshot instead of allowing it to satisfy resync state.
+          frameRef.current = null;
+          rendererRef.current?.setSearchMatch(null);
+          requestRenderSnapshot();
+          return;
+        }
+        const sequenceGap =
+          previousFrame !== null && frame.sequence > previousFrame.sequence + 1;
+        if (
+          !frame.fullSnapshot &&
+          (awaitingSnapshotRef.current || previousFrame === null || sequenceGap)
+        ) {
+          if (previousFrame === null || sequenceGap) {
+            frameRef.current = null;
+            rendererRef.current?.setSearchMatch(null);
+            requestRenderSnapshot();
+          }
+          return;
+        }
+        if (frame.fullSnapshot) {
+          awaitingSnapshotRef.current = false;
+          snapshotRequestedRef.current = false;
+        }
         frameRef.current = frame;
         rendererRef.current?.render(frame);
         return;
@@ -791,10 +845,13 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
         reportExit(message.status, message.exitCode ?? null);
       }
       // A lagged render channel is recovered by the backend by requesting a
-      // full snapshot. It is safe to discard the local row cache here because
-      // the next frame is explicitly marked fullSnapshot.
+      // full snapshot. The renderer keeps its last coherent pixels until that
+      // snapshot arrives, then clears its stable-row cache authoritatively.
       if (message.type === "lagged") {
-        attachedRows.clear();
+        frameRef.current = null;
+        awaitingSnapshotRef.current = true;
+        // The Tauri attach task requests the snapshot before sending lagged.
+        snapshotRequestedRef.current = true;
         rendererRef.current?.setSearchMatch(null);
       }
     };
@@ -822,8 +879,9 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     return () => {
       cancelled = true;
       void terminalService.detach(sessionId, clientId);
-      attachedRows.clear();
       frameRef.current = null;
+      awaitingSnapshotRef.current = false;
+      snapshotRequestedRef.current = false;
       updateSelection(null);
       rendererRef.current?.setSearchMatch(null);
     };
@@ -832,6 +890,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     defaultTitle,
     pulseBell,
     refreshSearch,
+    requestRenderSnapshot,
     resizeSurface,
     sessionId,
     updateSelection,

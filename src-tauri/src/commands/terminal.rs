@@ -970,6 +970,14 @@ pub fn terminal_set_viewport(
 }
 
 #[tauri::command]
+pub fn terminal_request_render_snapshot(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+) -> AppResult<()> {
+    terminal.manager.request_render_snapshot(&session_id)
+}
+
+#[tauri::command]
 pub fn resize_terminal(
     terminal: State<'_, TerminalState>,
     session_id: String,

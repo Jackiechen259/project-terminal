@@ -883,6 +883,23 @@ mod tests {
     }
 
     #[test]
+    fn automatic_scrolling_can_move_viewport_in_an_incremental_frame() {
+        let mut engine = engine_with_size(3, 12);
+        let initial = engine.take_render_frame().expect("initial snapshot");
+
+        engine.feed(b"one\r\ntwo\r\nthree\r\nfour\r\n");
+        let scrolled = engine.take_render_frame().expect("scroll frame");
+
+        assert!(scrolled.viewport_top > initial.viewport_top);
+        assert!(!scrolled.full_snapshot);
+        assert!(!scrolled.dirty_rows.is_empty());
+        assert!(scrolled
+            .dirty_rows
+            .iter()
+            .any(|row| row.stable_row >= scrolled.viewport_top));
+    }
+
+    #[test]
     fn does_not_emit_wezterm_bootstrap_title() {
         let mut engine = engine();
 

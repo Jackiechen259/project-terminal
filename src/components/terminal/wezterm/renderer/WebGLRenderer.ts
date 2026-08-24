@@ -17,6 +17,7 @@ import type {
   TerminalSelection,
   TerminalSelectionPoint,
 } from "./TerminalRenderer";
+import { applyFrameToRowCache, mergePendingFrame } from "./renderFrameMerge";
 
 type Rgb = [number, number, number];
 type Rgba = [number, number, number, number];
@@ -283,29 +284,6 @@ function fontForCell(cell: TerminalRenderCell, font: TerminalFontOptions) {
   return `${style}${weight} ${font.size}px ${font.family}`;
 }
 
-function mergePendingFrame(
-  pending: TerminalRenderFrame | null,
-  next: TerminalRenderFrame,
-): TerminalRenderFrame {
-  if (!pending) return next;
-  if (
-    next.fullSnapshot ||
-    pending.rows !== next.rows ||
-    pending.cols !== next.cols ||
-    pending.viewportTop !== next.viewportTop
-  ) {
-    return next;
-  }
-  const rows = new Map<number, TerminalRenderRow>();
-  for (const row of pending.dirtyRows) rows.set(row.stableRow, row);
-  for (const row of next.dirtyRows) rows.set(row.stableRow, row);
-  return {
-    ...next,
-    dirtyRows: [...rows.values()],
-    fullSnapshot: pending.fullSnapshot,
-  };
-}
-
 /**
  * WebGL2 terminal renderer with a bounded glyph atlas.
  *
@@ -339,6 +317,8 @@ export class WebGLRenderer implements TerminalRenderer {
   private cellWidth = 8;
   private cellHeight = 17;
   private baseline = 14;
+  private rows = 24;
+  private cols = 80;
   private theme: TerminalRendererTheme = {
     background: "#000000",
     foreground: "#ffffff",
@@ -436,6 +416,11 @@ export class WebGLRenderer implements TerminalRenderer {
   }
 
   resize(width: number, height: number, rows: number, cols: number) {
+    const nextRows = Math.max(1, rows);
+    const nextCols = Math.max(1, cols);
+    const gridChanged = this.rows !== nextRows || this.cols !== nextCols;
+    this.rows = nextRows;
+    this.cols = nextCols;
     this.width = Math.max(1, width);
     this.height = Math.max(1, height);
     this.dpr = window.devicePixelRatio || 1;
@@ -459,7 +444,17 @@ export class WebGLRenderer implements TerminalRenderer {
       Math.ceil(this.height * this.dpr),
     );
     this.canvasRenderer.resize(width, height, rows, cols);
+    if (gridChanged) {
+      if (this.frameRequest !== null) {
+        window.cancelAnimationFrame(this.frameRequest);
+        this.frameRequest = null;
+      }
+      this.pendingFrame = null;
+      this.rowCache.clear();
+      this.frame = null;
+    }
     this.drawBackground();
+    if (!gridChanged && this.frame) this.paintFrame(this.frame);
   }
 
   measureGrid(width: number, height: number) {
@@ -574,17 +569,12 @@ export class WebGLRenderer implements TerminalRenderer {
   }
 
   private paintFrame(frame: TerminalRenderFrame) {
-    if (
-      frame.fullSnapshot ||
-      this.frame?.rows !== frame.rows ||
-      this.frame?.cols !== frame.cols ||
-      this.frame?.viewportTop !== frame.viewportTop
-    ) {
-      if (frame.fullSnapshot || this.frame?.viewportTop !== frame.viewportTop) {
-        this.rowCache.clear();
-      }
-    }
-    for (const row of frame.dirtyRows) this.rowCache.set(row.stableRow, row);
+    const cacheUpdate = applyFrameToRowCache(this.rowCache, this.frame, frame, {
+      rows: this.rows,
+      cols: this.cols,
+    });
+    if (cacheUpdate.cacheCleared) this.drawBackground();
+    if (!cacheUpdate.accepted) return;
     this.frame = frame;
     if (this.gpuFallback) {
       this.canvasRenderer.render(frame);
@@ -604,7 +594,23 @@ export class WebGLRenderer implements TerminalRenderer {
   }
 
   private paintCurrentFrame() {
-    if (this.frame) this.paintFrame({ ...this.frame, fullSnapshot: true });
+    const frame = this.frame;
+    if (!frame) return;
+    if (this.gpuFallback) {
+      this.canvasRenderer.redraw();
+      return;
+    }
+    this.drawBackground();
+    this.drawCellBackgrounds(frame);
+    if (!this.drawGlyphs(frame)) {
+      this.gpuFallback = true;
+      this.canvasRenderer.setBackgroundVisible(true);
+      this.canvasRenderer.setCellBackgroundVisible(true);
+      this.canvasRenderer.setTextVisible(true);
+      this.canvasRenderer.redraw();
+      return;
+    }
+    this.canvasRenderer.redraw();
   }
 
   private updateMetrics() {
