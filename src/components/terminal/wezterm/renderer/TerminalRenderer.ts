@@ -68,6 +68,11 @@ export interface TerminalRenderer {
   ): void;
   setCursorBlink(enabled: boolean): void;
   setFocused(focused: boolean): void;
+  /**
+   * Toggle visual painting without disposing resources or stopping frame
+   * ingestion. Hidden renderers keep their latest logical state and paint it
+   * when the caller invokes redraw after becoming visible.
+   */
   setVisible(visible: boolean): void;
   setSelection(selection: TerminalSelection | null): void;
   setSearchMatch(match: TerminalSearchMatch | null): void;

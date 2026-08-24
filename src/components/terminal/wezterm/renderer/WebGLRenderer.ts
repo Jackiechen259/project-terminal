@@ -17,7 +17,7 @@ import type {
   TerminalSelection,
   TerminalSelectionPoint,
 } from "./TerminalRenderer";
-import { applyFrameToRowCache, mergePendingFrame } from "./renderFrameMerge";
+import { applyFrameToRowCache } from "./renderFrameMerge";
 
 type Rgb = [number, number, number];
 type Rgba = [number, number, number, number];
@@ -334,11 +334,11 @@ export class WebGLRenderer implements TerminalRenderer {
   private canvasRenderer = new CanvasRenderer();
   private rowCache = new Map<number, TerminalRenderRow>();
   private frame: TerminalRenderFrame | null = null;
-  private pendingFrame: TerminalRenderFrame | null = null;
   private frameRequest: number | null = null;
   private selection: TerminalSelection | null = null;
   private searchMatch: TerminalSearchMatch | null = null;
   private gpuFallback = false;
+  private visible = true;
 
   mount(canvas: HTMLCanvasElement) {
     const gl = canvas.getContext("webgl2", {
@@ -449,8 +449,8 @@ export class WebGLRenderer implements TerminalRenderer {
         window.cancelAnimationFrame(this.frameRequest);
         this.frameRequest = null;
       }
-      this.pendingFrame = null;
     }
+    if (!this.visible) return;
     this.drawBackground();
     if (this.frame) this.paintCurrentFrame();
   }
@@ -462,13 +462,12 @@ export class WebGLRenderer implements TerminalRenderer {
   }
 
   render(frame: TerminalRenderFrame) {
-    this.pendingFrame = mergePendingFrame(this.pendingFrame, frame);
-    if (this.frameRequest !== null) return;
+    if (!this.acceptFrame(frame)) return;
+    this.canvasRenderer.render(frame);
+    if (!this.visible || this.frameRequest !== null) return;
     this.frameRequest = window.requestAnimationFrame(() => {
       this.frameRequest = null;
-      const next = this.pendingFrame;
-      this.pendingFrame = null;
-      if (next) this.paintFrame(next);
+      this.paintCurrentFrame();
     });
   }
 
@@ -477,8 +476,9 @@ export class WebGLRenderer implements TerminalRenderer {
       window.cancelAnimationFrame(this.frameRequest);
       this.frameRequest = null;
     }
-    this.pendingFrame = null;
-    this.paintFrame(frame, true);
+    if (!this.acceptFrame(frame)) return;
+    this.canvasRenderer.renderImmediate(frame);
+    if (this.visible) this.paintCurrentFrame();
   }
 
   redraw() {
@@ -524,7 +524,12 @@ export class WebGLRenderer implements TerminalRenderer {
   }
 
   setVisible(visible: boolean) {
+    this.visible = visible;
     this.canvasRenderer.setVisible(visible);
+    if (!visible && this.frameRequest !== null) {
+      window.cancelAnimationFrame(this.frameRequest);
+      this.frameRequest = null;
+    }
   }
 
   setSelection(selection: TerminalSelection | null) {
@@ -560,7 +565,6 @@ export class WebGLRenderer implements TerminalRenderer {
       window.cancelAnimationFrame(this.frameRequest);
       this.frameRequest = null;
     }
-    this.pendingFrame = null;
     this.atlas?.dispose();
     this.canvasRenderer.dispose();
     this.overlay?.remove();
@@ -583,35 +587,18 @@ export class WebGLRenderer implements TerminalRenderer {
     this.frame = null;
   }
 
-  private paintFrame(frame: TerminalRenderFrame, immediate = false) {
+  private acceptFrame(frame: TerminalRenderFrame) {
     const cacheUpdate = applyFrameToRowCache(this.rowCache, this.frame, frame, {
       rows: this.rows,
       cols: this.cols,
     });
-    if (cacheUpdate.cacheCleared) this.drawBackground();
     if (!cacheUpdate.accepted) return;
     this.frame = frame;
-    if (this.gpuFallback) {
-      if (immediate) this.canvasRenderer.renderImmediate(frame);
-      else this.canvasRenderer.render(frame);
-      return;
-    }
-    this.drawBackground();
-    this.drawCellBackgrounds(frame);
-    if (!this.drawGlyphs(frame)) {
-      this.gpuFallback = true;
-      this.canvasRenderer.setBackgroundVisible(true);
-      this.canvasRenderer.setCellBackgroundVisible(true);
-      this.canvasRenderer.setTextVisible(true);
-      if (immediate) this.canvasRenderer.renderImmediate(frame);
-      else this.canvasRenderer.render(frame);
-      return;
-    }
-    if (immediate) this.canvasRenderer.renderImmediate(frame);
-    else this.canvasRenderer.render(frame);
+    return true;
   }
 
   private paintCurrentFrame() {
+    if (!this.visible) return;
     if (this.gpuFallback) {
       this.canvasRenderer.redraw();
       return;

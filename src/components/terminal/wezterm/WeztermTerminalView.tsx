@@ -146,6 +146,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
   const reportedExitRef = useRef(false);
   const bellTimerRef = useRef<number | null>(null);
   const onExitRef = useRef(onExit);
+  const defaultTitleRef = useRef(defaultTitle);
   const onTitleChangeRef = useRef(onTitleChange);
   const onCwdChangeRef = useRef(onCwdChange);
   const onCommandFinishedRef = useRef<
@@ -168,6 +169,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
   const { t } = useTranslation();
 
   onExitRef.current = onExit;
+  defaultTitleRef.current = defaultTitle;
   onTitleChangeRef.current = onTitleChange;
   onCwdChangeRef.current = onCwdChange;
   onCommandFinishedRef.current = onCommandFinished;
@@ -651,9 +653,10 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     });
   }, [sessionId]);
 
-  // Renderer resources follow the terminal session lifetime. A hidden
-  // terminal keeps its renderer, canvas, glyph atlas, and last coherent frame
-  // alive; only the backend render subscription is suspended below.
+  // Renderer resources and the render stream follow the terminal session
+  // lifetime. A hidden terminal keeps its renderer, canvas, glyph atlas, and
+  // last coherent frame alive; visibility only controls whether pixels are
+  // painted.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -669,10 +672,10 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       renderer = createTerminalRenderer("dom");
       renderer.mount(canvas);
     }
-    renderer.setTheme(rendererTheme);
-    renderer.setFont(font);
     renderer.setVisible(active);
     renderer.setFocused(focused);
+    renderer.setTheme(rendererTheme);
+    renderer.setFont(font);
     rendererRef.current = renderer;
     return () => {
       resizeRequestRef.current += 1;
@@ -777,19 +780,24 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
   }, [requestRenderSnapshot, sessionId]);
 
   useEffect(() => {
-    if (!active) return;
     const surface = surfaceRef.current;
     if (!surface) return;
     const observer = new ResizeObserver(resizeSurface);
     observer.observe(surface);
     resizeSurface();
     return () => observer.disconnect();
-  }, [active, resizeSurface, sessionId, terminalRendererPreference]);
+  }, [resizeSurface]);
 
   useEffect(() => {
-    if (!active) return;
     const clientId = newClientId();
     let cancelled = false;
+    let detachRequested = false;
+
+    const detach = () => {
+      if (detachRequested) return;
+      detachRequested = true;
+      void terminalService.detach(sessionId, clientId);
+    };
 
     reportedExitRef.current = false;
     // attach_renderer() requests a full snapshot on the backend. Treat that
@@ -859,7 +867,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
         } else if (message.event.type === "titleChanged") {
           const title = resolveTerminalTabTitle(
             message.event.title,
-            defaultTitle,
+            defaultTitleRef.current,
           );
           onTitleChangeRef.current?.(title);
         } else if (message.event.type === "cwdChanged") {
@@ -890,7 +898,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       .attachRender(sessionId, clientId, onMessage)
       .then((attachment) => {
         if (cancelled) {
-          void terminalService.detach(sessionId, clientId);
+          detach();
           return;
         }
         if (
@@ -911,19 +919,11 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     return () => {
       cancelled = true;
       resizeRequestRef.current += 1;
-      void terminalService.detach(sessionId, clientId);
+      detach();
       awaitingSnapshotRef.current = false;
       snapshotRequestedRef.current = false;
     };
-  }, [
-    active,
-    defaultTitle,
-    pulseBell,
-    refreshSearch,
-    requestRenderSnapshot,
-    resizeSurface,
-    sessionId,
-  ]);
+  }, [pulseBell, requestRenderSnapshot, resizeSurface, sessionId]);
 
   useEffect(() => {
     const stopListening = listenForAppCommands((command) => {

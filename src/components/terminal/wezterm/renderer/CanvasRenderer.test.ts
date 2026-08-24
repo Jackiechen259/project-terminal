@@ -75,6 +75,7 @@ describe("CanvasRenderer", () => {
   let context: {
     fillText: ReturnType<typeof vi.fn>;
     measureText: ReturnType<typeof vi.fn>;
+    fillRect: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -87,13 +88,13 @@ describe("CanvasRenderer", () => {
         actualBoundingBoxAscent: 10,
         actualBoundingBoxDescent: 3,
       })),
+      fillRect: vi.fn(),
     };
     const canvasContext = {
       ...context,
       save: vi.fn(),
       restore: vi.fn(),
       setTransform: vi.fn(),
-      fillRect: vi.fn(),
       beginPath: vi.fn(),
       rect: vi.fn(),
       clip: vi.fn(),
@@ -154,6 +155,69 @@ describe("CanvasRenderer", () => {
 
     expect(callbacks.size).toBe(0);
     expect(context.fillText).toHaveBeenCalled();
+    renderer.dispose();
+  });
+
+  it("consumes hidden frames without painting and redraws the latest cache on resume", () => {
+    const renderer = new CanvasRenderer();
+    const canvas = document.createElement("canvas");
+    renderer.mount(canvas);
+    renderer.resize(80, 34, 2, 4);
+    renderer.setVisible(false);
+
+    renderer.renderImmediate(frame([row(0, "10%")], true, { sequence: 1 }));
+    renderer.render(frame([row(0, "20%")], false, { sequence: 2 }));
+    renderer.render(frame([row(0, "30%")], false, { sequence: 3 }));
+    renderer.render(frame([row(0, "50%")], false, { sequence: 4 }));
+
+    expect(callbacks.size).toBe(0);
+    expect(
+      (renderer as unknown as { frame: TerminalRenderFrame | null }).frame
+        ?.sequence,
+    ).toBe(4);
+    expect(
+      (
+        renderer as unknown as { rowCache: Map<number, TerminalRenderRow> }
+      ).rowCache.get(0)?.cells[0]?.text,
+    ).toBe("5");
+    expect(context.fillText).not.toHaveBeenCalled();
+
+    renderer.setVisible(true);
+    renderer.redraw();
+
+    expect(context.fillText.mock.calls.map(([text]) => text)).toContain("5");
+    renderer.dispose();
+  });
+
+  it("repaints cursor-only updates even when no rows are dirty", () => {
+    const renderer = new CanvasRenderer();
+    const canvas = document.createElement("canvas");
+    renderer.mount(canvas);
+    renderer.resize(80, 34, 2, 4);
+
+    const initial = frame([row(0, "text")], true, { sequence: 1 });
+    initial.cursor = {
+      ...initial.cursor,
+      column: 0,
+      visibility: "visible",
+    };
+    renderer.renderImmediate(initial);
+    context.fillRect.mockClear();
+
+    const cursorOnly = frame([], false, { sequence: 2 });
+    cursorOnly.cursor = {
+      ...cursorOnly.cursor,
+      column: 1,
+      visibility: "visible",
+    };
+    renderer.render(cursorOnly);
+
+    expect(callbacks.size).toBe(1);
+    const [id, callback] = [...callbacks.entries()][0];
+    callbacks.delete(id);
+    callback(16);
+
+    expect(context.fillRect).toHaveBeenCalled();
     renderer.dispose();
   });
 

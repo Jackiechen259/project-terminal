@@ -109,6 +109,29 @@ describe("WebGLRenderer stable-row cache", () => {
     renderer.dispose();
   });
 
+  it("consumes hidden frames without scheduling GPU paints", () => {
+    const renderer = new WebGLRenderer();
+    const canvas = document.createElement("canvas");
+    configureGrid(renderer);
+    configureGpu(renderer, canvas);
+    callbacks.clear();
+    renderer.setVisible(false);
+
+    renderer.render(frame(1, 0, [row(0)], true));
+    renderer.render(frame(2, 0, [row(1)]));
+
+    expect(callbacks.size).toBe(0);
+    expect(
+      (renderer as unknown as { frame: TerminalRenderFrame | null }).frame
+        ?.sequence,
+    ).toBe(2);
+
+    renderer.setVisible(true);
+    renderer.redraw();
+    expect(callbacks.size).toBe(0);
+    renderer.dispose();
+  });
+
   it("retains the previous frame through a grid resize", () => {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
       measureText: vi.fn(() => ({

@@ -106,6 +106,7 @@ function frame(
   rows: number,
   cols: number,
   sequence: number,
+  fullSnapshot = true,
 ): TerminalRenderFrame {
   return {
     sequence,
@@ -123,7 +124,7 @@ function frame(
     viewportBottom: rows,
     alternateScreen: false,
     mouseReporting: false,
-    fullSnapshot: true,
+    fullSnapshot,
   };
 }
 
@@ -224,7 +225,7 @@ describe("WeztermTerminalView render synchronization", () => {
     view.unmount();
   });
 
-  it("retains one renderer and redraws the cached frame on resume", async () => {
+  it("keeps one renderer and one render subscription across tab switches", async () => {
     const { WeztermTerminalView } = await import("./WeztermTerminalView");
     const view = render(
       <WeztermTerminalView
@@ -259,7 +260,8 @@ describe("WeztermTerminalView render synchronization", () => {
     });
 
     expect(mocks.renderer.dispose).not.toHaveBeenCalled();
-    expect(mocks.terminalService.detach).toHaveBeenCalledTimes(1);
+    expect(mocks.terminalService.attachRender).toHaveBeenCalledTimes(1);
+    expect(mocks.terminalService.detach).not.toHaveBeenCalled();
 
     view.rerender(
       <WeztermTerminalView
@@ -272,12 +274,15 @@ describe("WeztermTerminalView render synchronization", () => {
     expect(mocks.createTerminalRenderer).toHaveBeenCalledTimes(1);
     expect(mocks.renderer.redraw).toHaveBeenCalledTimes(1);
     expect(mocks.renderer.resize).toHaveBeenCalledTimes(resizeCalls);
+    expect(mocks.terminalService.attachRender).toHaveBeenCalledTimes(1);
+    expect(mocks.terminalService.detach).not.toHaveBeenCalled();
 
     view.unmount();
     expect(mocks.renderer.dispose).toHaveBeenCalledTimes(1);
+    expect(mocks.terminalService.detach).toHaveBeenCalledTimes(1);
   });
 
-  it("redraws cached pixels before a delayed resume attachment", async () => {
+  it("accepts live frames while visible and hidden without a visibility snapshot", async () => {
     const { WeztermTerminalView } = await import("./WeztermTerminalView");
     const view = render(
       <WeztermTerminalView
@@ -295,27 +300,25 @@ describe("WeztermTerminalView render synchronization", () => {
       firstAttachment?.({ type: "frame", frame: frame(40, 120, 10) });
     });
 
-    let resolveAttach: (() => void) | undefined;
-    mocks.terminalService.attachRender.mockImplementationOnce(
-      async (
-        _sessionId: string,
-        _clientId: string,
-        onMessage: (message: TerminalRenderMessage) => void,
-      ) => {
-        // Store the new callback before the promise resolves, just as the
-        // real channel can begin delivering after attachment is registered.
-        mocks.setAttachedOnMessage(onMessage);
-        return await new Promise<{ session: { status: "running" } }>(
-          (resolve) => {
-            resolveAttach = () => {
-              resolve({ session: { status: "running" } });
-            };
-          },
-        );
-      },
-    );
+    mocks.renderer.render.mockClear();
+    mocks.terminalService.requestRenderSnapshot.mockClear();
+    act(() => {
+      firstAttachment?.({
+        type: "frame",
+        frame: frame(40, 120, 11, false),
+      });
+      firstAttachment?.({
+        type: "frame",
+        frame: frame(40, 120, 12, false),
+      });
+      firstAttachment?.({
+        type: "frame",
+        frame: frame(40, 120, 13, false),
+      });
+    });
+    expect(mocks.renderer.render).toHaveBeenCalledTimes(3);
+    expect(mocks.terminalService.requestRenderSnapshot).not.toHaveBeenCalled();
 
-    mocks.renderer.redraw.mockClear();
     view.rerender(
       <WeztermTerminalView
         sessionId="session-1"
@@ -323,6 +326,20 @@ describe("WeztermTerminalView render synchronization", () => {
         defaultTitle="Terminal"
       />,
     );
+    mocks.renderer.redraw.mockClear();
+    act(() => {
+      firstAttachment?.({
+        type: "frame",
+        frame: frame(40, 120, 14, false),
+      });
+      firstAttachment?.({
+        type: "frame",
+        frame: frame(40, 120, 15, false),
+      });
+    });
+    expect(mocks.renderer.render).toHaveBeenCalledTimes(5);
+    expect(mocks.terminalService.requestRenderSnapshot).not.toHaveBeenCalled();
+
     view.rerender(
       <WeztermTerminalView
         sessionId="session-1"
@@ -330,14 +347,11 @@ describe("WeztermTerminalView render synchronization", () => {
         defaultTitle="Terminal"
       />,
     );
-
     expect(mocks.renderer.redraw).toHaveBeenCalledTimes(1);
-    expect(resolveAttach).toBeDefined();
-    resolveAttach?.();
-    await act(async () => {
-      await Promise.resolve();
-    });
+    expect(mocks.terminalService.attachRender).toHaveBeenCalledTimes(1);
+    expect(mocks.terminalService.detach).not.toHaveBeenCalled();
 
     view.unmount();
+    expect(mocks.terminalService.detach).toHaveBeenCalledTimes(1);
   });
 });

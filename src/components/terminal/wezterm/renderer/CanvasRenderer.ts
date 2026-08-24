@@ -16,7 +16,7 @@ import type {
   TerminalCursorStyle,
   TerminalRendererTheme,
 } from "./TerminalRenderer";
-import { applyFrameToRowCache, mergePendingFrame } from "./renderFrameMerge";
+import { applyFrameToRowCache } from "./renderFrameMerge";
 
 const ANSI_THEME_KEYS = [
   "black",
@@ -222,11 +222,13 @@ export class CanvasRenderer implements TerminalRenderer {
   private viewportTop = 0;
   private rowCache = new Map<number, TerminalRenderRow>();
   private frame: TerminalRenderFrame | null = null;
+  private paintedFrame: TerminalRenderFrame | null = null;
   private selection: TerminalSelection | null = null;
   private searchMatch: TerminalSearchMatch | null = null;
   private imageCache = new Map<string, CanvasImageSource>();
   private imageLoads = new Set<string>();
-  private pendingFrame: TerminalRenderFrame | null = null;
+  private pendingDirtyRows = new Set<number>();
+  private pendingFullRedraw = false;
   private frameRequest: number | null = null;
   private transparentBackground = false;
   private textVisible = true;
@@ -287,12 +289,15 @@ export class CanvasRenderer implements TerminalRenderer {
         window.cancelAnimationFrame(this.frameRequest);
         this.frameRequest = null;
       }
-      this.pendingFrame = null;
+      this.pendingDirtyRows.clear();
+      this.pendingFullRedraw = true;
       // Keep the last coherent frame visible while the backend produces the
       // authoritative snapshot for the new grid. The next full snapshot is
       // responsible for replacing this retained cache atomically.
     }
-    if (this.frame) {
+    if (!this.visible) {
+      this.pendingFullRedraw = true;
+    } else if (this.frame) {
       this.redrawVisibleRows();
     } else {
       this.clear();
@@ -310,60 +315,101 @@ export class CanvasRenderer implements TerminalRenderer {
   }
 
   render(frame: TerminalRenderFrame) {
-    this.pendingFrame = mergePendingFrame(this.pendingFrame, frame);
-    if (this.frameRequest !== null) return;
-    this.frameRequest = window.requestAnimationFrame(() => {
-      this.frameRequest = null;
-      const next = this.pendingFrame;
-      this.pendingFrame = null;
-      if (next) this.paintFrame(next);
-    });
+    const cacheUpdate = this.acceptFrame(frame);
+    if (!cacheUpdate?.accepted) return;
+    if (!this.visible) {
+      this.cancelScheduledPaint();
+      this.pendingDirtyRows.clear();
+      this.pendingFullRedraw = true;
+      return;
+    }
+    this.schedulePaint();
   }
 
   renderImmediate(frame: TerminalRenderFrame) {
-    if (this.frameRequest !== null) {
-      window.cancelAnimationFrame(this.frameRequest);
-      this.frameRequest = null;
+    this.cancelScheduledPaint();
+    const cacheUpdate = this.acceptFrame(frame);
+    if (!cacheUpdate?.accepted) return;
+    if (!this.visible) {
+      this.pendingDirtyRows.clear();
+      this.pendingFullRedraw = true;
+      return;
     }
-    this.pendingFrame = null;
-    this.paintFrame(frame);
+    this.paintPending();
   }
 
-  private paintFrame(frame: TerminalRenderFrame) {
-    const context = this.context;
-    if (!context) return;
+  private acceptFrame(frame: TerminalRenderFrame) {
+    const previousFrame = this.frame;
+    const cacheUpdate = applyFrameToRowCache(
+      this.rowCache,
+      previousFrame,
+      frame,
+      {
+        rows: this.rows,
+        cols: this.cols,
+      },
+    );
+    if (!cacheUpdate.accepted) return cacheUpdate;
 
-    const oldFrame = this.frame;
-    const cacheUpdate = applyFrameToRowCache(this.rowCache, oldFrame, frame, {
-      rows: this.rows,
-      cols: this.cols,
-    });
-    if (cacheUpdate.cacheCleared) this.clear();
-    if (!cacheUpdate.accepted) return;
-
-    const rowsToPaint = new Set<number>();
-    if (frame.fullSnapshot || cacheUpdate.viewportChanged) {
-      for (let row = 0; row < frame.rows; row++) {
-        rowsToPaint.add(frame.viewportTop + row);
-      }
+    this.frame = frame;
+    if (
+      cacheUpdate.cacheCleared ||
+      cacheUpdate.viewportChanged ||
+      previousFrame === null
+    ) {
+      this.pendingDirtyRows.clear();
+      this.pendingFullRedraw = true;
     } else {
-      for (const row of frame.dirtyRows) rowsToPaint.add(row.stableRow);
-      if (oldFrame) {
-        rowsToPaint.add(oldFrame.viewportTop + oldFrame.cursor.row);
+      for (const dirtyRow of frame.dirtyRows) {
+        this.pendingDirtyRows.add(dirtyRow.stableRow);
       }
-      rowsToPaint.add(frame.viewportTop + frame.cursor.row);
+      this.pendingDirtyRows.add(
+        previousFrame.viewportTop + previousFrame.cursor.row,
+      );
+      this.pendingDirtyRows.add(frame.viewportTop + frame.cursor.row);
+    }
+    return cacheUpdate;
+  }
+
+  private schedulePaint() {
+    if (this.frameRequest !== null) return;
+    this.frameRequest = window.requestAnimationFrame(() => {
+      this.frameRequest = null;
+      this.paintPending();
+    });
+  }
+
+  private cancelScheduledPaint() {
+    if (this.frameRequest === null) return;
+    window.cancelAnimationFrame(this.frameRequest);
+    this.frameRequest = null;
+  }
+
+  private paintPending() {
+    if (!this.visible) return;
+    const frame = this.frame;
+    if (!frame) return;
+
+    const paintedFrame = this.paintedFrame;
+    const requiresFullRedraw =
+      this.pendingFullRedraw ||
+      paintedFrame === null ||
+      paintedFrame.rows !== frame.rows ||
+      paintedFrame.cols !== frame.cols ||
+      paintedFrame.viewportTop !== frame.viewportTop;
+    if (requiresFullRedraw) {
+      this.redrawVisibleRows();
+      return;
     }
 
     this.viewportTop = frame.viewportTop;
-    for (const stableRow of rowsToPaint) {
-      const row = this.rowCache.get(stableRow);
-      this.paintRow(stableRow, row);
-    }
-    if (oldFrame) {
-      this.paintCursor(oldFrame, false);
+    for (const stableRow of this.pendingDirtyRows) {
+      this.paintRow(stableRow, this.rowCache.get(stableRow));
     }
     this.paintCursor(frame, true);
-    this.frame = frame;
+    this.paintedFrame = frame;
+    this.pendingDirtyRows.clear();
+    this.pendingFullRedraw = false;
   }
 
   setTheme(theme: TerminalRendererTheme) {
@@ -407,8 +453,12 @@ export class CanvasRenderer implements TerminalRenderer {
     this.visible = visible;
     if (visible) {
       this.cursorBlinkVisible = true;
+      this.pendingFullRedraw = true;
       this.startCursorBlink();
     } else {
+      this.cancelScheduledPaint();
+      this.pendingDirtyRows.clear();
+      this.pendingFullRedraw = true;
       this.stopCursorBlink();
     }
   }
@@ -503,11 +553,13 @@ export class CanvasRenderer implements TerminalRenderer {
       window.clearInterval(this.cursorBlinkTimer);
       this.cursorBlinkTimer = null;
     }
-    this.pendingFrame = null;
+    this.pendingDirtyRows.clear();
+    this.pendingFullRedraw = false;
     this.canvas = null;
     this.context = null;
     this.rowCache.clear();
     this.frame = null;
+    this.paintedFrame = null;
     this.selection = null;
     this.searchMatch = null;
     for (const image of this.imageCache.values()) {
@@ -815,14 +867,20 @@ export class CanvasRenderer implements TerminalRenderer {
   }
 
   private redrawVisibleRows() {
+    if (!this.visible) return;
     const frame = this.frame;
     if (!frame) return;
+    this.cancelScheduledPaint();
+    this.viewportTop = frame.viewportTop;
     this.clear();
     for (let row = 0; row < frame.rows; row++) {
       const stableRow = frame.viewportTop + row;
       this.paintRow(stableRow, this.rowCache.get(stableRow));
     }
     this.paintCursor(frame, true);
+    this.paintedFrame = frame;
+    this.pendingDirtyRows.clear();
+    this.pendingFullRedraw = false;
   }
 
   /** Redraw the retained model without pretending the last delta is a snapshot. */
