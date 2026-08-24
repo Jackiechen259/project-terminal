@@ -1,6 +1,6 @@
 {
   "name": "project-terminal",
-  "version": "0.5.12",
+  "version": "0.6.0",
   "packageManager": "pnpm@11.0.0",
   "private": true,
   "type": "module",
