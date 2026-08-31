@@ -14,7 +14,7 @@ Keep every project's terminal tabs, shell profiles, environments, and SSH sessio
 
 [English](./README.md) · [简体中文](./README_zh.md)
 
-[Download](#download) · [Features](#features) · [Development](#development) · [Architecture](#architecture) · [Security](#security)
+[Download](#download) · [Features](#features) · [Development](#development) · [Architecture](#architecture) · [Security](#security) · [Release notes](./CHANGELOG.md)
 
 </div>
 
@@ -24,7 +24,7 @@ Project Terminal is a Windows-first desktop terminal workspace for developers wh
 
 Instead of keeping unrelated sessions in one global tab bar, Project Terminal organizes terminals by **project**. Each project owns its own tab group and terminal profiles. Switching projects changes the visible workspace without destroying running PTY sessions.
 
-The current release is **v0.5.12**.
+The current release is **v0.6.1**.
 
 ## Features
 
