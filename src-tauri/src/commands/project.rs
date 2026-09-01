@@ -275,8 +275,11 @@ fn wsl_explorer_path(distribution: &str, working_directory: Option<&str>) -> Str
 }
 
 #[tauri::command]
-pub fn list_projects(state: tauri::State<'_, AppState>) -> AppResult<ListResponse<Project>> {
-    list_projects_inner(&state)
+pub async fn list_projects(state: tauri::State<'_, AppState>) -> AppResult<ListResponse<Project>> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || list_projects_inner(&state))
+        .await
+        .map_err(|error| AppError::Configuration(format!("Project worker failed: {error}")))?
 }
 
 #[tauri::command]
@@ -285,24 +288,33 @@ pub fn validate_project(input: ProjectInput) -> AppResult<()> {
 }
 
 #[tauri::command]
-pub fn create_project(
+pub async fn create_project(
     state: tauri::State<'_, AppState>,
     input: ProjectInput,
 ) -> AppResult<Project> {
-    create_project_inner(&state, input)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || create_project_inner(&state, input))
+        .await
+        .map_err(|error| AppError::Configuration(format!("Project worker failed: {error}")))?
 }
 
 #[tauri::command]
-pub fn update_project(
+pub async fn update_project(
     state: tauri::State<'_, AppState>,
     input: ProjectInput,
 ) -> AppResult<Project> {
-    update_project_inner(&state, input)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || update_project_inner(&state, input))
+        .await
+        .map_err(|error| AppError::Configuration(format!("Project worker failed: {error}")))?
 }
 
 #[tauri::command]
-pub fn delete_project(state: tauri::State<'_, AppState>, id: String) -> AppResult<()> {
-    delete_project_inner(&state, &id)
+pub async fn delete_project(state: tauri::State<'_, AppState>, id: String) -> AppResult<()> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || delete_project_inner(&state, &id))
+        .await
+        .map_err(|error| AppError::Configuration(format!("Project worker failed: {error}")))?
 }
 
 /// Delete persisted project resources and then close all of its live PTYs.
@@ -311,19 +323,31 @@ pub fn delete_project(state: tauri::State<'_, AppState>, id: String) -> AppResul
 /// rollback-aware part of the operation. Closing a known or already-exited
 /// terminal is idempotent.
 #[tauri::command]
-pub fn delete_project_workspace(
+pub async fn delete_project_workspace(
     state: tauri::State<'_, AppState>,
     terminal: tauri::State<'_, TerminalState>,
     id: String,
 ) -> AppResult<()> {
-    delete_project_inner(&state, &id)?;
-    terminal.close_project_sessions(&id);
-    Ok(())
+    let state = state.inner().clone();
+    let terminal = terminal.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        delete_project_inner(&state, &id)?;
+        terminal.close_project_sessions(&id);
+        Ok(())
+    })
+    .await
+    .map_err(|error| AppError::Configuration(format!("Project worker failed: {error}")))?
 }
 
 #[tauri::command]
-pub fn open_project_in_explorer(state: tauri::State<'_, AppState>, id: String) -> AppResult<()> {
-    open_project_in_explorer_inner(&state, &id)
+pub async fn open_project_in_explorer(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> AppResult<()> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || open_project_in_explorer_inner(&state, &id))
+        .await
+        .map_err(|error| AppError::Configuration(format!("Project worker failed: {error}")))?
 }
 
 #[cfg(test)]

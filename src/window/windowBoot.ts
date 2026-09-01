@@ -103,6 +103,8 @@ export async function prepareWorkspace(
   setCurrentWorkspaceId(info.workspaceId);
   migrateLegacyWorkspaceLayout(info);
 
+  const store = getTerminalWorkspaceStore(info.workspaceId);
+
   if (isTauriRuntime()) {
     await withTimeout(
       migrateLocalPersistence(),
@@ -113,31 +115,37 @@ export async function prepareWorkspace(
       // keeps its source keys, so the next launch can retry the transaction.
       console.error("Frontend persistence migration was skipped", error);
     });
-    await Promise.allSettled([
+    // Settings, collections, and this workspace's layout live in separate
+    // backend tables with no dependency on each other - only on the
+    // migration above, which can touch those same tables and so must
+    // finish first, not run alongside them.
+    const [, , workspaceResult] = await Promise.allSettled([
       useSettingsStore.getState().hydrateFromBackend(),
       useCollectionStore.getState().hydrateFromBackend(),
+      appServices.persistenceService?.loadWorkspaceState(info.workspaceId) ??
+        Promise.resolve(null),
     ]);
-  }
-
-  const store = getTerminalWorkspaceStore(info.workspaceId);
-  try {
-    if (isTauriRuntime() && appServices.persistenceService) {
-      const persisted = await appServices.persistenceService.loadWorkspaceState(
-        info.workspaceId,
-      );
-      if (persisted) {
-        hydrateTerminalWorkspaceStore(info.workspaceId, persisted);
+    if (workspaceResult.status === "fulfilled") {
+      if (workspaceResult.value) {
+        hydrateTerminalWorkspaceStore(info.workspaceId, workspaceResult.value);
       }
     } else {
-      await store.persist.rehydrate();
+      // A corrupted or unreadable persisted layout must not block the UI:
+      // the store starts from its empty defaults instead.
+      console.error(
+        "Workspace layout hydration failed; starting with a clean layout",
+        workspaceResult.reason,
+      );
     }
-  } catch (error) {
-    // A corrupted or unreadable persisted layout must not block the UI: the
-    // store starts from its empty defaults instead.
-    console.error(
-      "Workspace layout hydration failed; starting with a clean layout",
-      error,
-    );
+  } else {
+    try {
+      await store.persist.rehydrate();
+    } catch (error) {
+      console.error(
+        "Workspace layout hydration failed; starting with a clean layout",
+        error,
+      );
+    }
   }
   try {
     // Ownership is derived by the backend from the calling webview; the

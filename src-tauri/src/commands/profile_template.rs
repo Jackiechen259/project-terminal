@@ -156,31 +156,62 @@ pub fn delete_profile_template_inner(state: &AppState, id: &str) -> AppResult<()
 }
 
 #[tauri::command]
-pub fn list_profile_templates(
+pub async fn list_profile_templates(
     state: tauri::State<'_, AppState>,
 ) -> AppResult<ListResponse<ProfileTemplate>> {
-    list_profile_templates_inner(&state)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || list_profile_templates_inner(&state))
+        .await
+        .map_err(|error| {
+            crate::error::AppError::Configuration(format!(
+                "List profile templates worker failed: {error}"
+            ))
+        })?
 }
 
 #[tauri::command]
-pub fn create_profile_template(
+pub async fn create_profile_template(
     state: tauri::State<'_, AppState>,
     input: TemplateInput,
 ) -> AppResult<ProfileTemplate> {
-    create_profile_template_inner(&state, input)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || create_profile_template_inner(&state, input))
+        .await
+        .map_err(|error| {
+            crate::error::AppError::Configuration(format!(
+                "Create profile template worker failed: {error}"
+            ))
+        })?
 }
 
 #[tauri::command]
-pub fn update_profile_template(
+pub async fn update_profile_template(
     state: tauri::State<'_, AppState>,
     input: TemplateInput,
 ) -> AppResult<ProfileTemplate> {
-    update_profile_template_inner(&state, input)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || update_profile_template_inner(&state, input))
+        .await
+        .map_err(|error| {
+            crate::error::AppError::Configuration(format!(
+                "Update profile template worker failed: {error}"
+            ))
+        })?
 }
 
 #[tauri::command]
-pub fn delete_profile_template(state: tauri::State<'_, AppState>, id: String) -> AppResult<()> {
-    delete_profile_template_inner(&state, &id)
+pub async fn delete_profile_template(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> AppResult<()> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || delete_profile_template_inner(&state, &id))
+        .await
+        .map_err(|error| {
+            crate::error::AppError::Configuration(format!(
+                "Delete profile template worker failed: {error}"
+            ))
+        })?
 }
 
 /// project. Copies every configurable field; assigns a new id and timestamps.
@@ -224,13 +255,22 @@ pub fn create_profile_from_template_inner(
 }
 
 #[tauri::command]
-pub fn create_profile_from_template(
+pub async fn create_profile_from_template(
     state: tauri::State<'_, AppState>,
     template_id: String,
     project_id: String,
     name: String,
 ) -> AppResult<TerminalProfile> {
-    create_profile_from_template_inner(&state, &template_id, &project_id, &name)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        create_profile_from_template_inner(&state, &template_id, &project_id, &name)
+    })
+    .await
+    .map_err(|error| {
+        crate::error::AppError::Configuration(format!(
+            "Create profile from template worker failed: {error}"
+        ))
+    })?
 }
 
 #[cfg(test)]

@@ -15,7 +15,13 @@ autotests = false
 
 [lib]
 name = "project_terminal_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# `staticlib`/`cdylib` are only needed for Tauri mobile targets (iOS/Android
+# load the Rust core as a shared library). This app has no mobile target
+# configured (no `gen/android` or `gen/apple` scaffolding, Windows-only
+# dependencies below) - the desktop `bin` links the lib crate as an `rlib`
+# like any other in-workspace dependency, so building the other two artifact
+# kinds on every build was pure link-time cost.
+crate-type = ["rlib"]
 # The library's own unit-test harness is disabled: it cannot receive the
 # Common-Controls v6 manifest (see the `[[test]] unit` note below) and would
 # fail to start on Windows when it links muda's TaskDialogIndirect import.
@@ -61,6 +67,7 @@ tempfile = "3"
 axum = { version = "0.8", features = ["ws"] }
 futures-util = "0.3"
 rusqlite = { version = "0.32", features = ["bundled"] }
+memchr = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "Win32_UI_WindowsAndMessaging"] }
@@ -81,3 +88,10 @@ strip = true
 # `panic = "abort"` would shrink the binary further, but a panic in one PTY
 # reader thread would then take down every terminal instead of just that
 # session, so it is deliberately left off.
+
+[profile.dev.package."*"]
+# The wezterm VT parser and bundled rusqlite are unusably slow unoptimized -
+# every keystroke and PTY read walks them. Optimizing only dependencies (not
+# this crate's own code, which keeps a fast debug-build iteration loop) keeps
+# `cargo build`/`tauri dev` responsive while typing in a terminal.
+opt-level = 2

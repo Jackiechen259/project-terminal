@@ -167,6 +167,15 @@ export function ProjectFilePanel({
     [activeProjectId, t],
   );
 
+  // `uploadPaths` gets a new identity on every listing change (folder
+  // navigation, or right after any upload/download completes), not just on
+  // project switch - closing over it directly would re-register the native
+  // webview drag-drop listener that often. A ref lets this effect mount the
+  // listener once for the component's lifetime while still calling the
+  // latest `uploadPaths` when a drop actually happens.
+  const uploadPathsRef = useRef(uploadPaths);
+  uploadPathsRef.current = uploadPaths;
+
   useEffect(() => {
     let disposed = false;
     const unlisten = nativeDragDropService.listen((event) => {
@@ -187,14 +196,14 @@ export function ProjectFilePanel({
       setNativeDragOver(inside);
       if (event.type === "drop") {
         setNativeDragOver(false);
-        if (inside) void uploadPaths(event.paths);
+        if (inside) void uploadPathsRef.current(event.paths);
       }
     });
     return () => {
       disposed = true;
       void unlisten.then((dispose) => dispose());
     };
-  }, [uploadPaths]);
+  }, []);
 
   const filteredEntries = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();

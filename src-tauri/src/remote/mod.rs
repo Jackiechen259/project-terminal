@@ -23,7 +23,9 @@ use crate::config_dirs::ConfigDirs;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::terminal::TerminalManager;
-use crate::terminal_engine::{TerminalKeyEvent, TerminalMouseEvent};
+use crate::terminal_engine::{
+    RenderFrame, TerminalControlEvent, TerminalKeyEvent, TerminalMouseEvent,
+};
 
 const DEFAULT_BIND: &str = "127.0.0.1:4097";
 const LEASE_TTL: Duration = Duration::from_secs(30);
@@ -331,6 +333,31 @@ enum WsClientMessage {
         lease_id: String,
         confirm: bool,
     },
+}
+
+/// Typed shape for the per-frame WebSocket hot path, mirroring
+/// `commands::terminal::DesktopRenderFrame` field-for-field. Serializing this
+/// directly avoids building an intermediate `serde_json::Value` tree (a
+/// `Map` with a boxed `Value` per cell field) for every frame, on top of the
+/// `Arc` borrow that already avoids a deep clone of the row/cell tree.
+#[derive(Debug, Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum RemoteWsMessage<'a> {
+    Frame {
+        frame: &'a RenderFrame,
+    },
+    Control {
+        event: &'a TerminalControlEvent,
+    },
+    Status {
+        status: crate::terminal::session::SessionStatus,
+        exit_code: Option<i32>,
+    },
+    Lagged,
 }
 
 fn build_router(state: RemoteState) -> Router {
@@ -875,47 +902,46 @@ async fn websocket_loop(
                 }
             }
             remote_frame = frames.recv() => {
-                let message = match remote_frame {
-                    Ok(frame) => serde_json::json!({
-                        "type": "frame",
-                        "frame": &*frame,
-                    }),
+                // `frame` only lives for this arm, and `RemoteWsMessage::Frame`
+                // borrows it - send inline instead of assigning the message to
+                // an outer binding the way the other arms below do, or the
+                // borrow would need to outlive `frame` itself.
+                let sent = match remote_frame {
+                    Ok(frame) => {
+                        send_ws_json(&mut sender, &RemoteWsMessage::Frame { frame: &frame }).await
+                    }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
                         session_handle.request_render_snapshot();
-                        serde_json::json!({ "type": "lagged" })
+                        send_ws_json(&mut sender, &RemoteWsMessage::Lagged).await
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                 };
-                if send_ws_json(&mut sender, &message).await.is_err() {
+                if sent.is_err() {
                     break;
                 }
             }
             remote_control = controls.recv() => {
-                let message = match remote_control {
-                    Ok(event) => serde_json::json!({
-                        "type": "control",
-                        "event": &*event,
-                    }),
+                let sent = match remote_control {
+                    Ok(event) => {
+                        send_ws_json(&mut sender, &RemoteWsMessage::Control { event: &event }).await
+                    }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
                         session_handle.request_render_snapshot();
-                        serde_json::json!({ "type": "lagged" })
+                        send_ws_json(&mut sender, &RemoteWsMessage::Lagged).await
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                 };
-                if send_ws_json(&mut sender, &message).await.is_err() {
+                if sent.is_err() {
                     break;
                 }
             }
             status = status_receiver.recv() => {
                 let message = match status {
-                    Ok(event) => serde_json::json!({
-                        "type": "status",
-                        "status": event.status,
-                        "exitCode": event.exit_code,
-                    }),
-                    Err(broadcast::error::RecvError::Lagged(_)) => {
-                        serde_json::json!({ "type": "lagged" })
-                    }
+                    Ok(event) => RemoteWsMessage::Status {
+                        status: event.status,
+                        exit_code: event.exit_code,
+                    },
+                    Err(broadcast::error::RecvError::Lagged(_)) => RemoteWsMessage::Lagged,
                     Err(broadcast::error::RecvError::Closed) => break,
                 };
                 if send_ws_json(&mut sender, &message).await.is_err() {
@@ -1238,11 +1264,15 @@ fn audit(
     }
 }
 
-async fn send_ws_json<S>(sender: &mut S, value: &serde_json::Value) -> Result<(), axum::Error>
+async fn send_ws_json<S, T>(sender: &mut S, value: &T) -> Result<(), axum::Error>
 where
     S: futures_util::Sink<Message, Error = axum::Error> + Unpin,
+    T: Serialize,
 {
-    sender.send(Message::Text(value.to_string().into())).await
+    let Ok(text) = serde_json::to_string(value) else {
+        return Ok(());
+    };
+    sender.send(Message::Text(text.into())).await
 }
 
 /// Persisted remote-access preference, written by the Settings UI toggle.
@@ -1394,6 +1424,45 @@ mod tests {
             TemplateRepository::new(dirs.templates_path()),
             SshConnectionRepository::new(dirs.ssh_connections_path()),
         )
+    }
+
+    /// The typed `RemoteWsMessage` hot path must carry the same content as
+    /// the previous `serde_json::json!` shape, and it must match the desktop
+    /// `commands::terminal::DesktopRenderFrame` field-for-field so both
+    /// transports send the same protocol. Compared as parsed `Value`s, not
+    /// raw strings: `serde_json::json!` builds its object as a sorted map,
+    /// while the derived `Serialize` impl emits fields in declaration order -
+    /// key order is not part of the JSON data model, and no consumer here
+    /// (JSON.parse on the frontend or the remote web page) depends on it.
+    #[test]
+    fn remote_ws_message_matches_the_previous_json_shape() {
+        let event = TerminalControlEvent::CommandFinished { exit_code: Some(9) };
+
+        let typed = serde_json::to_value(RemoteWsMessage::Control { event: &event }).unwrap();
+        let owned = serde_json::json!({ "type": "control", "event": &event });
+        assert_eq!(typed, owned);
+        assert_eq!(
+            typed,
+            serde_json::json!({"type": "control", "event": {"type": "commandFinished", "exitCode": 9}})
+        );
+
+        let status = crate::terminal::session::SessionStatus::Exited;
+        let typed_status = serde_json::to_value(RemoteWsMessage::Status {
+            status,
+            exit_code: Some(1),
+        })
+        .unwrap();
+        let owned_status = serde_json::json!({
+            "type": "status",
+            "status": status,
+            "exitCode": 1,
+        });
+        assert_eq!(typed_status, owned_status);
+
+        assert_eq!(
+            serde_json::to_value(RemoteWsMessage::Lagged).unwrap(),
+            serde_json::json!({ "type": "lagged" })
+        );
     }
 
     fn test_remote_state(dirs: &ConfigDirs) -> RemoteState {

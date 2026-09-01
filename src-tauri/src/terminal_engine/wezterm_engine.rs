@@ -175,23 +175,17 @@ impl WeztermTerminalEngine {
     /// we need (`D[;exit-code]`). It is not a second screen/ANSI parser.
     fn collect_command_finished_marks(&mut self, data: &[u8]) {
         const PREFIX: &[u8] = b"\x1b]133;";
-        const MAX_BUFFER: usize = 16 * 1024;
+        // Bounds an unterminated (malformed or adversarial) OSC 133 sequence
+        // only - a real prompt-mark payload is a handful of bytes. This must
+        // never be checked before the scan loop below: a real PTY read can be
+        // this large on its own, and truncating first would silently discard
+        // a mark that arrived intact in this very read.
+        const MAX_BUFFER: usize = 64 * 1024;
 
         self.osc133_buffer.extend_from_slice(data);
-        if self.osc133_buffer.len() > MAX_BUFFER {
-            let keep_from = self
-                .osc133_buffer
-                .len()
-                .saturating_sub(PREFIX.len().saturating_sub(1));
-            self.osc133_buffer.drain(..keep_from);
-        }
 
         loop {
-            let Some(start) = self
-                .osc133_buffer
-                .windows(PREFIX.len())
-                .position(|window| window == PREFIX)
-            else {
+            let Some(start) = memchr::memmem::find(&self.osc133_buffer, PREFIX) else {
                 let keep = PREFIX.len().saturating_sub(1);
                 let remove = self.osc133_buffer.len().saturating_sub(keep);
                 if remove > 0 {
@@ -207,6 +201,12 @@ impl WeztermTerminalEngine {
             let Some((end, terminator_len)) =
                 find_osc_terminator(&self.osc133_buffer[payload_start..])
             else {
+                // Terminator not seen yet - wait for more data, but give up
+                // on a sequence that never terminates so it cannot grow this
+                // buffer without bound.
+                if self.osc133_buffer.len() > MAX_BUFFER {
+                    self.osc133_buffer.clear();
+                }
                 break;
             };
 
@@ -285,14 +285,21 @@ impl WeztermTerminalEngine {
             screen.get_changed_stable_rows(stable_start..stable_end, self.last_emitted_sequence)
         };
 
+        // `with_phys_lines` hands back borrowed `&Line`s instead of cloning
+        // each one - `lines_in_phys_range(..).pop()` was deep-cloning a
+        // row's full cell/attribute storage per dirty row, every frame, only
+        // to read it once here.
         stable_rows
             .into_iter()
             .filter_map(|stable_row| {
                 let phys = screen.stable_row_to_phys(stable_row)?;
-                let line = screen
-                    .lines_in_phys_range(phys..phys.saturating_add(1))
-                    .pop()?;
-                Some(render_row(stable_row as i64, &line))
+                let mut row = None;
+                screen.with_phys_lines(phys..phys.saturating_add(1), |lines| {
+                    row = lines
+                        .first()
+                        .map(|line| render_row(stable_row as i64, line));
+                });
+                row
             })
             .collect()
     }
@@ -532,15 +539,17 @@ fn selection_text_screen(
             screen.physical_cols
         };
 
-        let text = screen
-            .stable_row_to_phys(stable_row as isize)
-            .and_then(|phys_row| {
-                screen
-                    .lines_in_phys_range(phys_row..phys_row.saturating_add(1))
-                    .pop()
-            })
-            .map(|line| selected_line_text(&line, from, to))
-            .unwrap_or_default();
+        // Borrow the line via `with_phys_lines` rather than deep-cloning it
+        // through `lines_in_phys_range(..).pop()` - a selection can span the
+        // entire scrollback, so this ran once per selected row.
+        let mut text = String::new();
+        if let Some(phys_row) = screen.stable_row_to_phys(stable_row as isize) {
+            screen.with_phys_lines(phys_row..phys_row.saturating_add(1), |lines| {
+                if let Some(line) = lines.first() {
+                    text = selected_line_text(line, from, to);
+                }
+            });
+        }
         lines.push(text);
     }
 
@@ -604,32 +613,35 @@ fn search_screen(
     let bottom_row = screen.visible_row_to_stable_row(0) as i64 + screen.physical_rows as i64;
     let mut matches = Vec::new();
 
+    // Borrow each line via `with_phys_lines` rather than deep-cloning it
+    // through `lines_in_phys_range(..).pop()` - a search scans every row in
+    // the scrollback, so this used to clone the entire visible history plus
+    // scrollback per search.
     for stable_row in first_row..bottom_row {
         let Some(phys_row) = screen.stable_row_to_phys(stable_row as isize) else {
             continue;
         };
-        let Some(line) = screen
-            .lines_in_phys_range(phys_row..phys_row.saturating_add(1))
-            .pop()
-        else {
-            continue;
-        };
-        let searchable = searchable_line(&line, query.case_sensitive);
-        if searchable.chars.len() < needle.len() {
-            continue;
-        }
-
-        for start in 0..=searchable.chars.len() - needle.len() {
-            if searchable.chars[start..start + needle.len()] != needle {
-                continue;
+        screen.with_phys_lines(phys_row..phys_row.saturating_add(1), |lines| {
+            let Some(line) = lines.first() else {
+                return;
+            };
+            let searchable = searchable_line(line, query.case_sensitive);
+            if searchable.chars.len() < needle.len() {
+                return;
             }
-            let end = start + needle.len() - 1;
-            matches.push(TerminalSearchMatch {
-                stable_row,
-                start_column: searchable.start_columns[start],
-                end_column: searchable.end_columns[end],
-            });
-        }
+
+            for start in 0..=searchable.chars.len() - needle.len() {
+                if searchable.chars[start..start + needle.len()] != needle {
+                    continue;
+                }
+                let end = start + needle.len() - 1;
+                matches.push(TerminalSearchMatch {
+                    stable_row,
+                    start_column: searchable.start_columns[start],
+                    end_column: searchable.end_columns[end],
+                });
+            }
+        });
     }
 
     if matches.is_empty() {
@@ -1103,6 +1115,32 @@ mod tests {
             matches!(
                 event,
                 TerminalControlEvent::CommandFinished { exit_code: Some(7) }
+            )
+        }));
+    }
+
+    #[test]
+    fn command_finished_osc_mark_survives_a_full_pty_read_buffer() {
+        // Regression test: a full 16KB PTY read (the reader's buffer size)
+        // must not truncate the OSC 133 scan buffer before it has a chance
+        // to find a mark that arrived intact within that same read.
+        let mut engine = engine();
+        let _ = engine.take_render_frame();
+        let _ = engine.drain_control_events();
+
+        const PTY_READ_BUFFER_BYTES: usize = 16 * 1024;
+        let mark = b"\x1b]133;D;42\x07";
+        let mut chunk = vec![b'x'; PTY_READ_BUFFER_BYTES - mark.len()];
+        chunk.extend_from_slice(mark);
+        assert_eq!(chunk.len(), PTY_READ_BUFFER_BYTES);
+
+        engine.feed(&chunk);
+        assert!(engine.drain_control_events().iter().any(|event| {
+            matches!(
+                event,
+                TerminalControlEvent::CommandFinished {
+                    exit_code: Some(42)
+                }
             )
         }));
     }

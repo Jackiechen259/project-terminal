@@ -498,10 +498,15 @@ pub fn read_ssh_host_fingerprint_inner(state: &AppState, id: &str) -> AppResult<
 }
 
 #[tauri::command]
-pub fn list_ssh_connections(
+pub async fn list_ssh_connections(
     state: tauri::State<'_, AppState>,
 ) -> AppResult<ListResponse<SshConnection>> {
-    list_ssh_connections_inner(&state)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || list_ssh_connections_inner(&state))
+        .await
+        .map_err(|error| {
+            AppError::SshConnectionFailed(format!("List connections worker failed: {error}"))
+        })?
 }
 
 #[tauri::command]
@@ -510,24 +515,39 @@ pub fn validate_ssh_connection(input: SshConnectionInput) -> AppResult<()> {
 }
 
 #[tauri::command]
-pub fn create_ssh_connection(
+pub async fn create_ssh_connection(
     state: tauri::State<'_, AppState>,
     input: SshConnectionInput,
 ) -> AppResult<SshConnection> {
-    create_ssh_connection_inner(&state, input)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || create_ssh_connection_inner(&state, input))
+        .await
+        .map_err(|error| {
+            AppError::SshConnectionFailed(format!("Create connection worker failed: {error}"))
+        })?
 }
 
 #[tauri::command]
-pub fn update_ssh_connection(
+pub async fn update_ssh_connection(
     state: tauri::State<'_, AppState>,
     input: SshConnectionInput,
 ) -> AppResult<SshConnection> {
-    update_ssh_connection_inner(&state, input)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || update_ssh_connection_inner(&state, input))
+        .await
+        .map_err(|error| {
+            AppError::SshConnectionFailed(format!("Update connection worker failed: {error}"))
+        })?
 }
 
 #[tauri::command]
-pub fn delete_ssh_connection(state: tauri::State<'_, AppState>, id: String) -> AppResult<()> {
-    delete_ssh_connection_inner(&state, &id)
+pub async fn delete_ssh_connection(state: tauri::State<'_, AppState>, id: String) -> AppResult<()> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || delete_ssh_connection_inner(&state, &id))
+        .await
+        .map_err(|error| {
+            AppError::SshConnectionFailed(format!("Delete connection worker failed: {error}"))
+        })?
 }
 
 #[tauri::command]
@@ -564,12 +584,20 @@ pub fn detect_ssh_client() -> AppResult<Option<String>> {
     detect_ssh_client_inner()
 }
 
+// Spawns `ssh-keygen` and blocks on its output; keep that off the main
+// thread the same way `test_ssh_connection`/`list_remote_directories` above
+// already do.
 #[tauri::command]
-pub fn read_ssh_host_fingerprint(
+pub async fn read_ssh_host_fingerprint(
     state: tauri::State<'_, AppState>,
     id: String,
 ) -> AppResult<String> {
-    read_ssh_host_fingerprint_inner(&state, &id)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || read_ssh_host_fingerprint_inner(&state, &id))
+        .await
+        .map_err(|error| {
+            AppError::SshConnectionFailed(format!("Fingerprint worker failed: {error}"))
+        })?
 }
 
 #[cfg(test)]

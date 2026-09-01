@@ -7,7 +7,7 @@ import type {
   TerminalRenderRow,
 } from "@/lib/terminalFrames";
 
-import { applyFrameToRowCache, mergePendingFrame } from "./renderFrameMerge";
+import { applyFrameToRowCache } from "./renderFrameMerge";
 
 function defaultColor(): RenderColor {
   return { kind: "default" };
@@ -65,52 +65,6 @@ function frame(
 }
 
 describe("RenderFrame cache semantics", () => {
-  it("merges dirty rows across a viewport shift and keeps latest metadata", () => {
-    const merged = mergePendingFrame(
-      frame(10, 100, [row(102, "A")]),
-      frame(11, 101, [row(104, "B")]),
-    );
-
-    expect(merged.sequence).toBe(11);
-    expect(merged.viewportTop).toBe(101);
-    expect(merged.alternateScreen).toBe(false);
-    expect(merged.mouseReporting).toBe(false);
-    expect(merged.fullSnapshot).toBe(false);
-    expect(merged.dirtyRows.map((candidate) => candidate.stableRow)).toEqual([
-      102, 104,
-    ]);
-  });
-
-  it("lets the newest stable-row update win", () => {
-    const merged = mergePendingFrame(
-      frame(10, 100, [row(103, "A")]),
-      frame(11, 100, [row(103, "B")]),
-    );
-
-    expect(merged.dirtyRows).toEqual([row(103, "B")]);
-  });
-
-  it("does not claim an old full snapshot after its viewport moves", () => {
-    const moved = mergePendingFrame(
-      frame(10, 100, [row(100), row(101)], { fullSnapshot: true }),
-      frame(11, 101, [row(102)]),
-    );
-    const sameViewport = mergePendingFrame(
-      frame(10, 100, [row(100)], { fullSnapshot: true }),
-      frame(11, 100, [row(101)]),
-    );
-
-    expect(moved.fullSnapshot).toBe(false);
-    expect(sameViewport.fullSnapshot).toBe(true);
-  });
-
-  it("does not merge incompatible grid dimensions", () => {
-    const next = frame(11, 100, [row(200)], { rows: 5 });
-    const merged = mergePendingFrame(frame(10, 100, [row(100)]), next);
-
-    expect(merged).toBe(next);
-  });
-
   it("retains overlapping rows when automatic scrolling moves the viewport", () => {
     const cache = new Map<number, TerminalRenderRow>();
     const initial = frame(
@@ -129,40 +83,6 @@ describe("RenderFrame cache semantics", () => {
     expect(
       [101, 102, 103, 104].every((stableRow) => cache.has(stableRow)),
     ).toBe(true);
-  });
-
-  it("can paint a coalesced full-snapshot base before its first animation frame", () => {
-    const merged = mergePendingFrame(
-      frame(1, 100, [row(100), row(101), row(102), row(103)], {
-        fullSnapshot: true,
-      }),
-      frame(2, 101, [row(104)]),
-    );
-    const cache = new Map<number, TerminalRenderRow>();
-
-    expect(merged.fullSnapshot).toBe(false);
-    expect(merged.retainedSnapshot).toBe(true);
-    expect(applyFrameToRowCache(cache, null, merged).accepted).toBe(true);
-    expect(
-      [101, 102, 103, 104].every((stableRow) => cache.has(stableRow)),
-    ).toBe(true);
-  });
-
-  it("preserves a retained snapshot base through multiple queued deltas", () => {
-    const firstMerge = mergePendingFrame(
-      frame(1, 100, [row(100), row(101), row(102), row(103)], {
-        fullSnapshot: true,
-      }),
-      frame(2, 101, [row(104)]),
-    );
-    const secondMerge = mergePendingFrame(
-      firstMerge,
-      frame(3, 101, [row(105)]),
-    );
-    const cache = new Map<number, TerminalRenderRow>();
-
-    expect(secondMerge.retainedSnapshot).toBe(true);
-    expect(applyFrameToRowCache(cache, null, secondMerge).accepted).toBe(true);
   });
 
   it("requires a full snapshot to rebuild an empty or incompatible cache", () => {

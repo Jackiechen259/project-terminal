@@ -1,5 +1,6 @@
 import type { StoredColorScheme } from "@/services";
 import { TERMINAL_THEMES, type TerminalTheme } from "@/lib/terminalThemes";
+import { luminance } from "@/lib/terminalColorMath";
 import type { AppTheme } from "@/stores/settingsStore";
 
 /**
@@ -36,16 +37,20 @@ export function isValidSchemeColor(value: unknown): value is string {
 /**
  * Relative luminance per WCAG 2.1, used only to tell a light background from
  * a dark one. Returns 0 for anything unparseable, i.e. treats it as dark.
+ *
+ * Deliberately only accepts the strict `#RRGGBB` shape `isValidSchemeColor`
+ * enforces (not `rgb()`/`rgba()`, unlike the shared `parseCssColor`): a
+ * scheme's stored colors are already validated to that shape everywhere
+ * else, and widening acceptance here would just be a second, inconsistent
+ * notion of "valid" for the same value.
  */
 export function relativeLuminance(color: string): number {
   if (!isValidSchemeColor(color)) return 0;
-  const channel = (offset: number) => {
-    const value = parseInt(color.slice(offset, offset + 2), 16) / 255;
-    return value <= 0.03928
-      ? value / 12.92
-      : Math.pow((value + 0.055) / 1.055, 2.4);
-  };
-  return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
+  return luminance([
+    parseInt(color.slice(1, 3), 16),
+    parseInt(color.slice(3, 5), 16),
+    parseInt(color.slice(5, 7), 16),
+  ]);
 }
 
 /** Above this the background counts as light. */

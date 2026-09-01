@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Eye, PencilLine, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -7,7 +7,18 @@ import { useTranslation } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useMemoStore, type MarkdownMemo } from "@/stores/memoStore";
 
-import { MarkdownMemoPreview } from "./MarkdownMemoPreview";
+// react-markdown + remark-gfm pull in the whole unified/remark/micromark
+// stack - the single largest dependency in the app after the terminal
+// renderer. Nothing needs it until a user opens a note and clicks Preview,
+// so it must not be a static import here (this editor sits on the app's
+// eager render path via AppLayout -> ProjectMemoPanel).
+const LazyMarkdownMemoPreview = lazy(() =>
+  import("./MarkdownMemoPreview").then((module) => ({
+    default: module.MarkdownMemoPreview,
+  })),
+);
+
+const COMMIT_DEBOUNCE_MS = 400;
 
 interface MarkdownMemoEditorProps {
   projectId: string;
@@ -16,9 +27,17 @@ interface MarkdownMemoEditorProps {
 }
 
 /**
- * Title + body editor for a markdown memo. Every change goes straight into
- * the Zustand store; the throttled persistence layer handles the debounce, so
- * there is no second autosave timer here. Edit/Preview toggle the body view.
+ * Title + body editor for a markdown memo. Local `title`/`content` state
+ * updates on every keystroke for a responsive textarea; the store commit is
+ * debounced, because `updateMarkdownMemo` rebuilds the project's whole memo
+ * array on every call (and that array feeds a `useMemo`-sorted list in
+ * ProjectMemoPanel) - both wasted per-keystroke work even while the list
+ * itself is hidden behind this editor. The throttled persistence layer still
+ * owns backend save timing on top of this; this debounce only reduces how
+ * often the Zustand store itself changes. A pending edit is flushed on
+ * unmount (closing the note, or switching to a different one - this
+ * component is remounted with a new `key` per memo id) so closing quickly
+ * never drops the last few keystrokes.
  */
 export function MarkdownMemoEditor({
   projectId,
@@ -30,9 +49,31 @@ export function MarkdownMemoEditor({
   const [previewing, setPreviewing] = useState(false);
   const [title, setTitle] = useState(memo.title);
   const [content, setContent] = useState(memo.content);
+  const pendingPatchRef = useRef<{ title?: string; content?: string }>({});
+  const commitTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (commitTimerRef.current !== null) {
+        window.clearTimeout(commitTimerRef.current);
+      }
+      if (Object.keys(pendingPatchRef.current).length > 0) {
+        updateMarkdownMemo(projectId, memo.id, pendingPatchRef.current);
+      }
+    };
+  }, [memo.id, projectId, updateMarkdownMemo]);
 
   const commit = (patch: { title?: string; content?: string }) => {
-    updateMarkdownMemo(projectId, memo.id, patch);
+    pendingPatchRef.current = { ...pendingPatchRef.current, ...patch };
+    if (commitTimerRef.current !== null) {
+      window.clearTimeout(commitTimerRef.current);
+    }
+    commitTimerRef.current = window.setTimeout(() => {
+      commitTimerRef.current = null;
+      const patchToCommit = pendingPatchRef.current;
+      pendingPatchRef.current = {};
+      updateMarkdownMemo(projectId, memo.id, patchToCommit);
+    }, COMMIT_DEBOUNCE_MS);
   };
 
   return (
@@ -96,7 +137,9 @@ export function MarkdownMemoEditor({
         </Button>
       </div>
       {previewing ? (
-        <MarkdownMemoPreview content={content} />
+        <Suspense fallback={null}>
+          <LazyMarkdownMemoPreview content={content} />
+        </Suspense>
       ) : (
         <textarea
           value={content}

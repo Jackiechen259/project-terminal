@@ -12,6 +12,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 import { isTauriRuntime } from "@/lib/runtime";
+import { createThrottledJSONStorage } from "@/lib/throttledStorage";
 import { createId, nowIso } from "@/lib/utils";
 import { persistenceService, type DurableCollectionSnapshot } from "@/services";
 
@@ -86,6 +87,17 @@ function touch(
 ): ProjectCollection[] {
   return collections.map((c) => (c.id === id ? fn(c) : c));
 }
+
+// `createJSONStorage(localStorage)` (zustand's `persist` default) would do a
+// synchronous JSON.stringify + localStorage.setItem on every `set()` call,
+// including every step of a drag-to-reorder - and in the Tauri runtime
+// that write is pure waste on top of it, since the debounced
+// `persistToBackend()` below already owns saving this state to SQLite.
+// `createThrottledJSONStorage` no-ops localStorage entirely in that runtime
+// (see @/lib/throttledStorage) and throttles it elsewhere.
+const collectionStoreStorage = createThrottledJSONStorage<
+  Pick<CollectionStoreState, "collections" | "collapsed" | "ungroupedProjectIds">
+>();
 
 export const useCollectionStore = create<CollectionStoreState>()(
   persist(
@@ -252,6 +264,7 @@ export const useCollectionStore = create<CollectionStoreState>()(
     {
       name: "project-terminal.collections",
       version: 1,
+      storage: collectionStoreStorage,
       partialize: (state) => ({
         collections: state.collections,
         collapsed: state.collapsed,

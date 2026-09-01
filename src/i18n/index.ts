@@ -1,8 +1,9 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { type AppLanguage, useSettingsStore } from "@/stores/settingsStore";
 
 type TranslationParams = Record<string, string | number>;
+type Dictionary = Record<string, string>;
 
 /** The `t` function returned by `useTranslation`, for passing between components. */
 export type TranslateFn = (
@@ -10,660 +11,70 @@ export type TranslateFn = (
   params?: TranslationParams,
 ) => string;
 
-const zhCN: Record<string, string> = {
-  Language: "语言",
-  "Choose the language used throughout the application.":
-    "选择应用界面使用的语言。",
-  English: "English",
-  "Simplified Chinese": "简体中文",
-  "Interface language": "界面语言",
-  "Changes apply immediately.": "更改会立即生效。",
-  Appearance: "外观",
-  "Choose the colors used by the interface and terminal.":
-    "选择界面和终端使用的颜色。",
-  Theme: "主题",
-  Dark: "深色",
-  "Warm eye care": "米黄护眼",
-  White: "白色",
-  General: "通用",
-  "Application-wide preferences are saved automatically on this device.":
-    "应用级偏好设置会自动保存在此设备上。",
-  Startup: "启动",
-  "Choose what the application restores when it opens.":
-    "选择应用启动时恢复的内容。",
-  "Restore last project": "恢复上次项目",
-  "Select the most recently used project after the project list loads.":
-    "项目列表加载后自动选择最近使用的项目。",
-  Terminal: "终端",
-  "Defaults for terminal interaction and rendering.":
-    "终端交互与显示的默认设置。",
-  "Confirm before closing": "关闭前确认",
-  "Ask before closing a terminal that is starting or still running.":
-    "关闭正在启动或运行中的终端前进行确认。",
-  "Confirm before closing a running terminal": "关闭运行中的终端前确认",
-  "Give a profile its own colors so a production session is never mistaken for a local one.":
-    "为配置指定专属颜色，避免把生产会话误认成本地会话。",
-  "Use the global setting": "使用全局设置",
-  "Accent color": "强调色",
-  Status: "状态",
-  "Exit status of the last command": "上一条命令的退出状态",
-  "Shell behavior": "Shell 行为",
-  "Report the working directory and command results": "上报工作目录与命令结果",
-  "Adds prompt hooks so new tabs can open in the same directory. The hooks wrap your existing prompt; starship, oh-my-posh and powerlevel10k keep working.":
-    "添加提示符钩子，使新标签页可以在同一目录中打开。钩子会包裹你现有的提示符，starship、oh-my-posh 和 powerlevel10k 仍可正常工作。",
-  "Configure the shell for UTF-8 output": "将 shell 配置为 UTF-8 输出",
-  "Prevents mojibake when a tool prints non-ASCII text.":
-    "避免工具输出非 ASCII 文本时出现乱码。",
-  "Runs `chcp 65001`, which can break `more` and batch scripts that print through the OEM code page.":
-    "会执行 `chcp 65001`，可能导致 `more` 以及通过 OEM 代码页输出的批处理脚本失效。",
-  "Hardware rendering is unavailable; using software rendering.":
-    "硬件渲染不可用，正在使用软件渲染。",
-  Renderer: "渲染器",
-  "Terminal renderer": "终端渲染器",
-  "Automatic (hardware when available)": "自动（可用时使用硬件）",
-  "Hardware (WebGL)": "硬件（WebGL）",
-  "Software (DOM)": "软件（DOM）",
-  "Switch to software rendering if the terminal flickers or leaves artifacts.":
-    "如果终端闪烁或出现残影，可切换为软件渲染。",
-  "Paste shortcut": "粘贴快捷键",
-  "Terminal paste shortcut": "终端粘贴快捷键",
-  "Ctrl+Shift+V leaves Ctrl+V to programs such as vim and emacs.":
-    "使用 Ctrl+Shift+V 可将 Ctrl+V 留给 vim、emacs 等程序。",
-  "Text weight": "文字字重",
-  "Terminal text weight": "终端文字字重",
-  "Bold weight": "粗体字重",
-  "Terminal bold weight": "终端粗体字重",
-  "Line height": "行高",
-  "Terminal line height": "终端行高",
-  "Letter spacing": "字间距",
-  "Terminal letter spacing": "终端字间距",
-  Padding: "内边距",
-  "Terminal padding": "终端内边距",
-  Cursor: "光标",
-  "Terminal cursor style": "终端光标样式",
-  Block: "方块",
-  Bar: "竖线",
-  Underline: "下划线",
-  Outline: "空心框",
-  Hidden: "隐藏",
-  "Unfocused cursor": "未聚焦光标",
-  "Terminal unfocused cursor style": "终端未聚焦光标样式",
-  "How the cursor draws in a split pane you are not typing in.":
-    "在你未输入的分屏窗格中，光标的绘制方式。",
-  "Minimum contrast": "最小对比度",
-  "Terminal minimum contrast": "终端最小对比度",
-  "Raise this when a tool prints dim colors that are hard to read.":
-    "当某些工具输出的暗色难以辨认时，可调高此项。",
-  "Match the color scheme": "跟随配色方案",
-  Off: "关闭",
-  "Readable (4.5:1)": "可读（4.5:1）",
-  "High (7:1)": "高（7:1）",
-  "Interface theme": "界面主题",
-  "Applies to the window, sidebars, and dialogs.":
-    "应用于窗口、侧边栏和对话框。",
-  "Terminal colors": "终端配色",
-  "Terminal color scheme": "终端配色方案",
-  "Follow interface theme": "跟随界面主题",
-  "Import from file": "从文件导入",
-  "Color scheme": "配色方案",
-  "Imported {count} color scheme(s).": "已导入 {count} 个配色方案。",
-  "No new Windows Terminal color schemes to import.":
-    "没有可导入的新 Windows Terminal 配色方案。",
-  "Could not import color schemes.": "无法导入配色方案。",
-  "{scheme} by {author}": "{scheme}，作者 {author}",
-  "Delete {scheme}": "删除 {scheme}",
-  "Terminal font": "终端字体",
-  "Applied immediately to every open terminal. Only monospaced fonts installed on this machine are listed.":
-    "立即应用到所有已打开的终端。仅列出本机已安装的等宽字体。",
-  "{font} (bundled)": "{font}（内置）",
-  "Prompt icons available — starship and oh-my-posh will render.":
-    "提示符图标可用——starship 与 oh-my-posh 能正常显示。",
-  "This font has no prompt icons. The third line above will show boxes in starship and oh-my-posh.":
-    "该字体没有提示符图标。在 starship 与 oh-my-posh 中，上方第三行会显示为方块。",
-  "Font size": "字体大小",
-  "Applied immediately to every open terminal.": "立即应用到所有已打开的终端。",
-  "Terminal font size": "终端字体大小",
-  "Blinking cursor": "光标闪烁",
-  "Animate the block cursor while the terminal is focused.":
-    "终端获得焦点时让块状光标闪烁。",
-  "Blinking terminal cursor": "终端光标闪烁",
-  "Visible scrollback": "可见回滚记录",
-  "Maximum history retained by each terminal view.":
-    "每个终端视图保留的最大历史行数。",
-  "Terminal scrollback lines": "终端回滚行数",
-  "Scrollback memory": "回滚内存",
-  "Memory budget converted into a bounded terminal-model scrollback.":
-    "将内存预算转换为有界的终端模型回滚记录。",
-  "Terminal scrollback memory": "终端回滚内存",
-  "Search terminal": "搜索终端",
-  "Previous match": "上一个匹配项",
-  "Next match": "下一个匹配项",
-  "Close search": "关闭搜索",
-  "Paste {characters} characters across {lines} lines into the terminal?":
-    "要向终端粘贴 {characters} 个字符（共 {lines} 行）吗？",
-  "Projects sidebar": "项目侧边栏",
-  "Control the information shown beside each project.":
-    "控制每个项目旁显示的信息。",
-  "Confirm before deleting projects": "删除项目前确认",
-  "Show a warning before removing a project and its terminal sessions.":
-    "移除项目及其终端会话前显示警告。",
-  "Running terminal count": "运行中终端数量",
-  "Show the number of active terminals next to each project.":
-    "在每个项目旁显示活动终端数量。",
-  "Show running terminal count": "显示运行中终端数量",
-  "Open file sidebar on startup": "启动时打开文件侧边栏",
-  "Automatically show the current project's files when the application starts.":
-    "应用启动时自动显示当前项目的文件。",
-  Updates: "更新",
-  "Current version: {version}": "当前版本：{version}",
-  "Automatically check for updates": "自动检查更新",
-  "Check once whenever the application starts.": "每次应用启动时检查一次。",
-  "Check for updates": "检查更新",
-  "Check now and install a signed update when one is available.":
-    "立即检查，并在有可用签名更新时进行安装。",
-  "Check now": "立即检查",
-  "Restore defaults": "恢复默认设置",
-  Workspace: "工作区",
-  "Show projects sidebar": "显示项目侧边栏",
-  "Hide projects sidebar": "隐藏项目侧边栏",
-  Minimize: "最小化",
-  Restore: "还原",
-  Maximize: "最大化",
-  Close: "关闭",
-  Settings: "设置",
-  "Manage application-wide preferences.": "管理应用级偏好设置。",
-  "Terminal profiles": "终端配置",
-  "Profile templates": "配置模板",
-  "Configure terminal profiles for each project.": "配置每个项目使用的终端。",
-  "Create reusable profile templates to quickly add to any project.":
-    "创建可复用的配置模板，快速添加到任意项目。",
-  Project: "项目",
-  "Select a project": "选择项目",
-  "Loading profiles…": "正在加载配置…",
-  "No profiles yet.": "暂无配置。",
-  "Add a project to create profiles.": "添加项目后即可创建配置。",
-  "New profile": "新建配置",
-  "Add from template": "从模板添加",
-  'Choose which profile templates to add to "{project}".':
-    "选择要添加到「{project}」的配置模板。",
-  "Loading templates…": "正在加载模板…",
-  "No profile templates yet. Create one on the Profile templates page first.":
-    "还没有配置模板，请先在「配置模板」页面创建。",
-  "Already added": "已添加",
-  "Add selected": "添加所选",
-  "Adding…": "正在添加…",
-  "Added {count} profile(s) from templates.": "已从模板添加 {count} 个配置。",
-  "Could not add profiles from templates.": "无法从模板添加配置。",
-  "Import from Windows Terminal": "从 Windows Terminal 导入",
-  Importing: "正在导入",
-  "Imported {count} Windows Terminal profile(s).":
-    "已导入 {count} 个 Windows Terminal 配置。",
-  "No new Windows Terminal profiles to import.":
-    "没有可导入的新 Windows Terminal 配置。",
-  "Imported {count} Windows Terminal template(s).":
-    "已导入 {count} 个 Windows Terminal 配置模板。",
-  "No new Windows Terminal templates to import.":
-    "没有可导入的新 Windows Terminal 配置模板。",
-  "Choose which Windows Terminal profiles to import into this project.":
-    "选择要导入到该项目的 Windows Terminal 配置。",
-  "Choose which Windows Terminal profiles to import as reusable templates.":
-    "选择要导入为可复用配置模板的 Windows Terminal 配置。",
-  "Scanning Windows Terminal…": "正在扫描 Windows Terminal…",
-  "Could not read Windows Terminal settings.":
-    "无法读取 Windows Terminal 设置。",
-  "Could not import from Windows Terminal.": "无法从 Windows Terminal 导入。",
-  "Windows Terminal has no profiles that can be imported.":
-    "Windows Terminal 中没有可导入的配置。",
-  "Select all": "全选",
-  "{count} selected": "已选择 {count} 项",
-  "Windows Terminal default": "Windows Terminal 默认",
-  "Already imported": "已导入",
-  "Skipped {count} hidden or unsupported entries.":
-    "已跳过 {count} 个隐藏或不支持的项。",
-  "Import selected": "导入所选",
-  Retry: "重试",
-  Templates: "模板",
-  "No templates yet.": "暂无模板。",
-  "New template": "新建模板",
-  Icon: "图标",
-  Template: "模板",
-  Code: "代码",
-  Bot: "机器人",
-  Sparkles: "闪光",
-  Box: "容器",
-  Database: "数据库",
-  Server: "服务器",
-  Cloud: "云",
-  Rocket: "火箭",
-  "Preferences are stored locally and applied automatically.":
-    "偏好设置保存在本地并自动应用。",
-  "Select a profile to edit it, or create a new one.":
-    "选择一个配置进行编辑，或创建新配置。",
-  "Select a template to edit it, or create a new one.":
-    "选择一个模板进行编辑，或创建新模板。",
+// English strings are the source text itself (see `translate` below), so it
+// never needs a dictionary or a dynamic import. Every other language is
+// fetched on demand: `zh-CN` alone is ~34KB of source that no English
+// session should have to download and parse at startup.
+const localeLoaders: Partial<
+  Record<AppLanguage, () => Promise<{ default: Dictionary }>>
+> = {
+  "zh-CN": () => import("./locales/zh-CN"),
 };
 
-const zhCNWorkspace: Record<string, string> = {
-  "Window controls": "窗口控制",
-  "Add project": "添加项目",
-  "Create a local, WSL, or SSH remote project. Each project gets its own terminal tab group.":
-    "创建本地、WSL 或 SSH 远程项目。每个项目都有独立的终端标签组。",
-  "Project name": "项目名称",
-  Type: "类型",
-  "Local folder": "本地文件夹",
-  "WSL distribution": "WSL 发行版",
-  "SSH remote": "SSH 远程",
-  "Local path": "本地路径",
-  "Browse folder": "浏览文件夹",
-  "Detecting distributions...": "正在检测发行版...",
-  "Choose a distribution": "选择发行版",
-  "e.g. Ubuntu": "例如 Ubuntu",
-  "No distributions detected. Type a name manually or install WSL via `wsl --install`.":
-    "未检测到发行版。请手动输入名称，或通过 `wsl --install` 安装 WSL。",
-  "Working directory (optional)": "工作目录（可选）",
-  "e.g. /home/user/project": "例如 /home/user/project",
-  "Linux path inside the distribution. Leave blank to start in the WSL user's home directory.":
-    "发行版内的 Linux 路径。留空则从 WSL 用户的主目录启动。",
-  "SSH connection": "SSH 连接",
-  "Manage connections": "管理连接",
-  "Choose a connection": "选择连接",
-  "No saved connections": "没有已保存的连接",
-  "Create a reusable SSH connection before adding this project.":
-    "添加此项目前，请先创建可复用的 SSH 连接。",
-  "Remote path": "远程路径",
-  "Browse folders after choosing a connection, or type a remote working directory manually.":
-    "选择连接后浏览文件夹，或手动输入远程工作目录。",
-  Cancel: "取消",
-  "Creating...": "正在创建...",
-  "Create project": "创建项目",
-  "Project name is required": "请输入项目名称",
-  "Local path is required": "请输入本地路径",
-  "Choose an SSH connection first": "请先选择 SSH 连接",
-  "Remote path is required": "请输入远程路径",
-  "Select a WSL distribution": "请选择 WSL 发行版",
-  "Failed to create project": "创建项目失败",
-  "Edit project": "编辑项目",
-  "Changing a project does not close its existing terminal sessions.":
-    "修改项目不会关闭其现有终端会话。",
-  "Project name is required.": "请输入项目名称。",
-  "Local path is required.": "请输入本地路径。",
-  "SSH connection and remote path are required.": "请输入 SSH 连接和远程路径。",
-  "WSL distribution is required.": "请输入 WSL 发行版。",
-  "Unable to update project.": "无法更新项目。",
-  "Saving…": "正在保存…",
-  "Save changes": "保存更改",
-  "Browse remote folders": "浏览远程文件夹",
-  "Unable to read remote directories.": "无法读取远程目录。",
-  "Select a folder on the connected SSH host. Authentication must be available through the saved connection, SSH agent, or SSH config.":
-    "选择已连接 SSH 主机上的文件夹。身份验证需通过已保存的连接、SSH 代理或 SSH 配置完成。",
-  "Parent remote folder": "上一级远程文件夹",
-  "Remote folder path": "远程文件夹路径",
-  "~ or /home/user/project": "~ 或 /home/user/project",
-  "Open remote path": "打开远程路径",
-  "Reading remote folders…": "正在读取远程文件夹…",
-  "No subfolders in this directory.": "此目录中没有子文件夹。",
-  "Use this folder": "使用此文件夹",
-  "SSH connections": "SSH 连接",
-  "Reusable connection settings. Saved passwords are protected by Windows Credential Manager; private-key contents are never stored.":
-    "可复用的连接设置。保存的密码由 Windows 凭据管理器保护；私钥内容不会被保存。",
-  "Detecting OpenSSH client…": "正在检测 OpenSSH 客户端…",
-  "OpenSSH: {path}": "OpenSSH：{path}",
-  "OpenSSH client was not found. Install Windows OpenSSH Client to connect.":
-    "未找到 OpenSSH 客户端。请安装 Windows OpenSSH 客户端后再连接。",
-  "Detect SSH client again": "重新检测 SSH 客户端",
-  "New connection": "新建连接",
-  "Create or select an SSH connection.": "创建或选择一个 SSH 连接。",
-  Remove: "移除",
-  Test: "测试",
-  "Working…": "处理中…",
-  "Save connection": "保存连接",
-  "Username is required unless you use a system SSH config alias.":
-    "除非使用系统 SSH 配置别名，否则必须填写用户名。",
-  "Key authentication requires an identity file path.":
-    "密钥验证需要填写私钥文件路径。",
-  "Connection saved.": "连接已保存。",
-  "Unable to save SSH connection.": "无法保存 SSH 连接。",
-  "SSH connection test failed.": "SSH 连接测试失败。",
-  'Remove SSH connection "{name}"?': "移除 SSH 连接“{name}”？",
-  "Connection removed.": "连接已移除。",
-  "Unable to remove SSH connection.": "无法移除 SSH 连接。",
-  "Connection name": "连接名称",
-  "GPU server": "GPU 服务器",
-  "SSH config alias": "SSH 配置别名",
-  Host: "主机",
-  Port: "端口",
-  Username: "用户名",
-  "Optional; read from SSH config": "可选；从 SSH 配置读取",
-  Authentication: "身份验证",
-  "SSH agent (recommended)": "SSH 代理（推荐）",
-  "Private key file": "私钥文件",
-  Password: "密码",
-  "Saved password (leave blank to keep)": "已保存密码（留空则保留）",
-  "Leave blank to enter in terminal": "留空则在终端中输入",
-  "Remove the saved password": "移除已保存的密码",
-  "Optional. Saved passwords are protected by Windows Credential Manager and are never written to the connection file.":
-    "可选。保存的密码由 Windows 凭据管理器保护，绝不会写入连接配置文件。",
-  "Keyboard interactive": "键盘交互验证",
-  "System SSH config": "系统 SSH 配置",
-  "Identity file path": "私钥文件路径",
-  "Use the system SSH agent": "使用系统 SSH 代理",
-  "Connection options": "连接选项",
-  "Connect timeout (s)": "连接超时（秒）",
-  "Keepalive interval (s)": "保活间隔（秒）",
-  "Keepalive count": "保活次数",
-  "Jump host": "跳板主机",
-  "Jump port": "跳板端口",
-  "Jump username": "跳板用户名",
-  Optional: "可选",
-  "Known hosts file": "已知主机文件",
-  "Use system default": "使用系统默认值",
-  "Extra OpenSSH arguments (one argv item per line)":
-    "额外 OpenSSH 参数（每行一个参数）",
-  "Strict host-key checking": "严格检查主机密钥",
-  "Keep enabled to only trust known keys. If you turn it off, OpenSSH still asks before accepting a new key and this app never auto-accepts it; changed keys remain blocked.":
-    "保持开启以仅信任已知密钥。关闭后，OpenSSH 在接受新密钥前仍会询问，本应用不会自动接受；已更改的密钥仍会被阻止。",
-  "Only the key path is saved. Passphrases are entered directly in the terminal.":
-    "只保存密钥路径。密码短语请直接在终端中输入。",
-  "Terminal tabs": "终端标签页",
-  "New terminal": "新建终端",
-  "New terminal (right-click for presets)": "新建终端（右键查看预设）",
-  "Choose profile": "选择配置",
-  "Manage profiles…": "管理配置…",
-  "No terminals open": "没有打开的终端",
-  "This project has no terminal profiles yet.": "此项目还没有终端配置。",
-  "Split terminal group": "拆分终端组",
-  "Split terminal side by side": "左右拆分终端",
-  "Split terminal top and bottom": "上下拆分终端",
-  "Exit split view": "退出拆分视图",
-  "Close active terminal": "关闭当前终端",
-  "Close both terminals": "关闭两个终端",
-  "Close split group": "关闭拆分组",
-  "Close tab": "关闭标签页",
-  Split: "拆分",
-  "Open in File Explorer": "在文件资源管理器中打开",
-  "Open project": "打开项目",
-  "Test SSH connection": "测试 SSH 连接",
-  "Testing SSH connection…": "正在测试 SSH 连接…",
-  "SSH test failed: {error}": "SSH 测试失败：{error}",
-  "Unknown error": "未知错误",
-  "Remove project": "移除项目",
-  'Remove project "{name}"?': "移除项目“{name}”？",
-  Projects: "项目",
-  "New collection": "新建分组",
-  "Loading projects…": "正在加载项目…",
-  "No projects yet.": "暂无项目。",
-  "Use the + button to add one.": "使用 + 按钮添加项目。",
-  "Expand collection": "展开分组",
-  "Rename collection": "重命名分组",
-  "Delete collection": "删除分组",
-  "Drag projects here": "将项目拖到这里",
-  "Drag here to ungroup": "拖到这里取消分组",
-  "Collection name": "分组名称",
-  "Create collection": "创建分组",
-  "Terminal error": "终端错误",
-  "Starting terminal…": "正在启动终端…",
-  "Terminal failed to start — click to retry": "终端启动失败——点击重试",
-  "Session ended — click to restart": "会话已结束——点击重新启动",
-  "Failed to start terminal": "启动终端失败",
-  "Failed to launch preset terminal": "启动预设终端失败",
-  "Failed to load terminal profiles": "加载终端配置失败",
-  "Failed to refresh terminal profiles": "刷新终端配置失败",
-  "Profile name": "配置名称",
-  Shell: "Shell",
-  "Shell executable": "Shell 可执行文件",
-  "Remote shell command": "远程 Shell 命令",
-  "WSL working directory": "WSL 工作目录",
-  "Optional Linux path": "可选的 Linux 路径",
-  "Shell arguments": "Shell 参数",
-  "One argument per line": "每行一个参数",
-  Environment: "环境",
-  "Environment type": "环境类型",
-  "Manual command": "手动命令",
-  "Shell hook": "Shell 钩子",
-  "Environment name": "环境名称",
-  "Alternative to name": "名称的替代值",
-  "Environment path": "环境路径",
-  "Optional installation folder": "可选的安装目录",
-  "Conda root": "Conda 根目录",
-  "Conda executable": "Conda 可执行文件",
-  "Optional path to conda.exe": "可选的 conda.exe 路径",
-  "Activation method": "激活方式",
-  "Activation command": "激活命令",
-  "Startup commands": "启动命令",
-  "One command per line": "每行一个命令",
-  "Command to run after opening the shell": "打开 Shell 后运行的命令",
-  "Environment variables": "环境变量",
-  "One NAME=value pair per line": "每行一个 NAME=value",
-  "One NAME=value pair per line. These are set by the command sent to the host, so they are visible in its process list - do not put secrets here.":
-    "每行一个 NAME=value。它们由发送到主机的命令设置，因此在该主机的进程列表中可见——请勿在此填写密钥。",
-  "Show this profile in the + button context menu":
-    "在 + 按钮右键菜单中显示此配置",
-  "Use this as the default profile for new terminals":
-    "将此配置用作新终端的默认配置",
-  "Profile used by the + button": "+ 按钮使用的配置",
-  "This profile is used only by the selected project.":
-    "此配置仅供所选项目使用。",
-  "Edit profile": "编辑配置",
-  "Edit template": "编辑模板",
-  "Set up built-in profile": "设置内置配置",
-  "Customize built-in template": "自定义内置模板",
-  "Delete profile": "删除配置",
-  "Delete template": "删除模板",
-  Save: "保存",
-  "e.g. Python environment": "例如 Python 环境",
-  "Optional label": "可选标签",
-  "Settings sections": "设置分类",
-  "Hidden from + menu": "已从 + 菜单隐藏",
-  "Default profile": "默认配置",
-  "Built-in profile": "内置配置",
-  "Built-in template": "内置模板",
-  "e.g. /usr/bin/bash": "例如 /usr/bin/bash",
-  "e.g. C:\\Tools\\shell.exe": "例如 C:\\Tools\\shell.exe",
-  "e.g. my-env": "例如 my-env",
-  "e.g. .venv": "例如 .venv",
-  "Terminal profile": "终端配置",
-  "Save profile": "保存配置",
-  "Save template": "保存模板",
-  "Save to customize this built-in profile for the selected project.":
-    "保存后即可为所选项目自定义此内置配置。",
-  "Save to customize this built-in template.": "保存后即可自定义此内置模板。",
-  "This template can be used by any project.": "此模板可用于任意项目。",
-  "Activate this Conda environment when the terminal opens":
-    "终端打开时激活此 Conda 环境",
-  "The application only activates an existing environment; it never changes it.":
-    "应用只会激活现有环境，不会修改环境。",
-  "Collapse collection": "收起分组",
-  Ungrouped: "未分组",
-  'Delete collection "{name}"? Projects inside will not be removed.':
-    "删除分组“{name}”？其中的项目不会被删除。",
-  "Group related projects together. Drag projects into the collection from the sidebar.":
-    "将相关项目整理到一起。可从侧边栏将项目拖入分组。",
-  "Checking for updates": "正在检查更新",
-  "Looking for a newer signed release…": "正在查找较新的签名版本…",
-  "You’re up to date": "已是最新版本",
-  "You already have the latest version of Project Terminal.":
-    "你已安装 Project Terminal 的最新版本。",
-  "Update available": "有可用更新",
-  "Install and restart": "安装并重启",
-  "Project Terminal {version} is ready to install.":
-    "Project Terminal {version} 已可安装。",
-  Later: "稍后",
-  "Downloading {downloaded}{total}…": "正在下载 {downloaded}{total}…",
-  " of {total}": " / {total}",
-  "Installing…": "正在安装…",
-  "Could not check for updates": "无法检查更新",
-  "Check your internet connection and try again.": "请检查网络连接后重试。",
-  "The update could not be installed. Please try again later.":
-    "无法安装更新，请稍后重试。",
-  // --- Validation & error messages ---
-  "{field} must be a whole number between 1 and {maximum}.":
-    "{field} 必须是 1 到 {maximum} 之间的整数。",
-  'Invalid environment variable: "{line}". Use NAME=value.':
-    "环境变量格式无效：“{line}”。请使用 NAME=value 格式。",
-  "Profile name is required.": "请输入配置名称。",
-  "Template name is required.": "请输入模板名称。",
-  "Choose a Conda environment name or environment path.":
-    "请填写 Conda 环境名称或环境路径。",
-  "Could not save profile.": "无法保存配置。",
-  "Could not delete profile.": "无法删除配置。",
-  "Could not save template.": "无法保存模板。",
-  "Could not delete template.": "无法删除模板。",
-  'Delete terminal profile "{name}"?': "删除终端配置“{name}”？",
-  'Delete profile template "{name}"?': "删除配置模板“{name}”？",
-  "Failed to start terminal: {error}": "启动终端失败：{error}",
-  "unknown error": "未知错误",
-  // --- Tab status & aria labels ---
-  "Connection error": "连接错误",
-  "Exited ({code})": "已退出（{code}）",
-  "Reconnect SSH terminal": "重新连接 SSH 终端",
-  "Restart tab": "重启标签页",
-  "Duplicate profile": "复制配置",
-  "Could not duplicate profile.": "无法复制配置。",
-  "A split group can contain at most four panes.":
-    "一个分屏组最多可包含四个窗格。",
-  "Remote access": "远程访问",
-  "The gateway binds to loopback by default. Use Tailscale or an HTTPS reverse proxy for other devices.":
-    "网关默认仅监听本机。其他设备请使用 Tailscale 或 HTTPS 反向代理。",
-  "Mobile terminal gateway": "手机终端网关",
-  "Access details are kept in app memory only.": "访问凭据仅保存在应用内存中。",
-  "Show access": "显示访问方式",
-  "Access token": "访问令牌",
-  "This token is not saved to disk. Anyone holding it can view remote sessions.":
-    "此令牌不会写入磁盘；持有者可以查看远程会话。",
-  "Remote access token": "远程访问令牌",
-  "Show or hide token": "显示或隐藏令牌",
-  "Copy token": "复制令牌",
-  "Allow LAN access": "允许局域网访问",
-  "Expose the gateway to your local network so a phone on the same Wi-Fi can connect. Token and terminal traffic travel in plaintext; only use on trusted networks.":
-    "将网关开放到局域网，使同一 Wi-Fi 的手机可以连接。令牌与终端流量以明文传输，仅在可信网络中使用。",
-  "Copy link": "复制链接",
-  Unreachable: "不可达",
-  "Remote access is disabled.": "远程访问已禁用。",
-  "Enable remote access": "启用远程访问",
-  "Remote gateway is unavailable": "远程网关不可用",
-  "The phone cannot reach 127.0.0.1. Use Tailscale or an HTTPS reverse proxy; the QR code works only after the gateway is reachable from the phone.":
-    "手机无法访问 127.0.0.1。请改用 Tailscale 或 HTTPS 反向代理；只有当网关可被手机访问时，此二维码才会生效。",
-  "Scan to connect": "扫码连接",
-  "Scan with a phone camera to open the mobile terminal. The phone must be able to reach this address.":
-    "用手机相机扫码打开移动终端；手机需能访问此地址。",
-  // --- Close confirmations ---
-  'Close the running terminal "{name}"?': "关闭正在运行的终端“{name}？”",
-  "Close both terminals in this split group?": "关闭此拆分组中的两个终端？",
-  // --- Empty states ---
-  "No terminals open for {name}.": "{name} 暂无打开的终端。",
-  "Select or create a project to start a terminal.":
-    "选择或创建一个项目以启动终端。",
-  // --- Drag & drop ---
-  "Drop to split {zone}": "拖放至{zone}拆分",
-  left: "左侧",
-  right: "右侧",
-  top: "上方",
-  bottom: "下方",
-  // --- Project files ---
-  "Project files": "项目文件",
-  "Show file sidebar": "显示文件侧边栏",
-  "Hide file sidebar": "隐藏文件侧边栏",
-  "No project selected": "未选择项目",
-  "Select a project to browse its files.": "选择项目后即可浏览文件。",
-  "Parent folder": "上一级文件夹",
-  "Refresh files": "刷新文件",
-  "Upload files": "上传文件",
-  "Filter files": "筛选文件",
-  "Reading project files…": "正在读取项目文件…",
-  "Unable to read project files.": "无法读取项目文件。",
-  "No matching files.": "没有匹配的文件。",
-  "This folder is empty.": "此文件夹为空。",
-  "Try again": "重试",
-  "Drop files to upload": "拖放文件以上传",
-  "Drag a remote item here to download": "将远程文件拖到此处下载",
-  "Uploading {count} item(s)…": "正在上传 {count} 个项目…",
-  "Upload complete.": "上传完成。",
-  "Upload failed.": "上传失败。",
-  "Downloading {name}…": "正在下载 {name}…",
-  "Downloaded {name}.": "已下载 {name}。",
-  "Download failed.": "下载失败。",
-  Download: "下载",
-  "Download {name}": "下载 {name}",
-  // --- Accessibility ---
-  "Application context menu": "应用上下文菜单",
-  // --- Memos ---
-  Memo: "备忘录",
-  "Memo panel": "备忘录面板",
-  "Hide memo sidebar": "隐藏备忘录侧边栏",
-  "Memo type": "备忘录类型",
-  "Select a project to view its memos.": "选择项目后即可查看其备忘录。",
-  Notes: "笔记",
-  Commands: "命令",
-  "New note": "新建笔记",
-  "New command": "新建命令",
-  "No notes yet": "还没有笔记",
-  "No commands yet": "还没有命令",
-  "Untitled note": "未命名笔记",
-  "Untitled command": "未命名命令",
-  "Note title": "笔记标题",
-  "Note content": "笔记内容",
-  "Note view": "笔记视图",
-  "Close note": "关闭笔记",
-  "Write in Markdown…": "用 Markdown 书写…",
-  Edit: "编辑",
-  Preview: "预览",
-  Title: "标题",
-  Description: "描述",
-  Command: "命令",
-  "What this command does": "该命令的作用",
-  "Development server": "开发服务器",
-  "Discard unsaved changes?": "放弃未保存的更改？",
-  "Close command editor": "关闭命令编辑器",
-  Delete: "删除",
-  "Delete memo?": "删除这条备忘录？",
-  'The memo "{title}" will be permanently removed.':
-    "备忘录“{title}”将被永久删除。",
-  "More command actions": "更多命令操作",
-  Copy: "复制",
-  Insert: "插入",
-  Run: "运行",
-  "Insert into terminal": "插入到终端",
-  "Run in terminal": "在终端中运行",
-  Copied: "已复制",
-  "No command": "无命令",
-  "Open a running terminal for this project first.":
-    "请先为当前项目打开一个正在运行的终端。",
-  "Could not send command to terminal.": "无法向终端发送命令。",
-  "Could not copy command.": "无法复制命令。",
-  Dismiss: "忽略",
-  "Just now": "刚刚",
-  "Updated {n}m ago": "更新于 {n} 分钟前",
-  "Updated {n}h ago": "更新于 {n} 小时前",
-  "Updated yesterday": "更新于昨天",
-  "Updated {n}d ago": "更新于 {n} 天前",
-  "Updated {date}": "更新于 {date}",
-  // --- Right sidebar ---
-  Files: "文件",
-  "Files panel": "文件面板",
-  "Right panel": "右侧面板",
-  "Show right sidebar": "显示右侧边栏",
-  "Hide right sidebar": "隐藏右侧边栏",
-  // --- Window close (single main window) ---
-  "Close this window?": "关闭此窗口？",
-  "{count} terminal(s) are still running.": "仍有 {count} 个终端在运行。",
-  "Hide window and keep terminals running": "隐藏窗口并保持终端运行",
-  "Terminals keep working in the background. Reopen from the tray icon.":
-    "终端将在后台继续运行，可从托盘图标重新打开。",
-  "Stop terminals and quit": "停止终端并退出",
-  "All running terminals will be stopped.": "所有正在运行的终端都将被停止。",
-};
-
-const dictionaries: Record<AppLanguage, Record<string, string>> = {
+const loadedDictionaries: Partial<Record<AppLanguage, Dictionary>> = {
   en: {},
-  "zh-CN": { ...zhCN, ...zhCNWorkspace },
 };
+const pendingLoads = new Map<AppLanguage, Promise<void>>();
 
+/**
+ * Kick off (and dedupe) a locale's dynamic import. Returns the in-flight
+ * promise so a caller can wait for it; returns `undefined` when the
+ * dictionary is already loaded (or there is nothing to load, e.g. `en`).
+ */
+function ensureDictionaryLoaded(
+  language: AppLanguage,
+): Promise<void> | undefined {
+  if (loadedDictionaries[language]) return undefined;
+  const pending = pendingLoads.get(language);
+  if (pending) return pending;
+  const loader = localeLoaders[language];
+  if (!loader) {
+    loadedDictionaries[language] = {};
+    return undefined;
+  }
+  const promise = loader()
+    .then((module) => {
+      loadedDictionaries[language] = module.default;
+    })
+    .finally(() => {
+      pendingLoads.delete(language);
+    });
+  pendingLoads.set(language, promise);
+  return promise;
+}
+
+/** Wait for a language's dictionary to be available before translating. */
+export function preloadLanguage(language: AppLanguage): Promise<void> {
+  return ensureDictionaryLoaded(language) ?? Promise.resolve();
+}
+
+/**
+ * Translate `source` into `language`.
+ *
+ * Synchronous and best-effort: if the dictionary has not finished loading
+ * yet (or the language has no dictionary at all), this returns `source`
+ * unchanged and kicks off the load in the background - `useTranslation`
+ * below re-renders its caller once that load resolves. `source` is always a
+ * literal English string at the call site, so falling back to it never
+ * produces a blank or broken label, only a momentarily untranslated one.
+ */
 export function translate(
   language: AppLanguage,
   source: string,
   params?: TranslationParams,
 ) {
-  const translated = dictionaries[language]?.[source] ?? source;
+  void ensureDictionaryLoaded(language);
+  const translated = loadedDictionaries[language]?.[source] ?? source;
   if (!params) return translated;
   return translated.replace(/\{(\w+)\}/g, (match, key: string) =>
     params[key] === undefined ? match : String(params[key]),
@@ -672,6 +83,23 @@ export function translate(
 
 export function useTranslation() {
   const language = useSettingsStore((state) => state.language);
+  // Bumped once a dictionary this component needs finishes loading, so `t`
+  // starts returning translated strings without requiring every caller to
+  // manage its own loading state.
+  const [, setLoadedTick] = useState(0);
+
+  useEffect(() => {
+    const pending = ensureDictionaryLoaded(language);
+    if (!pending) return;
+    let cancelled = false;
+    void pending.then(() => {
+      if (!cancelled) setLoadedTick((tick) => tick + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [language]);
+
   const t = useCallback(
     (source: string, params?: TranslationParams) =>
       translate(language, source, params),

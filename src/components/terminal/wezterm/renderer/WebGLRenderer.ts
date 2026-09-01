@@ -5,6 +5,12 @@ import type {
   TerminalRenderRow,
   TerminalSearchMatch,
 } from "@/lib/terminalFrames";
+import {
+  ansi256ToRgb,
+  ANSI_THEME_KEYS,
+  ensureContrastRgb,
+  parseCssColor,
+} from "@/lib/terminalColorMath";
 
 import { CanvasRenderer } from "./CanvasRenderer";
 import { GlyphAtlas, type GlyphRecord } from "./GlyphAtlas";
@@ -19,46 +25,7 @@ import type {
 } from "./TerminalRenderer";
 import { applyFrameToRowCache } from "./renderFrameMerge";
 
-type Rgb = [number, number, number];
 type Rgba = [number, number, number, number];
-
-const ANSI_THEME_KEYS = [
-  "black",
-  "red",
-  "green",
-  "yellow",
-  "blue",
-  "magenta",
-  "cyan",
-  "white",
-  "brightBlack",
-  "brightRed",
-  "brightGreen",
-  "brightYellow",
-  "brightBlue",
-  "brightMagenta",
-  "brightCyan",
-  "brightWhite",
-] as const;
-
-const DEFAULT_ANSI: Rgb[] = [
-  [0, 0, 0],
-  [204, 85, 85],
-  [85, 204, 85],
-  [205, 205, 85],
-  [84, 85, 203],
-  [204, 85, 204],
-  [122, 202, 202],
-  [204, 204, 204],
-  [85, 85, 85],
-  [255, 85, 85],
-  [85, 255, 85],
-  [255, 255, 85],
-  [85, 85, 255],
-  [255, 85, 255],
-  [85, 255, 255],
-  [255, 255, 255],
-];
 
 const SOLID_VERTEX_SHADER = [
   "#version 300 es",
@@ -123,74 +90,7 @@ const GLYPH_FRAGMENT_SHADER = [
 ].join("\n");
 
 function parseColor(value: string): Rgba {
-  const hex = value.match(/^#([0-9a-f]{6})$/iu);
-  if (hex) {
-    return [
-      parseInt(hex[1].slice(0, 2), 16),
-      parseInt(hex[1].slice(2, 4), 16),
-      parseInt(hex[1].slice(4, 6), 16),
-      255,
-    ];
-  }
-  const rgb = value.match(
-    /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)$/iu,
-  );
-  if (!rgb) return [0, 0, 0, 255];
-  const alpha = rgb[4] === undefined ? 255 : Math.round(Number(rgb[4]) * 255);
-  return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3]), alpha];
-}
-
-function ansi256(index: number): Rgb {
-  if (index < 16) return DEFAULT_ANSI[index] ?? DEFAULT_ANSI[0];
-  if (index < 232) {
-    const color = index - 16;
-    const red = Math.floor(color / 36);
-    const green = Math.floor((color % 36) / 6);
-    const blue = color % 6;
-    const ramp = [0, 95, 135, 175, 215, 255];
-    return [ramp[red], ramp[green], ramp[blue]];
-  }
-  const grey = 8 + (index - 232) * 10;
-  return [grey, grey, grey];
-}
-
-function colorFor(
-  color: RenderColor,
-  theme: TerminalRendererTheme,
-  defaultColor: "foreground" | "background",
-): Rgba {
-  if (color.kind === "default") return parseColor(theme[defaultColor]);
-  if (color.kind === "rgba") return color.value;
-  const key = ANSI_THEME_KEYS[color.value];
-  const themed = key ? theme[key] : undefined;
-  const rgb = themed ? parseColor(themed) : ansi256(color.value);
-  return [rgb[0], rgb[1], rgb[2], 255];
-}
-
-function luminance([red, green, blue]: Rgb) {
-  const channel = (value: number) => {
-    const normalized = value / 255;
-    return normalized <= 0.03928
-      ? normalized / 12.92
-      : ((normalized + 0.055) / 1.055) ** 2.4;
-  };
-  return (
-    0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
-  );
-}
-
-function contrastRatio(foreground: Rgb, background: Rgb) {
-  const foregroundLuminance = luminance(foreground);
-  const backgroundLuminance = luminance(background);
-  const lighter = Math.max(foregroundLuminance, backgroundLuminance);
-  const darker = Math.min(foregroundLuminance, backgroundLuminance);
-  return (lighter + 0.05) / (darker + 0.05);
-}
-
-function mix(from: Rgb, to: Rgb, amount: number): Rgb {
-  return from.map((channel, index) =>
-    Math.round(channel + (to[index] - channel) * amount),
-  ) as Rgb;
+  return parseCssColor(value) ?? [0, 0, 0, 255];
 }
 
 function ensureContrast(
@@ -199,34 +99,12 @@ function ensureContrast(
   minimumContrast = 1,
 ): Rgba {
   if (minimumContrast <= 1) return foreground;
-  const foregroundRgb: Rgb = [foreground[0], foreground[1], foreground[2]];
-  const backgroundRgb: Rgb = [background[0], background[1], background[2]];
-  if (contrastRatio(foregroundRgb, backgroundRgb) >= minimumContrast) {
-    return foreground;
-  }
-  const target: Rgb =
-    contrastRatio([0, 0, 0], backgroundRgb) >
-    contrastRatio([255, 255, 255], backgroundRgb)
-      ? [0, 0, 0]
-      : [255, 255, 255];
-  if (contrastRatio(target, backgroundRgb) < minimumContrast) {
-    return [target[0], target[1], target[2], foreground[3]];
-  }
-  let low = 0;
-  let high = 1;
-  for (let iteration = 0; iteration < 12; iteration++) {
-    const midpoint = (low + high) / 2;
-    if (
-      contrastRatio(mix(foregroundRgb, target, midpoint), backgroundRgb) >=
-      minimumContrast
-    ) {
-      high = midpoint;
-    } else {
-      low = midpoint;
-    }
-  }
-  const result = mix(foregroundRgb, target, high);
-  return [result[0], result[1], result[2], foreground[3]];
+  const adjusted = ensureContrastRgb(
+    [foreground[0], foreground[1], foreground[2]],
+    [background[0], background[1], background[2]],
+    minimumContrast,
+  );
+  return [adjusted[0], adjusted[1], adjusted[2], foreground[3]];
 }
 
 function createShader(
@@ -339,6 +217,19 @@ export class WebGLRenderer implements TerminalRenderer {
   private searchMatch: TerminalSearchMatch | null = null;
   private gpuFallback = false;
   private visible = true;
+  /** Reused, geometrically-grown vertex scratch buffers - see `pushRect`/
+   * `pushGlyph`. Avoids allocating a `number[]` plus a fresh `Float32Array`
+   * on every cell-background/glyph draw call. */
+  private solidVertexData = new Float32Array(0);
+  private solidVertexCount = 0;
+  private glyphVertexData = new Float32Array(0);
+  private glyphVertexCount = 0;
+  /** Memoizes `parseColor`/`ensureContrast` for the lifetime of one theme -
+   * both are pure but were otherwise re-parsing/re-solving the same handful
+   * of theme colors for every cell on every frame. */
+  private colorParseCache = new Map<string, Rgba>();
+  private contrastCache = new Map<string, Rgba>();
+  private metricsContext: CanvasRenderingContext2D | null = null;
 
   mount(canvas: HTMLCanvasElement) {
     const gl = canvas.getContext("webgl2", {
@@ -463,12 +354,16 @@ export class WebGLRenderer implements TerminalRenderer {
 
   render(frame: TerminalRenderFrame) {
     if (!this.acceptFrame(frame)) return;
-    this.canvasRenderer.render(frame);
-    if (!this.visible || this.frameRequest !== null) return;
-    this.frameRequest = window.requestAnimationFrame(() => {
-      this.frameRequest = null;
-      this.paintCurrentFrame();
-    });
+    if (this.gpuFallback) {
+      // The GPU draws nothing in fallback mode - `paintCurrentFrame` would
+      // just proxy straight to the overlay - so let CanvasRenderer own its
+      // own incremental paint schedule directly instead of scheduling a
+      // second rAF here that does nothing but call back into it.
+      this.canvasRenderer.render(frame);
+      return;
+    }
+    this.canvasRenderer.ingestFrame(frame);
+    this.schedulePaint();
   }
 
   renderImmediate(frame: TerminalRenderFrame) {
@@ -477,18 +372,39 @@ export class WebGLRenderer implements TerminalRenderer {
       this.frameRequest = null;
     }
     if (!this.acceptFrame(frame)) return;
-    this.canvasRenderer.renderImmediate(frame);
+    if (this.gpuFallback) {
+      this.canvasRenderer.renderImmediate(frame);
+      return;
+    }
+    this.canvasRenderer.ingestFrame(frame);
     if (this.visible) this.paintCurrentFrame();
   }
 
   redraw() {
+    // A forced full repaint (for example on tab activation) must work
+    // whether or not the GPU is currently in use - unlike the frame-cadence
+    // path above, this cannot rely on CanvasRenderer's own scheduling
+    // already having run.
+    if (this.gpuFallback) {
+      this.canvasRenderer.redraw();
+      return;
+    }
     this.paintCurrentFrame();
+  }
+
+  private schedulePaint() {
+    if (!this.visible || this.frameRequest !== null) return;
+    this.frameRequest = window.requestAnimationFrame(() => {
+      this.frameRequest = null;
+      this.paintCurrentFrame();
+    });
   }
 
   setTheme(theme: TerminalRendererTheme) {
     this.theme = theme;
+    this.clearColorCache();
     this.canvasRenderer.setTheme(theme);
-    this.paintCurrentFrame();
+    this.schedulePaint();
   }
 
   setFont(font: TerminalFontOptions) {
@@ -535,13 +451,16 @@ export class WebGLRenderer implements TerminalRenderer {
   setSelection(selection: TerminalSelection | null) {
     this.selection = selection;
     this.canvasRenderer.setSelection(selection);
-    this.paintCurrentFrame();
+    // Coalesce to one repaint per animation frame instead of one per
+    // pointermove - the previous synchronous paintCurrentFrame() call here
+    // repainted the entire grid on every mouse-move event of a drag.
+    this.schedulePaint();
   }
 
   setSearchMatch(match: TerminalSearchMatch | null) {
     this.searchMatch = match;
     this.canvasRenderer.setSearchMatch(match);
-    this.paintCurrentFrame();
+    this.schedulePaint();
   }
 
   selectionText(anchor: TerminalSelectionPoint, focus: TerminalSelectionPoint) {
@@ -585,6 +504,9 @@ export class WebGLRenderer implements TerminalRenderer {
     this.atlas = null;
     this.rowCache.clear();
     this.frame = null;
+    this.metricsContext = null;
+    this.colorParseCache.clear();
+    this.contrastCache.clear();
   }
 
   private acceptFrame(frame: TerminalRenderFrame) {
@@ -600,7 +522,10 @@ export class WebGLRenderer implements TerminalRenderer {
   private paintCurrentFrame() {
     if (!this.visible) return;
     if (this.gpuFallback) {
-      this.canvasRenderer.redraw();
+      // Reached only via resize()/redraw(), which call this unconditionally
+      // after already asking CanvasRenderer to repaint itself; render() and
+      // renderImmediate() never schedule a paint at all while in fallback,
+      // so there is nothing for the GPU to contribute here.
       return;
     }
     this.drawBackground();
@@ -615,12 +540,21 @@ export class WebGLRenderer implements TerminalRenderer {
       this.canvasRenderer.redraw();
       return;
     }
-    this.canvasRenderer.redraw();
+    // Only the overlay's own dirty rows repaint here, not the full grid -
+    // the GPU already redrew every cached row above.
+    this.canvasRenderer.paintOverlayPending();
   }
 
   private updateMetrics() {
-    const canvas = document.createElement("canvas");
-    const context = canvas.getContext("2d");
+    // `measureGrid` runs from every ResizeObserver callback, so this used to
+    // allocate a throwaway canvas + 2D context per call (e.g. per frame of a
+    // split-divider drag). One measuring context, reused for the renderer's
+    // lifetime, does the same measurement for free.
+    if (!this.metricsContext) {
+      this.metricsContext =
+        document.createElement("canvas").getContext("2d") ?? null;
+    }
+    const context = this.metricsContext;
     if (!context) return;
     context.font = `${this.font.size}px ${this.font.family}`;
     const metrics = context.measureText("Mg");
@@ -724,7 +658,7 @@ export class WebGLRenderer implements TerminalRenderer {
     const program = this.solidProgram;
     const buffer = this.solidBuffer;
     if (!gl || !program || !buffer) return;
-    const values: number[] = [];
+    this.solidVertexCount = 0;
     for (let rowOffset = 0; rowOffset < frame.rows; rowOffset++) {
       const stableRow = frame.viewportTop + rowOffset;
       const row = this.rowCache.get(stableRow);
@@ -733,7 +667,7 @@ export class WebGLRenderer implements TerminalRenderer {
         const selected = this.cellIsSelected(stableRow, cell);
         const searched = this.cellIsSearchMatched(stableRow, cell);
         if (
-          cell.background.kind === "default" &&
+          (cell.background?.kind ?? "default") === "default" &&
           !cell.reverse &&
           !selected &&
           !searched
@@ -741,19 +675,22 @@ export class WebGLRenderer implements TerminalRenderer {
           continue;
         const colors = this.cellColors(cell, stableRow);
         this.pushRect(
-          values,
           cell.column * this.cellWidth,
           rowOffset * this.cellHeight,
-          this.cellWidth * Math.max(1, cell.width),
+          this.cellWidth * Math.max(1, cell.width ?? 1),
           colors[1],
         );
       }
     }
-    if (!values.length) return;
+    if (this.solidVertexCount === 0) return;
     const { width, height } = this.drawingBufferSize();
     gl.useProgram(program);
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(values), gl.STREAM_DRAW);
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      this.solidVertexData.subarray(0, this.solidVertexCount),
+      gl.STREAM_DRAW,
+    );
     const stride = 6 * Float32Array.BYTES_PER_ELEMENT;
     gl.enableVertexAttribArray(this.solidPositionLocation);
     gl.vertexAttribPointer(
@@ -774,7 +711,7 @@ export class WebGLRenderer implements TerminalRenderer {
       2 * Float32Array.BYTES_PER_ELEMENT,
     );
     gl.uniform2f(this.solidResolutionLocation, width, height);
-    gl.drawArrays(gl.TRIANGLES, 0, values.length / 6);
+    gl.drawArrays(gl.TRIANGLES, 0, this.solidVertexCount / 6);
   }
 
   private drawGlyphs(frame: TerminalRenderFrame) {
@@ -784,7 +721,7 @@ export class WebGLRenderer implements TerminalRenderer {
     const atlas = this.atlas;
     if (!gl || !program || !buffer || !atlas) return false;
     atlas.configure(this.cellWidth, this.cellHeight, this.baseline, this.dpr);
-    const values: number[] = [];
+    this.glyphVertexCount = 0;
     for (let rowOffset = 0; rowOffset < frame.rows; rowOffset++) {
       const stableRow = frame.viewportTop + rowOffset;
       const row = this.rowCache.get(stableRow);
@@ -793,28 +730,34 @@ export class WebGLRenderer implements TerminalRenderer {
         if (cell.invisible || !cell.text) continue;
         const record = atlas.get(
           cell.text,
-          Math.max(1, cell.width),
+          Math.max(1, cell.width ?? 1),
           fontForCell(cell, this.font),
         );
         if (!record) return false;
         const colors = this.cellColors(cell, stableRow)[0];
         const alpha = (colors[3] / 255) * (cell.intensity === "half" ? 0.5 : 1);
         this.pushGlyph(
-          values,
           cell.column * this.cellWidth,
           rowOffset * this.cellHeight,
-          this.cellWidth * Math.max(1, cell.width),
+          this.cellWidth * Math.max(1, cell.width ?? 1),
           this.cellHeight,
           record,
-          [colors[0] / 255, colors[1] / 255, colors[2] / 255, alpha],
+          colors[0] / 255,
+          colors[1] / 255,
+          colors[2] / 255,
+          alpha,
         );
       }
     }
-    if (!values.length) return true;
+    if (this.glyphVertexCount === 0) return true;
     const { width, height } = this.drawingBufferSize();
     gl.useProgram(program);
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(values), gl.STREAM_DRAW);
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      this.glyphVertexData.subarray(0, this.glyphVertexCount),
+      gl.STREAM_DRAW,
+    );
     const stride = 9 * Float32Array.BYTES_PER_ELEMENT;
     gl.enableVertexAttribArray(this.glyphPositionLocation);
     gl.vertexAttribPointer(
@@ -856,92 +799,185 @@ export class WebGLRenderer implements TerminalRenderer {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, atlas.getTexture());
     gl.uniform1i(this.glyphAtlasLocation, 0);
-    gl.drawArrays(gl.TRIANGLES, 0, values.length / 9);
+    gl.drawArrays(gl.TRIANGLES, 0, this.glyphVertexCount / 9);
     return true;
   }
 
-  private pushRect(
-    values: number[],
-    x: number,
-    y: number,
-    width: number,
-    color: Rgba,
-  ) {
+  /** Grow `this.solidVertexData` (preserving its used prefix) if the next
+   * write would overflow it. Geometric growth keeps this amortized O(1). */
+  private reserveSolid(extraFloats: number) {
+    const needed = this.solidVertexCount + extraFloats;
+    if (needed <= this.solidVertexData.length) return;
+    let size = this.solidVertexData.length || 512;
+    while (size < needed) size *= 2;
+    const grown = new Float32Array(size);
+    grown.set(this.solidVertexData.subarray(0, this.solidVertexCount));
+    this.solidVertexData = grown;
+  }
+
+  private reserveGlyph(extraFloats: number) {
+    const needed = this.glyphVertexCount + extraFloats;
+    if (needed <= this.glyphVertexData.length) return;
+    let size = this.glyphVertexData.length || 512;
+    while (size < needed) size *= 2;
+    const grown = new Float32Array(size);
+    grown.set(this.glyphVertexData.subarray(0, this.glyphVertexCount));
+    this.glyphVertexData = grown;
+  }
+
+  private pushRect(x: number, y: number, width: number, color: Rgba) {
+    this.reserveSolid(36);
     const left = x * this.dpr;
     const top = y * this.dpr;
     const right = (x + width) * this.dpr;
     const bottom = (y + this.cellHeight) * this.dpr;
-    const rgba: Rgba = [
-      color[0] / 255,
-      color[1] / 255,
-      color[2] / 255,
-      color[3] / 255,
-    ];
-    values.push(
-      left,
-      top,
-      ...rgba,
-      right,
-      top,
-      ...rgba,
-      left,
-      bottom,
-      ...rgba,
-      left,
-      bottom,
-      ...rgba,
-      right,
-      top,
-      ...rgba,
-      right,
-      bottom,
-      ...rgba,
-    );
+    const red = color[0] / 255;
+    const green = color[1] / 255;
+    const blue = color[2] / 255;
+    const alpha = color[3] / 255;
+    const data = this.solidVertexData;
+    let i = this.solidVertexCount;
+    data[i++] = left;
+    data[i++] = top;
+    data[i++] = red;
+    data[i++] = green;
+    data[i++] = blue;
+    data[i++] = alpha;
+    data[i++] = right;
+    data[i++] = top;
+    data[i++] = red;
+    data[i++] = green;
+    data[i++] = blue;
+    data[i++] = alpha;
+    data[i++] = left;
+    data[i++] = bottom;
+    data[i++] = red;
+    data[i++] = green;
+    data[i++] = blue;
+    data[i++] = alpha;
+    data[i++] = left;
+    data[i++] = bottom;
+    data[i++] = red;
+    data[i++] = green;
+    data[i++] = blue;
+    data[i++] = alpha;
+    data[i++] = right;
+    data[i++] = top;
+    data[i++] = red;
+    data[i++] = green;
+    data[i++] = blue;
+    data[i++] = alpha;
+    data[i++] = right;
+    data[i++] = bottom;
+    data[i++] = red;
+    data[i++] = green;
+    data[i++] = blue;
+    data[i++] = alpha;
+    this.solidVertexCount = i;
   }
 
   private pushGlyph(
-    values: number[],
     x: number,
     y: number,
     width: number,
     height: number,
     record: GlyphRecord,
-    color: [number, number, number, number],
+    red: number,
+    green: number,
+    blue: number,
+    alpha: number,
   ) {
+    this.reserveGlyph(54);
     const padding = record.padding / this.dpr;
     const left = (x - padding) * this.dpr;
     const top = (y - padding) * this.dpr;
     const right = (x + width + padding) * this.dpr;
     const bottom = (y + height + padding) * this.dpr;
-    const [u0, v0, u1, v1] = [record.u0, record.v0, record.u1, record.v1];
-    const vertex = (px: number, py: number, u: number, v: number) => {
-      values.push(px, py, u, v, ...color, record.color ? 1 : 0);
+    const { u0, v0, u1, v1 } = record;
+    const colorGlyph = record.color ? 1 : 0;
+    const data = this.glyphVertexData;
+    let i = this.glyphVertexCount;
+    const write = (px: number, py: number, u: number, v: number) => {
+      data[i++] = px;
+      data[i++] = py;
+      data[i++] = u;
+      data[i++] = v;
+      data[i++] = red;
+      data[i++] = green;
+      data[i++] = blue;
+      data[i++] = alpha;
+      data[i++] = colorGlyph;
     };
-    vertex(left, top, u0, v0);
-    vertex(right, top, u1, v0);
-    vertex(left, bottom, u0, v1);
-    vertex(left, bottom, u0, v1);
-    vertex(right, top, u1, v0);
-    vertex(right, bottom, u1, v1);
+    write(left, top, u0, v0);
+    write(right, top, u1, v0);
+    write(left, bottom, u0, v1);
+    write(left, bottom, u0, v1);
+    write(right, top, u1, v0);
+    write(right, bottom, u1, v1);
+    this.glyphVertexCount = i;
+  }
+
+  private colorFor(
+    color: RenderColor | undefined,
+    defaultColor: "foreground" | "background",
+  ): Rgba {
+    // An absent color means the backend omitted a `{"kind":"default"}` value
+    // - see the `TerminalRenderCell` doc comment in @/lib/terminalFrames.
+    if (!color || color.kind === "default") {
+      return this.cachedParseColor(this.theme[defaultColor]);
+    }
+    if (color.kind === "rgba") return color.value;
+    const key = ANSI_THEME_KEYS[color.value];
+    const themed = key ? this.theme[key] : undefined;
+    const rgb = themed
+      ? this.cachedParseColor(themed)
+      : ansi256ToRgb(color.value);
+    return [rgb[0], rgb[1], rgb[2], 255];
+  }
+
+  private cachedParseColor(value: string): Rgba {
+    const cached = this.colorParseCache.get(value);
+    if (cached) return cached;
+    const parsed = parseColor(value);
+    this.colorParseCache.set(value, parsed);
+    return parsed;
+  }
+
+  private cachedEnsureContrast(
+    foreground: Rgba,
+    background: Rgba,
+    minimumContrast: number | undefined,
+  ): Rgba {
+    const key = `${foreground.join(",")}|${background.join(",")}|${minimumContrast ?? ""}`;
+    const cached = this.contrastCache.get(key);
+    if (cached) return cached;
+    const result = ensureContrast(foreground, background, minimumContrast);
+    this.contrastCache.set(key, result);
+    return result;
+  }
+
+  private clearColorCache() {
+    this.colorParseCache.clear();
+    this.contrastCache.clear();
   }
 
   private cellColors(
     cell: TerminalRenderCell,
     stableRow: number,
   ): [Rgba, Rgba] {
-    let foreground = colorFor(cell.foreground, this.theme, "foreground");
-    let background = colorFor(cell.background, this.theme, "background");
+    let foreground = this.colorFor(cell.foreground, "foreground");
+    let background = this.colorFor(cell.background, "background");
     if (cell.reverse) [foreground, background] = [background, foreground];
     if (this.cellIsSelected(stableRow, cell)) {
-      background = parseColor(
+      background = this.cachedParseColor(
         this.theme.selectionBackground ?? this.theme.foreground,
       );
-      foreground = parseColor(this.theme.foreground);
+      foreground = this.cachedParseColor(this.theme.foreground);
     } else if (this.cellIsSearchMatched(stableRow, cell)) {
-      background = parseColor(this.theme.yellow ?? "#a68b00");
-      foreground = parseColor(this.theme.background);
+      background = this.cachedParseColor(this.theme.yellow ?? "#a68b00");
+      foreground = this.cachedParseColor(this.theme.background);
     } else {
-      foreground = ensureContrast(
+      foreground = this.cachedEnsureContrast(
         foreground,
         background,
         this.theme.minimumContrast,
@@ -962,7 +998,9 @@ export class WebGLRenderer implements TerminalRenderer {
     const from = stableRow === start.stableRow ? start.column : 0;
     const to =
       stableRow === end.stableRow ? end.column : Number.MAX_SAFE_INTEGER;
-    return cell.column < to && cell.column + Math.max(1, cell.width) > from;
+    return (
+      cell.column < to && cell.column + Math.max(1, cell.width ?? 1) > from
+    );
   }
 
   private cellIsSearchMatched(stableRow: number, cell: TerminalRenderCell) {
@@ -970,7 +1008,7 @@ export class WebGLRenderer implements TerminalRenderer {
     if (!match || match.stableRow !== stableRow) return false;
     return (
       cell.column < match.endColumn &&
-      cell.column + Math.max(1, cell.width) > match.startColumn
+      cell.column + Math.max(1, cell.width ?? 1) > match.startColumn
     );
   }
 }

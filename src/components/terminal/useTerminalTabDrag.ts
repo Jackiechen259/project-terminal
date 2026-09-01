@@ -233,8 +233,13 @@ export function useTerminalTabDrag({
       updatePreviewPosition(event.clientX, event.clientY);
       updateTabDropTarget(drag.tabId, event.clientX, event.clientY);
       const nextDropZone = getPointerDropZone(event.clientX, event.clientY);
-      dropZoneRef.current = nextDropZone;
-      setDropZone(nextDropZone);
+      // Unlike updateTabDropTarget above, this used to setState every move
+      // even when the zone hadn't changed, re-rendering the whole workspace
+      // for nothing on every pointermove of a drag.
+      if (dropZoneRef.current !== nextDropZone) {
+        dropZoneRef.current = nextDropZone;
+        setDropZone(nextDropZone);
+      }
       event.preventDefault();
     },
     [

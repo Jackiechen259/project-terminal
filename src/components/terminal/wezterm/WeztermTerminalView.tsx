@@ -165,7 +165,6 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
   const [searchIndex, setSearchIndex] = useState(0);
   const [bellVisible, setBellVisible] = useState(false);
   const searchRequestRef = useRef(0);
-  const [, setSelection] = useState<TerminalSelection | null>(null);
   const { t } = useTranslation();
 
   onExitRef.current = onExit;
@@ -248,8 +247,11 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     [terminalFontFamily, terminalFontSize, typography],
   );
   const updateSelection = useCallback((next: TerminalSelection | null) => {
+    // The renderer paints the selection directly from `selectionRef`; no
+    // rendered output here reads the selection through React state (only
+    // event handlers read `selectionRef.current`), so forcing a re-render
+    // per pointermove would only cost a component tree walk for nothing.
     selectionRef.current = next;
-    setSelection(next);
     rendererRef.current?.setSelection(next);
   }, []);
 
@@ -686,7 +688,6 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       awaitingSnapshotRef.current = false;
       snapshotRequestedRef.current = false;
       selectionRef.current = null;
-      setSelection(null);
     };
     // The current theme/font are applied by the effects below without
     // recreating the canvas renderer.

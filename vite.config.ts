@@ -62,6 +62,16 @@ function themeTokensPlugin(): Plugin {
 }
 
 // https://vitejs.dev/config/
+//
+// The `test` field below is only known to TypeScript because Vitest augments
+// vite's `UserConfig` type - but that augmentation lands on the copy of
+// `vite` that Vitest itself resolves in this workspace's dependency tree,
+// which pnpm has pinned to a different (older) version than the `vite`
+// imported above. Passing the config object directly to `defineConfig` runs
+// afoul of that mismatch (`test` looks unknown against the wrong overload).
+// Wrapping it in a function sidesteps the excess-property check that trips
+// over it; this is not dead ceremony, so keep it until the lockfile's vitest
+// and vite versions line up.
 export default defineConfig(async () => ({
   plugins: [themeTokensPlugin(), react()],
   resolve: {
@@ -87,23 +97,17 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+  // No `manualChunks`: Rollup's default per-entry-point chunking already
+  // respects this app's `React.lazy` boundaries (dialogs, settings panels,
+  // the memo preview). The previous manual grouping put every icon used
+  // anywhere - including ones only reachable from a lazy chunk - and all six
+  // Radix packages into chunks that load eagerly with the entry point,
+  // undoing that lazy-loading work.
   build: {
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          "react-vendor": ["react", "react-dom", "zustand"],
-          "ui-vendor": [
-            "@radix-ui/react-dialog",
-            "@radix-ui/react-dropdown-menu",
-            "@radix-ui/react-label",
-            "@radix-ui/react-select",
-            "@radix-ui/react-slot",
-            "@radix-ui/react-tooltip",
-          ],
-          "icons-vendor": ["lucide-react"],
-        },
-      },
-    },
+    // This app only ever runs inside Windows WebView2, not a general
+    // browser, so the build can target its Chromium version directly
+    // instead of transpiling down for broader compatibility.
+    target: "chrome105",
   },
   test: {
     globals: true,

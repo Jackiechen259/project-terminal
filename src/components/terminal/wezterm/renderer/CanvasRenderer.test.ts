@@ -39,6 +39,23 @@ function row(stableRow: number, text: string): TerminalRenderRow {
   };
 }
 
+/**
+ * The backend omits every field carrying its default value (see the
+ * `TerminalRenderCell` doc comment in @/lib/terminalFrames) - a plain cell
+ * arrives as just `{column, text}`, not the fully-populated shape `cell()`
+ * above builds for readability.
+ */
+function sparseCell(column: number, text: string): TerminalRenderCell {
+  return { column, text } as TerminalRenderCell;
+}
+
+function sparseRow(stableRow: number, text: string): TerminalRenderRow {
+  return {
+    stableRow,
+    cells: [...text].map((value, column) => sparseCell(column, value)),
+  };
+}
+
 function frame(
   dirtyRows: TerminalRenderRow[],
   fullSnapshot = false,
@@ -433,6 +450,26 @@ describe("CanvasRenderer", () => {
         { stableRow: 7, column: 3 },
       ),
     ).toBe("bc");
+    renderer.dispose();
+  });
+
+  it("paints a sparse cell (every optional field omitted) as plain, non-underlined text", () => {
+    const renderer = new CanvasRenderer();
+    const canvas = document.createElement("canvas");
+    renderer.mount(canvas);
+    renderer.resize(80, 34, 2, 4);
+    const canvasContext = (
+      renderer as unknown as { context: CanvasRenderingContext2D }
+    ).context as unknown as { stroke: ReturnType<typeof vi.fn> };
+
+    renderer.renderImmediate(frame([sparseRow(0, "abc")], true));
+
+    expect(context.fillText.mock.calls.map(([text]) => text)).toEqual(
+      expect.arrayContaining(["a", "b", "c"]),
+    );
+    // Regression: `cell.underline !== "none"` on an omitted (undefined)
+    // field would treat every plain cell as underlined.
+    expect(canvasContext.stroke).not.toHaveBeenCalled();
     renderer.dispose();
   });
 

@@ -58,6 +58,7 @@ import {
   terminalService,
   type ProfileInput,
 } from "@/services";
+import { useProfileStore } from "@/stores/profileStore";
 import { useProjectStore } from "@/stores/projectStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTemplateStore } from "@/stores/templateStore";
@@ -136,20 +137,49 @@ export function TerminalWorkspace() {
     () => profiles.find((profile) => profile.id === selectedProfileId),
     [profiles, selectedProfileId],
   );
+  // renderTerminalTab looks up a profile per tab in the strip on every
+  // render; a Map avoids an O(profiles) scan per tab.
+  const profilesById = useMemo(
+    () => new Map(profiles.map((profile) => [profile.id, profile])),
+    [profiles],
+  );
   const contextMenuProfiles = useMemo(
     () => uniqueProfilesByName(profiles.filter(isProfileShownInContextMenu)),
     [profiles],
   );
-  const applyProfiles = useCallback((nextProfiles: TerminalProfile[]) => {
-    setProfiles(nextProfiles);
-    setSelectedProfileId((current) =>
-      nextProfiles.some((profile) => profile.id === current)
-        ? current
-        : (nextProfiles.find((profile) => profile.isDefault)?.id ??
-          nextProfiles[0]?.id ??
-          ""),
-    );
-  }, []);
+  // TerminalPane/StatusBar read a tab's profile (for its accent color and
+  // color scheme) from useProfileStore, not from this local list - that
+  // store was previously populated only when the user opened Settings ›
+  // Terminal profiles, so those looked unstyled until then. Every place
+  // that updates the active project's profile list here also writes the
+  // same list into the shared store, so it is populated as soon as the
+  // workspace itself loads profiles - without a second, duplicate fetch.
+  const syncProfileStore = useCallback(
+    (nextProfiles: TerminalProfile[]) => {
+      if (!activeProjectId) return;
+      useProfileStore.setState((state) => ({
+        byProjectId: {
+          ...state.byProjectId,
+          [activeProjectId]: nextProfiles,
+        },
+      }));
+    },
+    [activeProjectId],
+  );
+  const applyProfiles = useCallback(
+    (nextProfiles: TerminalProfile[]) => {
+      setProfiles(nextProfiles);
+      setSelectedProfileId((current) =>
+        nextProfiles.some((profile) => profile.id === current)
+          ? current
+          : (nextProfiles.find((profile) => profile.isDefault)?.id ??
+            nextProfiles[0]?.id ??
+            ""),
+      );
+      syncProfileStore(nextProfiles);
+    },
+    [syncProfileStore],
+  );
   const group = activeProjectId ? tabGroups[activeProjectId] : undefined;
   const tabIds = useMemo(() => group?.tabIds ?? [], [group]);
   const activeTabId = group?.activeTabId ?? null;
@@ -482,7 +512,9 @@ export function TerminalWorkspace() {
           };
           configure(base);
           profile = await profileService.create(base);
-          setProfiles((prev) => [...prev, profile]);
+          const nextProfiles = [...profiles, profile];
+          setProfiles(nextProfiles);
+          syncProfileStore(nextProfiles);
         }
         const sessionId = await terminalService.create({
           projectId: activeProjectId,
@@ -513,7 +545,7 @@ export function TerminalWorkspace() {
         return null;
       }
     },
-    [activeProjectId, profiles, projects, registerTab, t],
+    [activeProjectId, profiles, projects, registerTab, syncProfileStore, t],
   );
 
   async function handleRestart(tabId: string) {
@@ -764,6 +796,17 @@ export function TerminalWorkspace() {
       event.preventDefault();
       event.stopPropagation();
       const workspaceBounds = workspaceRef.current.getBoundingClientRect();
+      let pendingFrame: number | null = null;
+      let latestRatio = split.ratio;
+      // Coalesce to one zustand write per animation frame instead of one per
+      // pointermove - each write cascades into a workspace re-render, a
+      // pane-layout recompute, a debounced persistence write, and a
+      // ResizeObserver tick per pane, and a mouse can report far faster than
+      // 60Hz.
+      const commit = () => {
+        pendingFrame = null;
+        resizeSplit(activeProjectId, split.paneId, latestRatio);
+      };
       const onMove = (moveEvent: PointerEvent) => {
         const splitLeft =
           workspaceBounds.left + (workspaceBounds.width * split.left) / 100;
@@ -771,18 +814,28 @@ export function TerminalWorkspace() {
           workspaceBounds.top + (workspaceBounds.height * split.top) / 100;
         const splitWidth = (workspaceBounds.width * split.width) / 100;
         const splitHeight = (workspaceBounds.height * split.height) / 100;
-        const ratio =
+        latestRatio =
           split.direction === "horizontal"
             ? (moveEvent.clientX - splitLeft) / splitWidth
             : (moveEvent.clientY - splitTop) / splitHeight;
-        resizeSplit(activeProjectId, split.paneId, ratio);
+        if (pendingFrame === null) {
+          pendingFrame = window.requestAnimationFrame(commit);
+        }
       };
-      const onUp = () => {
+      const stop = () => {
         window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointerup", stop);
+        window.removeEventListener("pointercancel", stop);
+        if (pendingFrame !== null) {
+          window.cancelAnimationFrame(pendingFrame);
+          commit();
+        }
       };
       window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp, { once: true });
+      window.addEventListener("pointerup", stop, { once: true });
+      // A cancelled pointer (e.g. an interrupting browser gesture) must clean
+      // up the same as pointerup, or these listeners never get removed.
+      window.addEventListener("pointercancel", stop, { once: true });
     },
     [activeProjectId, resizeSplit, workspaceRef],
   );
@@ -807,9 +860,7 @@ export function TerminalWorkspace() {
     if (!tab) return null;
     // Set once here; the underline below and the focused-pane ring in
     // TerminalPane both read it, so neither needs to know about profiles.
-    const accent = profiles.find(
-      (profile) => profile.id === tab.profileId,
-    )?.accentColor;
+    const accent = profilesById.get(tab.profileId)?.accentColor;
     return (
       <button
         key={id}

@@ -10,12 +10,19 @@ const MAX_IMAGE_PAYLOAD_BYTES: usize = 32 * 1024 * 1024;
 /// A renderer-safe color.  Palette colors stay compact on the IPC boundary;
 /// true colors preserve alpha so the renderer can apply the terminal theme's
 /// blending rules consistently.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "camelCase")]
 pub enum RenderColor {
+    #[default]
     Default,
     Palette(u8),
     Rgba([u8; 4]),
+}
+
+impl RenderColor {
+    fn is_default(&self) -> bool {
+        matches!(self, RenderColor::Default)
+    }
 }
 
 impl From<ColorAttribute> for RenderColor {
@@ -31,23 +38,37 @@ impl From<ColorAttribute> for RenderColor {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CellIntensity {
+    #[default]
     Normal,
     Bold,
     Half,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+impl CellIntensity {
+    fn is_normal(&self) -> bool {
+        matches!(self, CellIntensity::Normal)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CellUnderline {
+    #[default]
     None,
     Single,
     Double,
     Curly,
     Dotted,
     Dashed,
+}
+
+impl CellUnderline {
+    fn is_none(&self) -> bool {
+        matches!(self, CellUnderline::None)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,23 +118,51 @@ pub struct ImageCellFrame {
     pub cache_key: String,
 }
 
+/// Almost every cell in a typical frame carries the terminal's default
+/// colors/attributes at width 1 - the fields below are `skip_serializing_if`
+/// so a plain cell serializes as just `{"column":N,"text":"x"}` instead of
+/// 13 always-present fields, most of them repeating the same default value
+/// across thousands of cells in a full snapshot. Every skipped field also
+/// carries a matching `default` so a sparse JSON object (missing those keys)
+/// deserializes back to the same value - this is a payload-size change only,
+/// never a change to what a `RenderCell` value means.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderCell {
     pub column: u16,
+    #[serde(skip_serializing_if = "is_default_width", default = "default_width")]
     pub width: u8,
     pub text: String,
+    #[serde(skip_serializing_if = "RenderColor::is_default", default)]
     pub foreground: RenderColor,
+    #[serde(skip_serializing_if = "RenderColor::is_default", default)]
     pub background: RenderColor,
+    #[serde(skip_serializing_if = "RenderColor::is_default", default)]
     pub underline_color: RenderColor,
+    #[serde(skip_serializing_if = "CellIntensity::is_normal", default)]
     pub intensity: CellIntensity,
+    #[serde(skip_serializing_if = "CellUnderline::is_none", default)]
     pub underline: CellUnderline,
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
     pub italic: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
     pub reverse: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
     pub strikethrough: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
     pub invisible: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub hyperlink: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub images: Vec<ImageCellFrame>,
+}
+
+fn is_default_width(width: &u8) -> bool {
+    *width == 1
+}
+
+fn default_width() -> u8 {
+    1
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -232,14 +281,22 @@ fn image_frames(attrs: &CellAttributes) -> Vec<ImageCellFrame> {
                 width: payload.as_ref().map(|payload| payload.width).unwrap_or(0),
                 height: payload.as_ref().map(|payload| payload.height).unwrap_or(0),
                 data_base64: payload.map(|payload| payload.data_base64),
-                cache_key: data
-                    .hash()
-                    .iter()
-                    .map(|byte| format!("{byte:02x}"))
-                    .collect(),
+                cache_key: hex_encode(&data.hash()),
             }
         })
         .collect()
+}
+
+/// Lowercase hex encoding without a `format!` allocation per byte - this
+/// runs once per image cell per frame.
+fn hex_encode(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(DIGITS[(byte >> 4) as usize] as char);
+        out.push(DIGITS[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 struct ImagePayload {
@@ -332,5 +389,100 @@ fn render_cell(cell: CellRef<'_>) -> RenderCell {
         invisible: attrs.invisible(),
         hyperlink: attrs.hyperlink().map(|link| link.uri().to_string()),
         images: image_frames(attrs),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plain_cell(column: u16, text: &str) -> RenderCell {
+        RenderCell {
+            column,
+            width: 1,
+            text: text.to_string(),
+            foreground: RenderColor::Default,
+            background: RenderColor::Default,
+            underline_color: RenderColor::Default,
+            intensity: CellIntensity::Normal,
+            underline: CellUnderline::None,
+            italic: false,
+            reverse: false,
+            strikethrough: false,
+            invisible: false,
+            hyperlink: None,
+            images: Vec::new(),
+        }
+    }
+
+    /// The whole point of the sparse encoding: a plain cell (the overwhelming
+    /// majority in any real frame) must carry only what actually varies.
+    #[test]
+    fn a_plain_cell_serializes_to_only_column_and_text() {
+        let cell = plain_cell(3, "x");
+        let json = serde_json::to_string(&cell).unwrap();
+        assert_eq!(json, r#"{"column":3,"text":"x"}"#);
+    }
+
+    #[test]
+    fn a_sparse_cell_round_trips_through_json() {
+        let cell = plain_cell(5, "y");
+        let json = serde_json::to_string(&cell).unwrap();
+        let decoded: RenderCell = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, cell);
+    }
+
+    /// A cell where every attribute differs from its default must still
+    /// serialize every field (nothing silently dropped) and round-trip.
+    #[test]
+    fn a_fully_attributed_cell_still_serializes_every_field_and_round_trips() {
+        let cell = RenderCell {
+            column: 1,
+            width: 2,
+            text: "字".to_string(),
+            foreground: RenderColor::Palette(3),
+            background: RenderColor::Rgba([10, 20, 30, 255]),
+            underline_color: RenderColor::Palette(9),
+            intensity: CellIntensity::Bold,
+            underline: CellUnderline::Curly,
+            italic: true,
+            reverse: true,
+            strikethrough: true,
+            invisible: true,
+            hyperlink: Some("https://example.com".to_string()),
+            images: vec![ImageCellFrame {
+                image_id: Some(1),
+                placement_id: None,
+                z_index: 0,
+                top_left: [0.0, 0.0],
+                bottom_right: [1.0, 1.0],
+                padding: [0, 0, 0, 0],
+                format: "rgba8".to_string(),
+                mime_type: "application/octet-stream".to_string(),
+                width: 4,
+                height: 4,
+                data_base64: Some("AAAA".to_string()),
+                cache_key: "abcd".to_string(),
+            }],
+        };
+        let json = serde_json::to_string(&cell).unwrap();
+        let decoded: RenderCell = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, cell);
+        for key in [
+            "width",
+            "foreground",
+            "background",
+            "underlineColor",
+            "intensity",
+            "underline",
+            "italic",
+            "reverse",
+            "strikethrough",
+            "invisible",
+            "hyperlink",
+            "images",
+        ] {
+            assert!(json.contains(key), "expected {key} in {json}");
+        }
     }
 }

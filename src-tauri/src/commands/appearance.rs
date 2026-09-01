@@ -16,15 +16,23 @@ use crate::error::{AppError, AppResult};
 use crate::state::{new_id, AppState};
 
 #[tauri::command]
-pub fn list_color_schemes(
+pub async fn list_color_schemes(
     state: tauri::State<'_, AppState>,
 ) -> AppResult<ListResponse<TerminalColorScheme>> {
-    Ok(ListResponse::new(state.color_schemes.list()?))
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || Ok(ListResponse::new(state.color_schemes.list()?)))
+        .await
+        .map_err(|error| AppError::Configuration(format!("Color-scheme worker failed: {error}")))?
 }
 
 #[tauri::command]
-pub fn delete_color_scheme(state: tauri::State<'_, AppState>, id: String) -> AppResult<()> {
-    state.with_config_write(|| state.color_schemes.delete(&id))
+pub async fn delete_color_scheme(state: tauri::State<'_, AppState>, id: String) -> AppResult<()> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        state.with_config_write(|| state.color_schemes.delete(&id))
+    })
+    .await
+    .map_err(|error| AppError::Configuration(format!("Color-scheme worker failed: {error}")))?
 }
 
 /// The shapes a scheme file people share actually comes in.
@@ -136,45 +144,51 @@ impl ImportedScheme {
 /// The path comes from the system file dialog, so it is the user's own
 /// choice rather than anything a page or a terminal produced.
 #[tauri::command]
-pub fn import_color_schemes_from_file(
+pub async fn import_color_schemes_from_file(
     state: tauri::State<'_, AppState>,
     path: String,
 ) -> AppResult<ListResponse<TerminalColorScheme>> {
-    let contents = std::fs::read_to_string(PathBuf::from(&path))?;
-    // Windows Terminal writes JSON with comments and trailing commas, and a
-    // scheme file copied out of one usually keeps them.
-    let normalised =
-        super::windows_terminal::normalise_jsonc(contents.trim_start_matches('\u{feff}'));
-    let parsed: ColorSchemeFile = serde_json::from_str(&normalised)
-        .map_err(|error| AppError::Configuration(format!("Invalid color scheme file: {error}")))?;
-    let incoming = match parsed {
-        ColorSchemeFile::Wrapped { schemes } => schemes,
-        ColorSchemeFile::List(schemes) => schemes,
-        ColorSchemeFile::Single(scheme) => vec![*scheme],
-    };
-    if incoming.is_empty() {
-        return Err(AppError::Configuration(
-            "That file contains no color schemes".into(),
-        ));
-    }
-
-    state.with_config_write(|| {
-        let mut existing: HashSet<String> = state
-            .color_schemes
-            .list()?
-            .into_iter()
-            .map(|scheme| scheme.name.to_lowercase())
-            .collect();
-        let mut imported = Vec::new();
-        for scheme in incoming {
-            let converted = scheme.convert()?;
-            if !existing.insert(converted.name.to_lowercase()) {
-                continue;
-            }
-            imported.push(state.color_schemes.upsert(converted)?);
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let contents = std::fs::read_to_string(PathBuf::from(&path))?;
+        // Windows Terminal writes JSON with comments and trailing commas, and a
+        // scheme file copied out of one usually keeps them.
+        let normalised =
+            super::windows_terminal::normalise_jsonc(contents.trim_start_matches('\u{feff}'));
+        let parsed: ColorSchemeFile = serde_json::from_str(&normalised).map_err(|error| {
+            AppError::Configuration(format!("Invalid color scheme file: {error}"))
+        })?;
+        let incoming = match parsed {
+            ColorSchemeFile::Wrapped { schemes } => schemes,
+            ColorSchemeFile::List(schemes) => schemes,
+            ColorSchemeFile::Single(scheme) => vec![*scheme],
+        };
+        if incoming.is_empty() {
+            return Err(AppError::Configuration(
+                "That file contains no color schemes".into(),
+            ));
         }
-        Ok(ListResponse::new(imported))
+
+        state.with_config_write(|| {
+            let mut existing: HashSet<String> = state
+                .color_schemes
+                .list()?
+                .into_iter()
+                .map(|scheme| scheme.name.to_lowercase())
+                .collect();
+            let mut imported = Vec::new();
+            for scheme in incoming {
+                let converted = scheme.convert()?;
+                if !existing.insert(converted.name.to_lowercase()) {
+                    continue;
+                }
+                imported.push(state.color_schemes.upsert(converted)?);
+            }
+            Ok(ListResponse::new(imported))
+        })
     })
+    .await
+    .map_err(|error| AppError::Configuration(format!("Color-scheme worker failed: {error}")))?
 }
 
 #[cfg(test)]

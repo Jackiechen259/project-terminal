@@ -7,6 +7,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SessionInfo } from "@/services";
+import { useCollectionStore } from "@/stores/collectionStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import {
   getCurrentWorkspaceId,
   getTerminalWorkspaceStore,
@@ -21,6 +23,9 @@ vi.mock("@/services", () => ({
   terminalService: {
     listWorkspaceSessions: vi.fn(),
   },
+  persistenceService: {
+    loadWorkspaceState: vi.fn(),
+  },
 }));
 
 vi.mock("./windowService", () => ({
@@ -29,8 +34,18 @@ vi.mock("./windowService", () => ({
   },
 }));
 
-import { terminalService } from "@/services";
+vi.mock("@/lib/runtime", () => ({
+  isTauriRuntime: vi.fn(() => false),
+}));
+
+vi.mock("./persistenceBridge", () => ({
+  migrateLocalPersistence: vi.fn(() => Promise.resolve(null)),
+}));
+
+import { persistenceService, terminalService } from "@/services";
+import { isTauriRuntime } from "@/lib/runtime";
 import { migrateLegacyWorkspaceLayout, prepareWorkspace } from "./windowBoot";
+import { migrateLocalPersistence } from "./persistenceBridge";
 
 const WORKSPACE_KEY = "project-terminal.workspace-layout.v2";
 
@@ -79,6 +94,13 @@ beforeEach(() => {
   resetWorkspaceStoreCacheForTests();
   vi.mocked(windowService.workspaceInfo).mockReset();
   vi.mocked(terminalService.listWorkspaceSessions).mockReset();
+  vi.mocked(persistenceService.loadWorkspaceState).mockReset();
+  vi.mocked(migrateLocalPersistence)
+    .mockReset()
+    .mockResolvedValue(null);
+  // Matches every other test file's assumption: JSDOM is not the Tauri
+  // WebView. Tests below that need the Tauri branch opt in explicitly.
+  vi.mocked(isTauriRuntime).mockReset().mockReturnValue(false);
 });
 
 afterEach(() => {
@@ -208,6 +230,104 @@ describe("prepareWorkspace", () => {
     expect(getTerminalWorkspaceStore("ws-a")).not.toBe(
       getTerminalWorkspaceStore("ws-b"),
     );
+  });
+
+  describe("in the Tauri runtime", () => {
+    it("loads settings, collections, and this workspace's layout in parallel", async () => {
+      vi.mocked(isTauriRuntime).mockReturnValue(true);
+      vi.mocked(windowService.workspaceInfo).mockResolvedValue(
+        workspaceInfo({ windowLabel: "ws-test", workspaceId: "ws-test" }),
+      );
+      vi.mocked(terminalService.listWorkspaceSessions).mockResolvedValue([]);
+      const tabId = "tab-1";
+      vi.mocked(persistenceService.loadWorkspaceState).mockResolvedValue({
+        version: 1,
+        state: {
+          activeProjectId: "p1",
+          tabsById: { [tabId]: makeTab(tabId, "p1", null) },
+          tabGroupsByProjectId: {
+            p1: { projectId: "p1", tabIds: [tabId], activeTabId: tabId },
+          },
+          splitViewsByProjectId: {},
+          sidebarCollapsed: false,
+          rightSidebarCollapsed: false,
+          rightSidebarMode: "files",
+        },
+      });
+      const settingsHydrate = vi
+        .spyOn(useSettingsStore.getState(), "hydrateFromBackend")
+        .mockResolvedValue(undefined);
+      const collectionsHydrate = vi
+        .spyOn(useCollectionStore.getState(), "hydrateFromBackend")
+        .mockResolvedValue(undefined);
+
+      const info = await prepareWorkspace();
+
+      expect(info.workspaceId).toBe("ws-test");
+      expect(migrateLocalPersistence).toHaveBeenCalled();
+      expect(settingsHydrate).toHaveBeenCalled();
+      expect(collectionsHydrate).toHaveBeenCalled();
+      // The backend-persisted layout for this workspace was applied, the
+      // same way a locally-persisted (non-Tauri) layout would be.
+      expect(
+        getTerminalWorkspaceStore("ws-test").getState().tabsById[tabId],
+      ).toMatchObject({ projectId: "p1" });
+    });
+
+    it("starts with an empty layout when the backend has none, without treating that as an error", async () => {
+      vi.mocked(isTauriRuntime).mockReturnValue(true);
+      vi.mocked(windowService.workspaceInfo).mockResolvedValue(
+        workspaceInfo({ windowLabel: "ws-test", workspaceId: "ws-test" }),
+      );
+      vi.mocked(terminalService.listWorkspaceSessions).mockResolvedValue([]);
+      vi.mocked(persistenceService.loadWorkspaceState).mockResolvedValue(null);
+      vi.spyOn(
+        useSettingsStore.getState(),
+        "hydrateFromBackend",
+      ).mockResolvedValue(undefined);
+      vi.spyOn(
+        useCollectionStore.getState(),
+        "hydrateFromBackend",
+      ).mockResolvedValue(undefined);
+
+      const info = await prepareWorkspace();
+
+      expect(info.workspaceId).toBe("ws-test");
+      expect(getTerminalWorkspaceStore("ws-test").getState().tabsById).toEqual(
+        {},
+      );
+    });
+
+    it("starts with a clean layout and logs when the workspace-state load fails, without losing settings/collections hydration", async () => {
+      vi.mocked(isTauriRuntime).mockReturnValue(true);
+      vi.mocked(windowService.workspaceInfo).mockResolvedValue(
+        workspaceInfo({ windowLabel: "ws-test", workspaceId: "ws-test" }),
+      );
+      vi.mocked(terminalService.listWorkspaceSessions).mockResolvedValue([]);
+      vi.mocked(persistenceService.loadWorkspaceState).mockRejectedValue(
+        new Error("sqlite unavailable"),
+      );
+      const settingsHydrate = vi
+        .spyOn(useSettingsStore.getState(), "hydrateFromBackend")
+        .mockResolvedValue(undefined);
+      const consoleError = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+
+      const info = await prepareWorkspace();
+
+      expect(info.workspaceId).toBe("ws-test");
+      // Promise.allSettled means one rejected entry never stops the other
+      // independent loads from completing.
+      expect(settingsHydrate).toHaveBeenCalled();
+      expect(getTerminalWorkspaceStore("ws-test").getState().tabsById).toEqual(
+        {},
+      );
+      expect(consoleError).toHaveBeenCalledWith(
+        "Workspace layout hydration failed; starting with a clean layout",
+        expect.any(Error),
+      );
+    });
   });
 });
 

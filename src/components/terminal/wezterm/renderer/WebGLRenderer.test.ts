@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
+  TerminalRenderCell,
   TerminalRenderFrame,
   TerminalRenderRow,
 } from "@/lib/terminalFrames";
@@ -165,10 +166,21 @@ describe("WebGLRenderer surface initialization", () => {
         actualBoundingBoxDescent: 3,
       })),
     } as unknown as CanvasRenderingContext2D);
+    callbacks.clear();
+    nextFrameId = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      const id = ++nextFrameId;
+      callbacks.set(id, callback);
+      return id;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => {
+      callbacks.delete(id);
+    });
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("paints the configured background before the first terminal frame", () => {
@@ -178,10 +190,44 @@ describe("WebGLRenderer surface initialization", () => {
     renderer.resize(80, 34, 2, 4);
     vi.mocked(gl.viewport).mockClear();
 
+    // setTheme() coalesces its repaint to the next animation frame instead
+    // of painting synchronously (the same batching render()/setSelection()/
+    // setSearchMatch() already use), so the background draw is not visible
+    // until that frame is flushed.
     renderer.setTheme({ background: "#fafafa", foreground: "#111111" });
+    flushPrimaryFrame();
 
     expect(gl.viewport).toHaveBeenCalledWith(0, 0, 80, 34);
     expect(gl.uniform2f).toHaveBeenCalledWith(expect.anything(), 80, 34);
+    renderer.dispose();
+  });
+
+  it("paints a sparse cell (every optional field omitted) without producing NaN vertex data", () => {
+    // The backend omits every field carrying its default value (see the
+    // `TerminalRenderCell` doc comment in @/lib/terminalFrames) - a plain
+    // cell arrives as just `{column, text}`. `reverse: true` here forces the
+    // cell into the background-quad pass (otherwise a default-background
+    // cell is skipped entirely) so `pushRect`'s `Math.max(1, cell.width ?? 1)`
+    // is actually exercised - `Math.max(1, undefined)` would be NaN.
+    const renderer = new WebGLRenderer();
+    const canvas = document.createElement("canvas");
+    const gl = configureGpu(renderer, canvas);
+    renderer.resize(80, 34, 2, 4);
+    gl.bufferData.mockClear();
+
+    const sparseRow: TerminalRenderRow = {
+      stableRow: 0,
+      cells: [{ column: 0, text: "x", reverse: true } as TerminalRenderCell],
+    };
+    renderer.render(frame(1, 0, [sparseRow], true));
+    flushPrimaryFrame();
+
+    const backgroundCall = gl.bufferData.mock.calls.find(
+      (call) => (call[1] as Float32Array)?.length > 12,
+    );
+    expect(backgroundCall).toBeDefined();
+    const vertices = Array.from(backgroundCall?.[1] as Float32Array);
+    expect(vertices.some((value) => Number.isNaN(value))).toBe(false);
     renderer.dispose();
   });
 
@@ -227,9 +273,16 @@ function configureGrid(renderer: WebGLRenderer) {
   const internals = renderer as unknown as {
     rows: number;
     cols: number;
+    canvasRenderer: { rows: number; cols: number };
   };
   internals.rows = 2;
   internals.cols = 4;
+  // The overlay CanvasRenderer keeps its own independent rows/cols (set via
+  // its own resize(), normally called from WebGLRenderer.resize()). Frame
+  // acceptance in fallback mode now routes entirely through it, so it needs
+  // the same grid the test frames describe, not its class-field defaults.
+  internals.canvasRenderer.rows = 2;
+  internals.canvasRenderer.cols = 4;
 }
 
 function configureGpu(renderer: WebGLRenderer, canvas: HTMLCanvasElement) {

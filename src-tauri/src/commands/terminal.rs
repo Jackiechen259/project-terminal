@@ -875,7 +875,12 @@ pub async fn create_terminal_inner(
     Ok(id)
 }
 
-#[tauri::command]
+// Marked `(async)` even though these bodies are synchronous: Tauri then
+// dispatches them off the main/UI thread instead of running them inline on
+// it. Each only takes a short-lived engine lock, so a plain `spawn_blocking`
+// worker would be overkill - unlike `terminal_search`/`terminal_selection_text`
+// below, which can scan the whole scrollback.
+#[tauri::command(async)]
 pub fn write_terminal(
     terminal: State<'_, TerminalState>,
     session_id: String,
@@ -889,7 +894,7 @@ pub fn write_terminal(
 
 /// Semantic key path for the wezterm renderer. The backend, not the browser,
 /// applies application-cursor, kitty/CSI-u, and modifier encoding.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn terminal_key_down(
     terminal: State<'_, TerminalState>,
     session_id: String,
@@ -901,7 +906,7 @@ pub fn terminal_key_down(
 /// Semantic printable/composition input for the wezterm renderer. The
 /// renderer sends text, not pre-encoded escape sequences; wezterm-term owns
 /// the keyboard output path and the PTY writer remains in Rust.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn terminal_text_input(
     terminal: State<'_, TerminalState>,
     session_id: String,
@@ -910,7 +915,7 @@ pub fn terminal_text_input(
     terminal.manager.text_input(&session_id, &text)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn terminal_mouse_event(
     terminal: State<'_, TerminalState>,
     session_id: String,
@@ -919,7 +924,7 @@ pub fn terminal_mouse_event(
     terminal.manager.mouse_event(&session_id, &event)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn terminal_paste(
     terminal: State<'_, TerminalState>,
     session_id: String,
@@ -936,28 +941,39 @@ pub fn terminal_bracketed_paste_enabled(
     terminal.manager.bracketed_paste_enabled(&session_id)
 }
 
+// These two can scan the entire scrollback (up to the configured line
+// limit), so they run on a dedicated blocking worker rather than the plain
+// `(async)` dispatch used for the short-lock input commands above.
 #[tauri::command]
-pub fn terminal_search(
+pub async fn terminal_search(
     terminal: State<'_, TerminalState>,
     session_id: String,
     query: crate::terminal_engine::TerminalSearchQuery,
 ) -> AppResult<Vec<crate::terminal_engine::TerminalSearchMatch>> {
-    terminal.manager.search(&session_id, &query)
+    let terminal = terminal.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || terminal.manager.search(&session_id, &query))
+        .await
+        .map_err(|error| AppError::Configuration(format!("Search worker failed: {error}")))?
 }
 
 /// Extract selected text from the Rust-owned model. The frontend sends only
 /// stable coordinates; it does not need to retain all scrollback rows just to
 /// support copy after a viewport move.
 #[tauri::command]
-pub fn terminal_selection_text(
+pub async fn terminal_selection_text(
     terminal: State<'_, TerminalState>,
     session_id: String,
     anchor: TerminalSelectionPoint,
     focus: TerminalSelectionPoint,
 ) -> AppResult<String> {
-    terminal
-        .manager
-        .selection_text(&session_id, &anchor, &focus)
+    let terminal = terminal.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        terminal
+            .manager
+            .selection_text(&session_id, &anchor, &focus)
+    })
+    .await
+    .map_err(|error| AppError::Configuration(format!("Selection worker failed: {error}")))?
 }
 
 #[tauri::command]
@@ -1060,18 +1076,22 @@ pub struct RenderSessionAttachment {
 /// This command never replays raw PTY bytes to the frontend. The initial full
 /// frame and all subsequent dirty-row frames come from the session's persistent
 /// wezterm-term model.
+/// Borrows the frame/event instead of cloning it: the scheduler already
+/// publishes `Arc<RenderFrame>`/`Arc<TerminalControlEvent>`, and this type is
+/// serialized in place in the same scope, so no per-subscriber deep clone of
+/// the row/cell tree is needed just to hand it to `serde_json`.
 #[derive(Debug, Serialize)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
-enum DesktopRenderFrame {
+enum DesktopRenderFrame<'a> {
     Frame {
-        frame: RenderFrame,
+        frame: &'a RenderFrame,
     },
     Control {
-        event: TerminalControlEvent,
+        event: &'a TerminalControlEvent,
     },
     Status {
         status: crate::terminal::session::SessionStatus,
@@ -1080,9 +1100,9 @@ enum DesktopRenderFrame {
     Lagged,
 }
 
-impl DesktopRenderFrame {
-    fn into_body(self) -> Option<InvokeResponseBody> {
-        serde_json::to_string(&self)
+impl DesktopRenderFrame<'_> {
+    fn to_body(&self) -> Option<InvokeResponseBody> {
+        serde_json::to_string(self)
             .ok()
             .map(InvokeResponseBody::Json)
     }
@@ -1118,10 +1138,10 @@ pub fn session_attach_render(
                 }
                 frame = frames.recv() => {
                     let body = match frame {
-                        Ok(frame) => DesktopRenderFrame::Frame { frame: (*frame).clone() }.into_body(),
+                        Ok(frame) => DesktopRenderFrame::Frame { frame: &frame }.to_body(),
                         Err(RecvError::Lagged(_)) => {
                             session.request_render_snapshot();
-                            DesktopRenderFrame::Lagged.into_body()
+                            DesktopRenderFrame::Lagged.to_body()
                         }
                         Err(RecvError::Closed) => break,
                     };
@@ -1133,10 +1153,10 @@ pub fn session_attach_render(
                 }
                 event = controls.recv() => {
                     let body = match event {
-                        Ok(event) => DesktopRenderFrame::Control { event: (*event).clone() }.into_body(),
+                        Ok(event) => DesktopRenderFrame::Control { event: &event }.to_body(),
                         Err(RecvError::Lagged(_)) => {
                             session.request_render_snapshot();
-                            DesktopRenderFrame::Lagged.into_body()
+                            DesktopRenderFrame::Lagged.to_body()
                         }
                         Err(RecvError::Closed) => break,
                     };
@@ -1151,8 +1171,8 @@ pub fn session_attach_render(
                         Ok(event) => DesktopRenderFrame::Status {
                             status: event.status,
                             exit_code: event.exit_code,
-                        }.into_body(),
-                        Err(RecvError::Lagged(_)) => DesktopRenderFrame::Lagged.into_body(),
+                        }.to_body(),
+                        Err(RecvError::Lagged(_)) => DesktopRenderFrame::Lagged.to_body(),
                         Err(RecvError::Closed) => break,
                     };
                     if let Some(body) = body {
@@ -1228,21 +1248,33 @@ pub fn session_get(
     terminal.manager.info(&session_id)
 }
 
+// These detectors spawn subprocesses (`wsl.exe --list`, `conda env list`) or
+// scan the filesystem/registry, which can take anywhere from tens of
+// milliseconds to multiple seconds. `spawn_blocking` keeps that off the main
+// thread instead of stalling the whole UI while settings scans for shells.
 #[tauri::command]
-pub fn detect_conda_installations() -> Vec<String> {
-    crate::terminal::conda::detect_conda_installations()
+pub async fn detect_conda_installations() -> Vec<String> {
+    tauri::async_runtime::spawn_blocking(crate::terminal::conda::detect_conda_installations)
+        .await
+        .unwrap_or_default()
 }
 
 #[tauri::command]
-pub fn detect_wsl_distributions() -> Vec<crate::terminal::DetectedWslDistribution> {
-    crate::terminal::detect_wsl_distributions()
+pub async fn detect_wsl_distributions() -> Vec<crate::terminal::DetectedWslDistribution> {
+    tauri::async_runtime::spawn_blocking(crate::terminal::detect_wsl_distributions)
+        .await
+        .unwrap_or_default()
 }
 
 #[tauri::command]
-pub fn list_conda_environments(
+pub async fn list_conda_environments(
     conda_executable: String,
 ) -> AppResult<Vec<crate::terminal::conda::DetectedCondaEnvironment>> {
-    crate::terminal::conda::list_conda_environments(&conda_executable)
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::terminal::conda::list_conda_environments(&conda_executable)
+    })
+    .await
+    .map_err(|error| AppError::Configuration(format!("Conda worker failed: {error}")))?
 }
 
 // keep ListResponse import live for downstream additions.
@@ -1270,11 +1302,64 @@ mod tests {
     fn desktop_control_frames_use_the_camel_case_keys_the_frontend_reads() {
         assert_eq!(
             serde_json::to_string(&DesktopRenderFrame::Control {
-                event: TerminalControlEvent::Bell,
+                event: &TerminalControlEvent::Bell,
             })
             .unwrap(),
             r#"{"type":"control","event":{"type":"bell"}}"#
         );
+    }
+
+    /// The borrowing `DesktopRenderFrame` must serialize to the same content
+    /// as the old by-value shape - this is purely a per-subscriber clone
+    /// removal, never a wire-format change (that is Phase 3's job). Compared
+    /// as parsed `Value`s, not raw strings: `serde_json::json!` builds its
+    /// object as a sorted map, while the derived `Serialize` impl emits
+    /// fields in declaration order, so the two would never match byte-for-
+    /// byte even when they carry identical content - key order is not part
+    /// of the JSON data model, and no consumer here (JSON.parse on the
+    /// frontend) depends on it.
+    #[test]
+    fn desktop_render_frame_serializes_the_same_content_as_the_owned_shape() {
+        use crate::terminal_engine::{CursorShape, CursorState, CursorVisibility, RenderFrame};
+
+        let frame = RenderFrame {
+            sequence: 7,
+            rows: 24,
+            cols: 80,
+            dirty_rows: Vec::new(),
+            cursor: CursorState {
+                column: 0,
+                row: 0,
+                shape: CursorShape::Default,
+                visibility: CursorVisibility::Visible,
+            },
+            scrollback_length: 0,
+            viewport_top: 0,
+            viewport_bottom: 0,
+            alternate_screen: false,
+            mouse_reporting: false,
+            full_snapshot: true,
+        };
+
+        let borrowed = serde_json::to_value(DesktopRenderFrame::Frame { frame: &frame }).unwrap();
+        let owned = serde_json::json!({ "type": "frame", "frame": &frame });
+        assert_eq!(borrowed, owned);
+    }
+
+    #[test]
+    fn desktop_status_frames_match_the_previous_json_shape() {
+        let status = crate::terminal::session::SessionStatus::Running;
+        let borrowed = serde_json::to_value(DesktopRenderFrame::Status {
+            status,
+            exit_code: Some(3),
+        })
+        .unwrap();
+        let owned = serde_json::json!({
+            "type": "status",
+            "status": status,
+            "exitCode": 3,
+        });
+        assert_eq!(borrowed, owned);
     }
 
     #[test]

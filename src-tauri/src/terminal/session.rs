@@ -75,7 +75,6 @@ pub struct TerminalStatusEvent {
 
 struct SessionInner {
     master: Box<dyn MasterPty + Send>,
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     killer: Option<Box<dyn ChildKiller + Send + Sync>>,
     exit_code: Option<i32>,
     status: SessionStatus,
@@ -217,11 +216,19 @@ pub struct TerminalSession {
     pub window_id: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     inner: Arc<Mutex<SessionInner>>,
+    /// Owned here rather than on `SessionInner` so a write (the hottest,
+    /// most frequent operation on a session) never contends the same lock
+    /// `resize()` holds across a blocking ConPTY syscall.
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     ready_watcher: Arc<Mutex<ReadyWatcher>>,
     status_sender: broadcast::Sender<TerminalStatusEvent>,
     terminal_engine: Arc<Mutex<WeztermTerminalEngine>>,
     frame_hub: Arc<TerminalFrameHub>,
     attachments: Mutex<HashMap<String, watch::Sender<bool>>>,
+    /// Serializes the ConPTY resize with the model resize across concurrent
+    /// callers. Never held together with `terminal_engine` or `inner` across
+    /// the blocking ConPTY syscall - see `resize()`.
+    resize_serial: Mutex<()>,
 }
 
 impl std::fmt::Debug for TerminalSession {
@@ -371,7 +378,6 @@ impl TerminalSession {
 
         let inner = Arc::new(Mutex::new(SessionInner {
             master,
-            writer: shared_writer,
             killer: Some(killer),
             exit_code: None,
             status: SessionStatus::Starting,
@@ -423,19 +429,20 @@ impl TerminalSession {
             window_id: spawn.window_id,
             created_at: chrono::Utc::now(),
             inner,
+            writer: shared_writer,
             ready_watcher,
             status_sender,
             terminal_engine,
             frame_hub,
             attachments: Mutex::new(HashMap::new()),
+            resize_serial: Mutex::new(()),
         })
     }
 
     /// Write user input bytes to the PTY. The bytes are forwarded as-is -
     /// we never parse or log input.
     pub fn write(&self, data: &[u8]) -> AppResult<()> {
-        let writer = self.inner.lock().writer.clone();
-        let mut writer = writer.lock();
+        let mut writer = self.writer.lock();
         writer.write_all(data).map_err(AppError::Io)?;
         writer.flush().map_err(AppError::Io)?;
         Ok(())
@@ -559,9 +566,6 @@ impl TerminalSession {
     ) -> AppResult<()> {
         let rows = rows.max(1);
         let cols = cols.max(1);
-        // Serialize the model resize with the ConPTY resize. The reader only
-        // holds the model lock while applying one output chunk, so this keeps
-        // the two dimensions in the same order without a global terminal lock.
         let requested_size = wezterm_term::TerminalSize {
             rows: rows as usize,
             cols: cols as usize,
@@ -569,12 +573,22 @@ impl TerminalSession {
             pixel_height: pixel_height as usize,
             dpi: 96,
         };
-        let mut engine = self.terminal_engine.lock();
-        if engine.terminal().get_size() == requested_size {
+
+        // Serialize the ConPTY resize with the model resize so concurrent
+        // callers cannot interleave the two operations out of order. This
+        // guard is held for the whole call, but - unlike before - never
+        // together with `terminal_engine` across the blocking ConPTY syscall
+        // below: the reader thread and every keystroke command take that
+        // same engine lock, and a slow ConPTY resize (known to stall while
+        // the console host repaints) must not block them.
+        let _resize_guard = self.resize_serial.lock();
+
+        if self.terminal_engine.lock().terminal().get_size() == requested_size {
             return Ok(());
         }
-        let guard = self.inner.lock();
-        guard
+
+        self.inner
+            .lock()
             .master
             .resize(PtySize {
                 rows,
@@ -583,8 +597,8 @@ impl TerminalSession {
                 pixel_height,
             })
             .map_err(|e| AppError::PtyCreationFailed(format!("resize: {e}")))?;
-        engine.resize(requested_size);
-        drop(guard);
+
+        self.terminal_engine.lock().resize(requested_size);
         self.frame_hub.notify();
         Ok(())
     }

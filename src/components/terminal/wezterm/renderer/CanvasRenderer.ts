@@ -6,6 +6,13 @@ import type {
   TerminalSearchMatch,
   TerminalRenderRow,
 } from "@/lib/terminalFrames";
+import {
+  ansi256ToRgb,
+  ANSI_THEME_KEYS,
+  ensureContrastRgb,
+  parseCssColor,
+  type Rgb,
+} from "@/lib/terminalColorMath";
 
 import type {
   TerminalFontOptions,
@@ -18,119 +25,27 @@ import type {
 } from "./TerminalRenderer";
 import { applyFrameToRowCache } from "./renderFrameMerge";
 
-const ANSI_THEME_KEYS = [
-  "black",
-  "red",
-  "green",
-  "yellow",
-  "blue",
-  "magenta",
-  "cyan",
-  "white",
-  "brightBlack",
-  "brightRed",
-  "brightGreen",
-  "brightYellow",
-  "brightBlue",
-  "brightMagenta",
-  "brightCyan",
-  "brightWhite",
-] as const;
-
-const DEFAULT_ANSI = [
-  "#000000",
-  "#cc5555",
-  "#55cc55",
-  "#cdcd55",
-  "#5455cb",
-  "#cc55cc",
-  "#7acaca",
-  "#cccccc",
-  "#555555",
-  "#ff5555",
-  "#55ff55",
-  "#ffff55",
-  "#5555ff",
-  "#ff55ff",
-  "#55ffff",
-  "#ffffff",
-] as const;
 const IMAGE_CACHE_CAPACITY = 256;
 
-function ansi256(index: number): string {
-  if (index < 16) return DEFAULT_ANSI[index] ?? "#cccccc";
-  if (index < 232) {
-    const color = index - 16;
-    const red = Math.floor(color / 36);
-    const green = Math.floor((color % 36) / 6);
-    const blue = color % 6;
-    const ramp = [0, 95, 135, 175, 215, 255];
-    return `rgb(${ramp[red]}, ${ramp[green]}, ${ramp[blue]})`;
-  }
-  const grey = 8 + (index - 232) * 10;
-  return `rgb(${grey}, ${grey}, ${grey})`;
+function rgbCss([red, green, blue]: Rgb) {
+  return `rgb(${red}, ${green}, ${blue})`;
 }
 
 function cssColor(
-  color: RenderColor,
+  color: RenderColor | undefined,
   theme: TerminalRendererTheme,
   defaultColor: "foreground" | "background",
 ): string {
-  if (color.kind === "default") return theme[defaultColor];
+  // An absent color means the backend omitted a `{"kind":"default"}` value -
+  // see the `TerminalRenderCell` doc comment in @/lib/terminalFrames.
+  if (!color || color.kind === "default") return theme[defaultColor];
   if (color.kind === "rgba") {
     const [red, green, blue, alpha] = color.value;
     return `rgba(${red}, ${green}, ${blue}, ${alpha / 255})`;
   }
   const themeKey = ANSI_THEME_KEYS[color.value];
   const themed = themeKey ? theme[themeKey] : undefined;
-  return themed ?? ansi256(color.value);
-}
-
-type Rgb = [number, number, number];
-
-function parseRgb(color: string): Rgb | null {
-  const hex = color.match(/^#([0-9a-f]{6})$/iu);
-  if (hex) {
-    return [
-      parseInt(hex[1].slice(0, 2), 16),
-      parseInt(hex[1].slice(2, 4), 16),
-      parseInt(hex[1].slice(4, 6), 16),
-    ];
-  }
-  const rgb = color.match(
-    /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*[\d.]+)?\s*\)$/iu,
-  );
-  return rgb ? [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])] : null;
-}
-
-function luminance([red, green, blue]: Rgb) {
-  const channel = (value: number) => {
-    const normalized = value / 255;
-    return normalized <= 0.03928
-      ? normalized / 12.92
-      : ((normalized + 0.055) / 1.055) ** 2.4;
-  };
-  return (
-    0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
-  );
-}
-
-function contrastRatio(foreground: Rgb, background: Rgb) {
-  const foregroundLuminance = luminance(foreground);
-  const backgroundLuminance = luminance(background);
-  const lighter = Math.max(foregroundLuminance, backgroundLuminance);
-  const darker = Math.min(foregroundLuminance, backgroundLuminance);
-  return (lighter + 0.05) / (darker + 0.05);
-}
-
-function mix(from: Rgb, to: Rgb, amount: number): Rgb {
-  return from.map((channel, index) =>
-    Math.round(channel + (to[index] - channel) * amount),
-  ) as Rgb;
-}
-
-function rgbCss([red, green, blue]: Rgb) {
-  return `rgb(${red}, ${green}, ${blue})`;
+  return themed ?? rgbCss(ansi256ToRgb(color.value));
 }
 
 /** Keep the user-facing minimum-contrast setting active for Canvas2D too. */
@@ -140,40 +55,29 @@ function ensureContrast(
   minimumContrast = 1,
 ) {
   if (minimumContrast <= 1) return foreground;
-  const foregroundRgb = parseRgb(foreground);
-  const backgroundRgb = parseRgb(background);
+  const foregroundRgb = parseCssColor(foreground);
+  const backgroundRgb = parseCssColor(background);
   if (!foregroundRgb || !backgroundRgb) return foreground;
-  if (contrastRatio(foregroundRgb, backgroundRgb) >= minimumContrast) {
-    return foreground;
-  }
-
-  const candidates: Rgb[] = [
-    [0, 0, 0],
-    [255, 255, 255],
+  const foregroundColor: Rgb = [
+    foregroundRgb[0],
+    foregroundRgb[1],
+    foregroundRgb[2],
   ];
-  const target = candidates.reduce((best, candidate) =>
-    contrastRatio(candidate, backgroundRgb) > contrastRatio(best, backgroundRgb)
-      ? candidate
-      : best,
+  const backgroundColor: Rgb = [
+    backgroundRgb[0],
+    backgroundRgb[1],
+    backgroundRgb[2],
+  ];
+  const adjusted = ensureContrastRgb(
+    foregroundColor,
+    backgroundColor,
+    minimumContrast,
   );
-  if (contrastRatio(target, backgroundRgb) < minimumContrast) {
-    return rgbCss(target);
-  }
-
-  let low = 0;
-  let high = 1;
-  for (let iteration = 0; iteration < 12; iteration++) {
-    const midpoint = (low + high) / 2;
-    if (
-      contrastRatio(mix(foregroundRgb, target, midpoint), backgroundRgb) >=
-      minimumContrast
-    ) {
-      high = midpoint;
-    } else {
-      low = midpoint;
-    }
-  }
-  return rgbCss(mix(foregroundRgb, target, high));
+  // `ensureContrastRgb` returns the same array reference when it made no
+  // change, so falling back to the original string here also preserves any
+  // alpha the CSS string carried (an rgba() foreground) instead of forcing
+  // it opaque through a reconstructed rgb() string.
+  return adjusted === foregroundColor ? foreground : rgbCss(adjusted);
 }
 
 function fontFor(cell: TerminalRenderCell, font: TerminalFontOptions) {
@@ -338,6 +242,27 @@ export class CanvasRenderer implements TerminalRenderer {
     this.paintPending();
   }
 
+  /**
+   * Accept a frame into the row cache and dirty-row queue without scheduling
+   * a paint. Used by WebGLRenderer, which drives this renderer's overlay
+   * paint from its own rAF (via `paintOverlayPending`) instead of letting it
+   * schedule an independent one - otherwise every GL frame would end up
+   * scheduling two rAF callbacks that both try to paint the same overlay.
+   */
+  ingestFrame(frame: TerminalRenderFrame) {
+    this.acceptFrame(frame);
+  }
+
+  /**
+   * Paint whatever `ingestFrame` (or `render`) queued, without scheduling.
+   * WebGLRenderer calls this once per GL frame instead of `redraw()` so the
+   * overlay repaints only its dirty rows in the common case, rather than
+   * every cell on every frame.
+   */
+  paintOverlayPending() {
+    this.paintPending();
+  }
+
   private acceptFrame(frame: TerminalRenderFrame) {
     const previousFrame = this.frame;
     const cacheUpdate = applyFrameToRowCache(
@@ -481,13 +406,20 @@ export class CanvasRenderer implements TerminalRenderer {
   setSelection(selection: TerminalSelection | null) {
     this.selection = selection;
     if (!this.frame) return;
-    this.redrawVisibleRows();
+    // Selection tracks pointermove, which can fire many times per animation
+    // frame; coalesce to one full repaint per frame instead of one per
+    // event. A full redraw (rather than diffing the old/new selected range)
+    // is still just one pass over the visible grid, and it is the same cost
+    // `redrawVisibleRows` already pays.
+    this.pendingFullRedraw = true;
+    this.schedulePaint();
   }
 
   setSearchMatch(match: TerminalSearchMatch | null) {
     this.searchMatch = match;
     if (!this.frame) return;
-    this.redrawVisibleRows();
+    this.pendingFullRedraw = true;
+    this.schedulePaint();
   }
 
   selectionText(anchor: TerminalSelectionPoint, focus: TerminalSelectionPoint) {
@@ -534,7 +466,7 @@ export class CanvasRenderer implements TerminalRenderer {
     const cell = row?.cells.find(
       (candidate) =>
         point.column >= candidate.column &&
-        point.column < candidate.column + Math.max(1, candidate.width),
+        point.column < candidate.column + Math.max(1, candidate.width ?? 1),
     );
     if (cell?.hyperlink) return cell.hyperlink;
     return row ? plainUrlAtColumn(row, point.column) : null;
@@ -632,16 +564,36 @@ export class CanvasRenderer implements TerminalRenderer {
     y: number,
     stableRow: number,
   ) {
-    const cellWidth = this.cellWidth * Math.max(1, cell.width);
+    const selected = this.cellIsSelected(stableRow, cell);
+    const searched = !selected && this.cellIsSearchMatched(stableRow, cell);
+    // As a WebGLRenderer overlay (`!textVisible && !cellBackgroundVisible`),
+    // this method contributes only images, underline/strikethrough, and the
+    // cursor - the GPU already owns glyphs and cell backgrounds, including
+    // the selection/search-match highlight. Most cells reaching here in that
+    // mode have nothing left to draw at all; skip before paying for color
+    // parsing, a contrast solve, and a save/clip/restore for nothing.
+    if (
+      !this.textVisible &&
+      !this.cellBackgroundVisible &&
+      !cell.images?.length &&
+      (!cell.underline || cell.underline === "none") &&
+      !cell.strikethrough &&
+      !selected &&
+      !searched
+    ) {
+      return;
+    }
+
+    const cellWidth = this.cellWidth * Math.max(1, cell.width ?? 1);
     let foreground = cssColor(cell.foreground, this.theme, "foreground");
     let background = cssColor(cell.background, this.theme, "background");
     if (cell.reverse) [foreground, background] = [background, foreground];
 
-    if (this.cellIsSelected(stableRow, cell)) {
+    if (selected) {
       background =
         this.theme.selectionBackground ?? this.theme.foreground ?? "#4a4a4a";
       foreground = this.theme.foreground;
-    } else if (this.cellIsSearchMatched(stableRow, cell)) {
+    } else if (searched) {
       background = this.theme.yellow ?? "#a68b00";
       foreground = this.theme.background;
     } else {
@@ -654,10 +606,10 @@ export class CanvasRenderer implements TerminalRenderer {
 
     const paintsDefaultBackground =
       !this.transparentBackground ||
-      cell.background.kind !== "default" ||
+      (cell.background?.kind ?? "default") !== "default" ||
       cell.reverse ||
-      this.cellIsSelected(stableRow, cell) ||
-      this.cellIsSearchMatched(stableRow, cell);
+      selected ||
+      searched;
     if (paintsDefaultBackground && this.cellBackgroundVisible) {
       context.fillStyle = background;
       context.fillRect(x, y, cellWidth, this.cellHeight);
@@ -670,7 +622,7 @@ export class CanvasRenderer implements TerminalRenderer {
     context.clip();
     this.paintImages(
       context,
-      cell.images,
+      cell.images ?? [],
       x,
       y,
       cellWidth,
@@ -689,7 +641,10 @@ export class CanvasRenderer implements TerminalRenderer {
       );
     }
 
-    const underline = cell.underline !== "none";
+    // An absent `underline` means the backend omitted the default "none" -
+    // `undefined !== "none"` would otherwise treat every ordinary cell as
+    // underlined.
+    const underline = !!cell.underline && cell.underline !== "none";
     if (underline || cell.strikethrough) {
       context.strokeStyle = cssColor(
         cell.underlineColor,
@@ -719,7 +674,15 @@ export class CanvasRenderer implements TerminalRenderer {
       }
     }
     context.globalAlpha = 1;
-    this.paintImages(context, cell.images, x, y, cellWidth, this.cellHeight, 1);
+    this.paintImages(
+      context,
+      cell.images ?? [],
+      x,
+      y,
+      cellWidth,
+      this.cellHeight,
+      1,
+    );
     context.restore();
   }
 
@@ -854,7 +817,9 @@ export class CanvasRenderer implements TerminalRenderer {
     const from = stableRow === start.stableRow ? start.column : 0;
     const to =
       stableRow === end.stableRow ? end.column : Number.MAX_SAFE_INTEGER;
-    return cell.column < to && cell.column + Math.max(1, cell.width) > from;
+    return (
+      cell.column < to && cell.column + Math.max(1, cell.width ?? 1) > from
+    );
   }
 
   private cellIsSearchMatched(stableRow: number, cell: TerminalRenderCell) {
@@ -862,7 +827,7 @@ export class CanvasRenderer implements TerminalRenderer {
     if (!match || match.stableRow !== stableRow) return false;
     return (
       cell.column < match.endColumn &&
-      cell.column + Math.max(1, cell.width) > match.startColumn
+      cell.column + Math.max(1, cell.width ?? 1) > match.startColumn
     );
   }
 
@@ -974,7 +939,7 @@ function textForColumns(
   let text = "";
   for (const cell of row.cells) {
     const cellStart = cell.column;
-    const cellEnd = cell.column + Math.max(1, cell.width);
+    const cellEnd = cell.column + Math.max(1, cell.width ?? 1);
     if (cellEnd <= from) continue;
     if (cellStart >= to) break;
     const value = cell.text || " ";
@@ -1024,7 +989,7 @@ function rowTextWithColumns(row: TerminalRenderRow) {
         columns.push(cell.column);
       }
     }
-    const width = Math.max(1, cell.width);
+    const width = Math.max(1, cell.width ?? 1);
     for (let offset = 1; offset < width; offset += 1) {
       // Wide cells occupy one extra terminal column after their grapheme.
       text += " ";

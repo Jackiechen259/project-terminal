@@ -26,47 +26,6 @@ export function isCompatibleRenderGrid(
   );
 }
 
-/**
- * Coalesce frames queued for one animation frame.
- *
- * The newest frame owns all metadata. Dirty rows are merged by stable row when
- * both frames describe the same grid. A pending full snapshot remains a full
- * snapshot only while its viewport is still the viewport described by the
- * newest frame; otherwise its overlapping rows are useful retained state, but
- * the coalesced frame is an incremental delta for the new viewport.
- */
-export function mergePendingFrame(
-  pending: MergedRenderFrame | null,
-  next: TerminalRenderFrame,
-): MergedRenderFrame {
-  if (!pending) return next;
-  if (next.fullSnapshot || !isCompatibleRenderGrid(pending, next)) return next;
-
-  const rows = new Map<number, TerminalRenderRow>();
-  for (const row of pending.dirtyRows) rows.set(row.stableRow, row);
-  for (const row of next.dirtyRows) rows.set(row.stableRow, row);
-
-  const viewportChanged =
-    pending.viewportTop !== next.viewportTop ||
-    pending.viewportBottom !== next.viewportBottom;
-  const mergedRows = new Set(rows.keys());
-  const coversCurrentViewport = Array.from(
-    { length: next.rows },
-    (_, offset) => next.viewportTop + offset,
-  ).every((stableRow) => mergedRows.has(stableRow));
-  const fullSnapshot = pending.fullSnapshot && !viewportChanged;
-  const hasRetainedSnapshotBase =
-    pending.fullSnapshot || pending.retainedSnapshot === true;
-
-  return {
-    ...next,
-    dirtyRows: [...rows.values()],
-    fullSnapshot,
-    retainedSnapshot:
-      !fullSnapshot && hasRetainedSnapshotBase && coversCurrentViewport,
-  };
-}
-
 export interface RenderFrameCacheUpdate {
   viewportChanged: boolean;
   gridChanged: boolean;

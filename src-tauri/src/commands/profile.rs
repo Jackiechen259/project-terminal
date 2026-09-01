@@ -1,4 +1,4 @@
-﻿//! Terminal Profile Tauri commands. CRUD over the profile JSON repository.
+//! Terminal Profile Tauri commands. CRUD over the profile JSON repository.
 //!
 //! Per plan Â§12.2: `list_terminal_profiles`, `create_terminal_profile`,
 //! `update_terminal_profile`, `delete_terminal_profile`,
@@ -285,11 +285,16 @@ pub fn detect_python_environments_inner(
 }
 
 #[tauri::command]
-pub fn list_terminal_profiles(
+pub async fn list_terminal_profiles(
     state: tauri::State<'_, AppState>,
     project_id: String,
 ) -> AppResult<ListResponse<TerminalProfile>> {
-    list_terminal_profiles_inner(&state, &project_id)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || list_terminal_profiles_inner(&state, &project_id))
+        .await
+        .map_err(|error| {
+            AppError::Configuration(format!("List terminal profiles worker failed: {error}"))
+        })?
 }
 
 #[tauri::command]
@@ -298,50 +303,92 @@ pub fn validate_terminal_profile(input: ProfileInput) -> AppResult<()> {
 }
 
 #[tauri::command]
-pub fn create_terminal_profile(
+pub async fn create_terminal_profile(
     state: tauri::State<'_, AppState>,
     input: ProfileInput,
 ) -> AppResult<TerminalProfile> {
-    create_terminal_profile_inner(&state, input)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || create_terminal_profile_inner(&state, input))
+        .await
+        .map_err(|error| {
+            AppError::Configuration(format!("Create terminal profile worker failed: {error}"))
+        })?
 }
 
 #[tauri::command]
-pub fn update_terminal_profile(
+pub async fn update_terminal_profile(
     state: tauri::State<'_, AppState>,
     input: ProfileInput,
 ) -> AppResult<TerminalProfile> {
-    update_terminal_profile_inner(&state, input)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || update_terminal_profile_inner(&state, input))
+        .await
+        .map_err(|error| {
+            AppError::Configuration(format!("Update terminal profile worker failed: {error}"))
+        })?
 }
 
 #[tauri::command]
-pub fn delete_terminal_profile(state: tauri::State<'_, AppState>, id: String) -> AppResult<()> {
-    delete_terminal_profile_inner(&state, &id)
+pub async fn delete_terminal_profile(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> AppResult<()> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || delete_terminal_profile_inner(&state, &id))
+        .await
+        .map_err(|error| {
+            AppError::Configuration(format!("Delete terminal profile worker failed: {error}"))
+        })?
 }
 
 #[tauri::command]
-pub fn duplicate_terminal_profile(
+pub async fn duplicate_terminal_profile(
     state: tauri::State<'_, AppState>,
     id: String,
 ) -> AppResult<TerminalProfile> {
-    duplicate_terminal_profile_inner(&state, &id)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || duplicate_terminal_profile_inner(&state, &id))
+        .await
+        .map_err(|error| {
+            AppError::Configuration(format!("Duplicate terminal profile worker failed: {error}"))
+        })?
 }
 
 #[tauri::command]
-pub fn test_terminal_profile(state: tauri::State<'_, AppState>, id: String) -> AppResult<String> {
-    test_terminal_profile_inner(&state, &id)
+pub async fn test_terminal_profile(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> AppResult<String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || test_terminal_profile_inner(&state, &id))
+        .await
+        .map_err(|error| {
+            AppError::Configuration(format!("Test terminal profile worker failed: {error}"))
+        })?
+}
+
+// Walks PATH x PATHEXT looking for each known shell executable - filesystem
+// probing, not a quick lookup, so it runs off the main thread.
+#[tauri::command]
+pub async fn detect_local_shells() -> Vec<crate::terminal::DetectedShell> {
+    tauri::async_runtime::spawn_blocking(crate::terminal::detect_local_shells)
+        .await
+        .unwrap_or_default()
 }
 
 #[tauri::command]
-pub fn detect_local_shells() -> Vec<crate::terminal::DetectedShell> {
-    crate::terminal::detect_local_shells()
-}
-
-#[tauri::command]
-pub fn detect_python_environments(
+pub async fn detect_python_environments(
     state: tauri::State<'_, AppState>,
     project_id: String,
 ) -> AppResult<Vec<DetectedPythonEnvironment>> {
-    detect_python_environments_inner(&state, &project_id)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        detect_python_environments_inner(&state, &project_id)
+    })
+    .await
+    .map_err(|error| {
+        AppError::Configuration(format!("Detect python environments worker failed: {error}"))
+    })?
 }
 
 #[cfg(test)]

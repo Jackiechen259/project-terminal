@@ -123,6 +123,12 @@ describe("ProjectMemoPanel", () => {
       target: { value: "# Hello\n\n- a\n- b" },
     });
 
+    // The store commit is debounced (see MarkdownMemoEditor), so it has not
+    // landed yet - but closing the editor unmounts it, which flushes any
+    // pending edit immediately. That flush is exactly what must be verified:
+    // closing right after typing must never drop the last few keystrokes.
+    fireEvent.click(screen.getByRole("button", { name: "Close note" }));
+
     const memo = useMemoStore.getState().memosByProjectId.p1[0];
     expect(memo).toMatchObject({
       kind: "markdown",
@@ -132,7 +138,6 @@ describe("ProjectMemoPanel", () => {
     });
 
     // Closing the editor returns to the list, which now shows the note.
-    fireEvent.click(screen.getByRole("button", { name: "Close note" }));
     expect(screen.getByText("API")).toBeInTheDocument();
   });
 

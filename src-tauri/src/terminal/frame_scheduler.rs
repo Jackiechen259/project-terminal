@@ -32,6 +32,11 @@ pub struct TerminalFrameHub {
     frames: broadcast::Sender<Arc<RenderFrame>>,
     controls: broadcast::Sender<Arc<TerminalControlEvent>>,
     signal: Arc<(StdMutex<bool>, Condvar)>,
+    /// Mirrors the `bool` inside `signal`. A PTY reader that outpaces the
+    /// scheduler calls `notify()` far more often than the scheduler actually
+    /// wakes; once a wake is already pending, later reads in the same frame
+    /// window can skip the mutex lock and condvar notify entirely.
+    pending: AtomicBool,
     shutdown: AtomicBool,
 }
 
@@ -43,6 +48,7 @@ impl TerminalFrameHub {
             frames,
             controls,
             signal: Arc::new((StdMutex::new(false), Condvar::new())),
+            pending: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
         });
 
@@ -71,8 +77,20 @@ impl TerminalFrameHub {
         if self.frames.receiver_count() == 0 && self.controls.receiver_count() == 0 {
             return;
         }
-        let (pending, wake) = &*self.signal;
-        *pending.lock().unwrap() = true;
+        // A PTY reader that outpaces the scheduler calls this far more often
+        // than the scheduler actually wakes. Once a wake is already pending,
+        // skip the mutex lock and condvar notify entirely - only the
+        // false->true transition needs to touch `signal`. In the rare case
+        // this races with the scheduler's own reset of `pending` (see
+        // `run_scheduler`), the very next notify (or the next PTY read,
+        // resize, or renderer attach - all of which also call `notify`)
+        // still wakes it, since the model itself already has this data via
+        // `feed()`; nothing is lost, at most a frame is briefly delayed.
+        if self.pending.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let (signal_pending, wake) = &*self.signal;
+        *signal_pending.lock().unwrap() = true;
         wake.notify_one();
     }
 
@@ -99,6 +117,7 @@ fn run_scheduler(engine: Arc<Mutex<WeztermTerminalEngine>>, hub: Arc<TerminalFra
             return;
         }
         *is_pending = false;
+        hub.pending.store(false, Ordering::Release);
 
         // Enforce a maximum frame rate while still allowing notifications to
         // accumulate during the wait. The first frame is intentionally

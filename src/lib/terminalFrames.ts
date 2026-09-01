@@ -43,21 +43,30 @@ export interface TerminalImageCellFrame {
   cacheKey: string;
 }
 
+/**
+ * The backend omits any field carrying its default value (`width: 1`,
+ * `foreground`/`background`/`underlineColor` of kind `"default"`,
+ * `intensity: "normal"`, `underline: "none"`, every `false` boolean, and an
+ * empty `images` array) to keep a full-grid frame from repeating the same
+ * value across thousands of cells - see `RenderCell` in
+ * src-tauri/src/terminal_engine/render_frame.rs. Every reader of a cell must
+ * treat an absent optional field as that same default, not as "unknown".
+ */
 export interface TerminalRenderCell {
   column: number;
-  width: number;
+  width?: number;
   text: string;
-  foreground: RenderColor;
-  background: RenderColor;
-  underlineColor: RenderColor;
-  intensity: "normal" | "bold" | "half";
-  underline: "none" | "single" | "double" | "curly" | "dotted" | "dashed";
-  italic: boolean;
-  reverse: boolean;
-  strikethrough: boolean;
-  invisible: boolean;
+  foreground?: RenderColor;
+  background?: RenderColor;
+  underlineColor?: RenderColor;
+  intensity?: "normal" | "bold" | "half";
+  underline?: "none" | "single" | "double" | "curly" | "dotted" | "dashed";
+  italic?: boolean;
+  reverse?: boolean;
+  strikethrough?: boolean;
+  invisible?: boolean;
   hyperlink?: string | null;
-  images: TerminalImageCellFrame[];
+  images?: TerminalImageCellFrame[];
 }
 
 export interface TerminalRenderRow {

@@ -318,33 +318,42 @@ export function ProjectSidebar() {
     setDropTarget(null);
   }, [resetPreviewPosition]);
 
-  function beginPointerDrag(
-    projectId: string,
-    event: React.PointerEvent<HTMLDivElement>,
-  ) {
-    if (event.button > 0 || (event.target as HTMLElement).closest("button")) {
-      return;
-    }
-    // Touch and pen inputs get implicit pointer capture on `pointerdown`,
-    // which redirects every subsequent pointer event to the source row.
-    // That stops `pointerenter` from firing on drop targets, so the drag
-    // goes nowhere. Release the capture so hit-testing behaves like mouse.
-    const dragSource = event.currentTarget;
-    if (dragSource.hasPointerCapture?.(event.pointerId)) {
-      dragSource.releasePointerCapture?.(event.pointerId);
-    }
-    pointerDragRef.current = {
-      projectId,
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      started: false,
-    };
-    dropTargetRef.current = null;
-    setDropTarget(null);
-  }
+  // These only ever touch refs and stable setState setters - never a prop or
+  // piece of reactive state - so an empty dependency list is genuinely safe
+  // and keeps every one of them a permanently stable reference. That, in
+  // turn, is what lets CollectionGroup/ProjectRow's `memo()` actually bail
+  // out below: a callback prop that is a fresh closure every render defeats
+  // memo regardless of how cheap the closure itself is to create.
+  const beginPointerDrag = useCallback(
+    (projectId: string, event: React.PointerEvent<HTMLDivElement>) => {
+      if (
+        event.button > 0 ||
+        (event.target as HTMLElement).closest("button")
+      ) {
+        return;
+      }
+      // Touch and pen inputs get implicit pointer capture on `pointerdown`,
+      // which redirects every subsequent pointer event to the source row.
+      // That stops `pointerenter` from firing on drop targets, so the drag
+      // goes nowhere. Release the capture so hit-testing behaves like mouse.
+      const dragSource = event.currentTarget;
+      if (dragSource.hasPointerCapture?.(event.pointerId)) {
+        dragSource.releasePointerCapture?.(event.pointerId);
+      }
+      pointerDragRef.current = {
+        projectId,
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        started: false,
+      };
+      dropTargetRef.current = null;
+      setDropTarget(null);
+    },
+    [],
+  );
 
-  function setPointerDropTarget(target: DropTarget) {
+  const setPointerDropTarget = useCallback((target: DropTarget) => {
     if (!draggedProjectRef.current) return;
     // Never mark the row being dragged as a drop target - otherwise dragging
     // a project over its own row would light up the drop indicator on it.
@@ -365,15 +374,19 @@ export function ProjectSidebar() {
     // the actual drop target on fast drags - the user sees one target
     // highlighted while the project lands on another.
     flushSync(() => setDropTarget(target));
-  }
+  }, []);
 
-  function isProjectDrag(event: React.DragEvent<HTMLElement>) {
-    // WebView2 can report an empty `dataTransfer.types` list during
-    // `dragover`, even when the drag started in this app. The ref is set at
-    // drag start, so it is the reliable source of truth for our own drags.
-    void event;
-    return draggedProjectRef.current !== null;
-  }
+  const isProjectDrag = useCallback(
+    (event: React.DragEvent<HTMLElement>) => {
+      // WebView2 can report an empty `dataTransfer.types` list during
+      // `dragover`, even when the drag started in this app. The ref is set
+      // at drag start, so it is the reliable source of truth for our own
+      // drags.
+      void event;
+      return draggedProjectRef.current !== null;
+    },
+    [],
+  );
 
   const handleDropTarget = useCallback(
     (target: DropTarget) => {
@@ -482,19 +495,110 @@ export function ProjectSidebar() {
     ? projectsById[draggedProjectId]
     : undefined;
 
-  async function testSsh(project: Project) {
-    if (project.type !== "ssh" || !project.ssh?.connectionId) return;
-    setNotice(t("Testing SSH connection…"));
-    try {
-      setNotice(await sshService.test(project.ssh.connectionId));
-    } catch (cause) {
-      setNotice(
-        t("SSH test failed: {error}", {
-          error: (cause as { message?: string }).message ?? t("Unknown error"),
-        }),
-      );
-    }
-  }
+  const handleTestSsh = useCallback(
+    (project: Project) => {
+      void (async () => {
+        if (project.type !== "ssh" || !project.ssh?.connectionId) return;
+        setNotice(t("Testing SSH connection…"));
+        try {
+          setNotice(await sshService.test(project.ssh.connectionId));
+        } catch (cause) {
+          setNotice(
+            t("SSH test failed: {error}", {
+              error:
+                (cause as { message?: string }).message ?? t("Unknown error"),
+            }),
+          );
+        }
+      })();
+    },
+    [t],
+  );
+
+  const handleSelectProject = useCallback(
+    (id: string) => {
+      setActiveProject(id);
+      rememberProject(id);
+    },
+    [rememberProject, setActiveProject],
+  );
+
+  const handleDragStartProject = useCallback((id: string) => {
+    draggedProjectRef.current = id;
+    setDraggedProjectId(id);
+  }, []);
+
+  // Reads the collection's current name at click time via `getState()`
+  // rather than depending on the reactive `collections` array, so this
+  // handler - and every CollectionGroup that receives it - never needs to
+  // change reference just because some other collection changed.
+  const handleDeleteCollection = useCallback(
+    (collectionId: string) => {
+      const collection = useCollectionStore
+        .getState()
+        .collections.find((candidate) => candidate.id === collectionId);
+      if (!collection) return;
+      if (
+        window.confirm(
+          t(
+            'Delete collection "{name}"? Projects inside will not be removed.',
+            { name: collection.name },
+          ),
+        )
+      ) {
+        deleteCollection(collectionId);
+      }
+    },
+    [deleteCollection, t],
+  );
+
+  const handleUngroupedPointerEnterOrMove = useCallback(
+    (project: Project, position: DropPosition) => {
+      setPointerDropTarget({
+        kind: "project",
+        projectId: project.id,
+        collectionId: null,
+        position,
+      });
+    },
+    [setPointerDropTarget],
+  );
+
+  const handleUngroupedDragOver = useCallback(
+    (project: Project, e: React.DragEvent<HTMLDivElement>) => {
+      if (!isProjectDrag(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = "move";
+      setDropTarget({
+        kind: "project",
+        projectId: project.id,
+        collectionId: null,
+        position: computeDropPosition(
+          e.clientY,
+          e.currentTarget.getBoundingClientRect(),
+        ),
+      });
+    },
+    [isProjectDrag],
+  );
+
+  const handleUngroupedDrop = useCallback(
+    (project: Project, e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      handleDropTarget({
+        kind: "project",
+        projectId: project.id,
+        collectionId: null,
+        position: computeDropPosition(
+          e.clientY,
+          e.currentTarget.getBoundingClientRect(),
+        ),
+      });
+    },
+    [handleDropTarget],
+  );
 
   return (
     <aside
@@ -634,28 +738,11 @@ export function ProjectSidebar() {
                 dropTarget={dropTarget}
                 projectTabStats={projectTabStats}
                 showTerminalCount={showTerminalCount}
-                onToggleCollapsed={() => toggleCollapsed(collection.id)}
-                onDeleteCollection={() => {
-                  if (
-                    window.confirm(
-                      t(
-                        'Delete collection "{name}"? Projects inside will not be removed.',
-                        { name: collection.name },
-                      ),
-                    )
-                  ) {
-                    deleteCollection(collection.id);
-                  }
-                }}
-                onSelectProject={(id) => {
-                  setActiveProject(id);
-                  rememberProject(id);
-                }}
-                onTestSsh={(p) => void testSsh(p)}
-                onDragStartProject={(id) => {
-                  draggedProjectRef.current = id;
-                  setDraggedProjectId(id);
-                }}
+                onToggleCollapsed={toggleCollapsed}
+                onDeleteCollection={handleDeleteCollection}
+                onSelectProject={handleSelectProject}
+                onTestSsh={handleTestSsh}
+                onDragStartProject={handleDragStartProject}
                 onDropTarget={handleDropTarget}
                 onDragEnterTarget={setDropTarget}
                 isProjectDrag={isProjectDrag}
@@ -719,60 +806,14 @@ export function ProjectSidebar() {
                     dropTarget.collectionId === null &&
                     dropTarget.position === "after"
                   }
-                  onDragStart={() => {
-                    draggedProjectRef.current = project.id;
-                    setDraggedProjectId(project.id);
-                  }}
-                  onPointerDown={(event) => beginPointerDrag(project.id, event)}
-                  onPointerEnter={(position) =>
-                    setPointerDropTarget({
-                      kind: "project",
-                      projectId: project.id,
-                      collectionId: null,
-                      position,
-                    })
-                  }
-                  onPointerMove={(position) =>
-                    setPointerDropTarget({
-                      kind: "project",
-                      projectId: project.id,
-                      collectionId: null,
-                      position,
-                    })
-                  }
-                  onDragOver={(e) => {
-                    if (!isProjectDrag(e)) return;
-                    e.preventDefault();
-                    e.stopPropagation();
-                    e.dataTransfer.dropEffect = "move";
-                    setDropTarget({
-                      kind: "project",
-                      projectId: project.id,
-                      collectionId: null,
-                      position: computeDropPosition(
-                        e.clientY,
-                        e.currentTarget.getBoundingClientRect(),
-                      ),
-                    });
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    handleDropTarget({
-                      kind: "project",
-                      projectId: project.id,
-                      collectionId: null,
-                      position: computeDropPosition(
-                        e.clientY,
-                        e.currentTarget.getBoundingClientRect(),
-                      ),
-                    });
-                  }}
-                  onTestSsh={() => void testSsh(project)}
-                  onSelect={() => {
-                    setActiveProject(project.id);
-                    rememberProject(project.id);
-                  }}
+                  onDragStart={handleDragStartProject}
+                  onPointerDown={beginPointerDrag}
+                  onPointerEnter={handleUngroupedPointerEnterOrMove}
+                  onPointerMove={handleUngroupedPointerEnterOrMove}
+                  onDragOver={handleUngroupedDragOver}
+                  onDrop={handleUngroupedDrop}
+                  onTestSsh={handleTestSsh}
+                  onSelect={handleSelectProject}
                 />
               ))}
             </div>
@@ -867,8 +908,8 @@ const CollectionGroup = memo(function CollectionGroup({
   /** Per-project `running:hasError` pairs, keyed by project id. */
   projectTabStats: Record<string, string>;
   showTerminalCount: boolean;
-  onToggleCollapsed: () => void;
-  onDeleteCollection: () => void;
+  onToggleCollapsed: (collectionId: string) => void;
+  onDeleteCollection: (collectionId: string) => void;
   onSelectProject: (id: string) => void;
   onTestSsh: (project: Project) => void;
   onDragStartProject: (id: string) => void;
@@ -886,6 +927,57 @@ const CollectionGroup = memo(function CollectionGroup({
   const isDropTarget =
     dropTarget?.kind === "collection" &&
     dropTarget.collectionId === collection.id;
+
+  // Scoped to this collection (by closing over `collection.id`) rather than
+  // created fresh per project row, so every ProjectRow below receives the
+  // same function reference across renders and its own `memo()` can bail
+  // when a DIFFERENT row's drag/drop state changes.
+  const collectionId = collection.id;
+  const handlePointerEnterOrMove = useCallback(
+    (project: Project, position: DropPosition) => {
+      onPointerEnterTarget({
+        kind: "project",
+        projectId: project.id,
+        collectionId,
+        position,
+      });
+    },
+    [collectionId, onPointerEnterTarget],
+  );
+  const handleDragOver = useCallback(
+    (project: Project, e: React.DragEvent<HTMLDivElement>) => {
+      if (!isProjectDrag(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = "move";
+      onDragEnterTarget({
+        kind: "project",
+        projectId: project.id,
+        collectionId,
+        position: computeDropPosition(
+          e.clientY,
+          e.currentTarget.getBoundingClientRect(),
+        ),
+      });
+    },
+    [collectionId, isProjectDrag, onDragEnterTarget],
+  );
+  const handleDrop = useCallback(
+    (project: Project, e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onDropTarget({
+        kind: "project",
+        projectId: project.id,
+        collectionId,
+        position: computeDropPosition(
+          e.clientY,
+          e.currentTarget.getBoundingClientRect(),
+        ),
+      });
+    },
+    [collectionId, onDropTarget],
+  );
 
   return (
     <div
@@ -924,7 +1016,7 @@ const CollectionGroup = memo(function CollectionGroup({
       <div className="group flex items-center gap-1 rounded-md px-1 py-1 text-sm transition-colors hover:bg-accent hover:text-accent-foreground">
         <button
           type="button"
-          onClick={onToggleCollapsed}
+          onClick={() => onToggleCollapsed(collection.id)}
           className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
           aria-label={
             collapsed ? t("Expand collection") : t("Collapse collection")
@@ -939,7 +1031,7 @@ const CollectionGroup = memo(function CollectionGroup({
         <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
         <button
           type="button"
-          onClick={onToggleCollapsed}
+          onClick={() => onToggleCollapsed(collection.id)}
           className="flex flex-1 items-center gap-2 truncate text-left"
         >
           <span className="truncate">{collection.name}</span>
@@ -968,7 +1060,7 @@ const CollectionGroup = memo(function CollectionGroup({
           aria-label={t("Delete collection")}
           onClick={(e) => {
             e.stopPropagation();
-            onDeleteCollection();
+            onDeleteCollection(collection.id);
           }}
         >
           <Trash2 className="h-3.5 w-3.5" />
@@ -1004,56 +1096,14 @@ const CollectionGroup = memo(function CollectionGroup({
                   dropTarget.collectionId === collection.id &&
                   dropTarget.position === "after"
                 }
-                onDragStart={() => onDragStartProject(project.id)}
-                onPointerDown={(event) =>
-                  onPointerDownProject(project.id, event)
-                }
-                onPointerEnter={(position) =>
-                  onPointerEnterTarget({
-                    kind: "project",
-                    projectId: project.id,
-                    collectionId: collection.id,
-                    position,
-                  })
-                }
-                onPointerMove={(position) =>
-                  onPointerEnterTarget({
-                    kind: "project",
-                    projectId: project.id,
-                    collectionId: collection.id,
-                    position,
-                  })
-                }
-                onDragOver={(e) => {
-                  if (!isProjectDrag(e)) return;
-                  e.preventDefault();
-                  e.stopPropagation();
-                  e.dataTransfer.dropEffect = "move";
-                  onDragEnterTarget({
-                    kind: "project",
-                    projectId: project.id,
-                    collectionId: collection.id,
-                    position: computeDropPosition(
-                      e.clientY,
-                      e.currentTarget.getBoundingClientRect(),
-                    ),
-                  });
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onDropTarget({
-                    kind: "project",
-                    projectId: project.id,
-                    collectionId: collection.id,
-                    position: computeDropPosition(
-                      e.clientY,
-                      e.currentTarget.getBoundingClientRect(),
-                    ),
-                  });
-                }}
-                onTestSsh={() => onTestSsh(project)}
-                onSelect={() => onSelectProject(project.id)}
+                onDragStart={onDragStartProject}
+                onPointerDown={onPointerDownProject}
+                onPointerEnter={handlePointerEnterOrMove}
+                onPointerMove={handlePointerEnterOrMove}
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
+                onTestSsh={onTestSsh}
+                onSelect={onSelectProject}
               />
             ))
           )}
@@ -1106,26 +1156,37 @@ function UngroupedHeader({
   );
 }
 
+/**
+ * Every callback below takes the identifying `project`/`projectId` as a
+ * parameter rather than having it baked in by the caller. That lets a
+ * parent pass one stable (`useCallback`'d, or a store action) function
+ * reference for every row instead of a fresh per-project closure on every
+ * render - which is what actually lets this component's `memo()` bail out
+ * when a sibling row's data changes instead of its own.
+ */
 interface ProjectRowProps {
   project: Project;
   active: boolean;
   /** Packed `running:hasError` pair from the sidebar's selector. */
   tabStats: string | undefined;
-  onTestSsh: () => void;
-  onSelect: () => void;
+  onTestSsh: (project: Project) => void;
+  onSelect: (projectId: string) => void;
   showTerminalCount: boolean;
   indent?: number;
   draggable?: boolean;
   isDragging?: boolean;
   isDropBefore?: boolean;
   isDropAfter?: boolean;
-  onDragStart?: () => void;
-  onDragOver?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDragStart?: (projectId: string) => void;
+  onDragOver?: (project: Project, e: React.DragEvent<HTMLDivElement>) => void;
   onDragLeave?: (e: React.DragEvent<HTMLDivElement>) => void;
-  onDrop?: (e: React.DragEvent<HTMLDivElement>) => void;
-  onPointerDown?: (event: React.PointerEvent<HTMLDivElement>) => void;
-  onPointerEnter?: (position: DropPosition) => void;
-  onPointerMove?: (position: DropPosition) => void;
+  onDrop?: (project: Project, e: React.DragEvent<HTMLDivElement>) => void;
+  onPointerDown?: (
+    projectId: string,
+    event: React.PointerEvent<HTMLDivElement>,
+  ) => void;
+  onPointerEnter?: (project: Project, position: DropPosition) => void;
+  onPointerMove?: (project: Project, position: DropPosition) => void;
 }
 
 const ProjectRow = memo(function ProjectRow({
@@ -1190,15 +1251,16 @@ const ProjectRow = memo(function ProjectRow({
           if (!draggable) return;
           e.dataTransfer.effectAllowed = "move";
           e.dataTransfer.setData("text/plain", project.id);
-          onDragStart?.();
+          onDragStart?.(project.id);
         }}
-        onDragOver={(e) => onDragOver?.(e)}
+        onDragOver={(e) => onDragOver?.(project, e)}
         onDragLeave={(e) => onDragLeave?.(e)}
-        onDrop={(e) => onDrop?.(e)}
-        onPointerDown={onPointerDown}
+        onDrop={(e) => onDrop?.(project, e)}
+        onPointerDown={(e) => onPointerDown?.(project.id, e)}
         onPointerEnter={(e) => {
           if (!onPointerEnter) return;
           onPointerEnter(
+            project,
             computeDropPosition(
               e.clientY,
               e.currentTarget.getBoundingClientRect(),
@@ -1208,23 +1270,24 @@ const ProjectRow = memo(function ProjectRow({
         onPointerMove={(e) => {
           if (!onPointerMove) return;
           onPointerMove(
+            project,
             computeDropPosition(
               e.clientY,
               e.currentTarget.getBoundingClientRect(),
             ),
           );
         }}
-        onClick={onSelect}
+        onClick={() => onSelect(project.id)}
         onContextMenu={(event) => {
           event.preventDefault();
           event.stopPropagation();
-          onSelect();
+          onSelect(project.id);
           setMenuPosition({ x: event.clientX, y: event.clientY });
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            onSelect();
+            onSelect(project.id);
           }
         }}
         className={cn(
@@ -1274,9 +1337,9 @@ const ProjectRow = memo(function ProjectRow({
         <ProjectContextMenu
           project={project}
           position={menuPosition}
-          onOpen={onSelect}
+          onOpen={() => onSelect(project.id)}
           onRemove={() => void removeProject()}
-          onTestSsh={onTestSsh}
+          onTestSsh={() => onTestSsh(project)}
           onEdit={() => setEditing(true)}
           onOpenExplorer={() => void projectService.openInExplorer(project.id)}
           onClose={() => setMenuPosition(null)}

@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import { useTranslation } from "@/i18n";
 import { workingDirectoryLabel } from "@/lib/terminalShellIntegration";
@@ -20,41 +21,48 @@ import { useTerminalStore } from "@/stores/terminalStore";
  */
 export function StatusBar() {
   const { t } = useTranslation();
-  const activeProjectId = useTerminalStore((state) => state.activeProjectId);
-  const tabsById = useTerminalStore((state) => state.tabsById);
-  const tabGroups = useTerminalStore((state) => state.tabGroupsByProjectId);
+  // Reads the whole tabsById/tabGroupsByProjectId maps internally, but
+  // useShallow compares only these four extracted fields - so a title/status
+  // change on any tab OTHER than the active one no longer re-renders this
+  // component, unlike selecting the maps themselves.
+  const { profileId, projectId, cwd, exitCode } = useTerminalStore(
+    useShallow((state) => {
+      const activeTabId = state.activeProjectId
+        ? state.tabGroupsByProjectId[state.activeProjectId]?.activeTabId
+        : null;
+      const tab = activeTabId ? state.tabsById[activeTabId] : undefined;
+      return {
+        profileId: tab?.profileId,
+        projectId: tab?.projectId,
+        cwd: tab?.cwd,
+        exitCode: tab?.lastCommandExitCode,
+      };
+    }),
+  );
   const profilesByProject = useProfileStore((state) => state.byProjectId);
-
-  const tab = useMemo(() => {
-    const activeTabId = activeProjectId
-      ? tabGroups[activeProjectId]?.activeTabId
-      : null;
-    return activeTabId ? tabsById[activeTabId] : undefined;
-  }, [activeProjectId, tabGroups, tabsById]);
+  const hasTab = projectId !== undefined;
 
   const profileName = useMemo(() => {
-    if (!tab) return undefined;
-    return profilesByProject[tab.projectId]?.find((p) => p.id === tab.profileId)
-      ?.name;
-  }, [profilesByProject, tab]);
+    if (!projectId || !profileId) return undefined;
+    return profilesByProject[projectId]?.find((p) => p.id === profileId)?.name;
+  }, [profileId, profilesByProject, projectId]);
 
-  const exitCode = tab?.lastCommandExitCode;
   return (
     <footer
       className="flex h-[22px] shrink-0 items-center gap-3 border-t border-border bg-surface px-3 text-[11px] text-muted-foreground"
       aria-label={t("Status")}
     >
-      {tab && profileName ? (
+      {hasTab && profileName ? (
         <span className="shrink-0 truncate">{profileName}</span>
       ) : null}
-      {tab?.cwd ? (
+      {cwd ? (
         // Only ever set by OSC 7, so its presence already means the profile
         // opted into shell integration.
-        <span className="min-w-0 truncate" title={tab.cwd}>
-          {workingDirectoryLabel(tab.cwd)}
+        <span className="min-w-0 truncate" title={cwd}>
+          {workingDirectoryLabel(cwd)}
         </span>
       ) : null}
-      {tab ? <span className="ml-auto shrink-0" /> : null}
+      {hasTab ? <span className="ml-auto shrink-0" /> : null}
       {exitCode !== undefined ? (
         <span
           className={cn("shrink-0", exitCode === 0 ? "text-ok" : "text-danger")}

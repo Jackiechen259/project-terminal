@@ -1081,20 +1081,34 @@ pub fn import_windows_terminal_color_schemes_inner(
 }
 
 #[tauri::command]
-pub fn scan_windows_terminal_color_schemes(
+pub async fn scan_windows_terminal_color_schemes(
     state: tauri::State<'_, AppState>,
 ) -> AppResult<WindowsTerminalSchemeScanResult> {
-    let paths = windows_terminal_settings_paths()?;
-    scan_windows_terminal_color_schemes_inner(&state, &paths)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let paths = windows_terminal_settings_paths()?;
+        scan_windows_terminal_color_schemes_inner(&state, &paths)
+    })
+    .await
+    .map_err(|error| {
+        AppError::Configuration(format!("Windows Terminal scan worker failed: {error}"))
+    })?
 }
 
 #[tauri::command]
-pub fn import_windows_terminal_color_schemes(
+pub async fn import_windows_terminal_color_schemes(
     state: tauri::State<'_, AppState>,
     keys: Vec<String>,
 ) -> AppResult<WindowsTerminalSchemeImportResult> {
-    let paths = windows_terminal_settings_paths()?;
-    import_windows_terminal_color_schemes_inner(&state, &paths, &keys)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let paths = windows_terminal_settings_paths()?;
+        import_windows_terminal_color_schemes_inner(&state, &paths, &keys)
+    })
+    .await
+    .map_err(|error| {
+        AppError::Configuration(format!("Windows Terminal import worker failed: {error}"))
+    })?
 }
 
 fn windows_terminal_settings_paths() -> AppResult<Vec<PathBuf>> {
@@ -1122,35 +1136,61 @@ fn windows_terminal_settings_paths() -> AppResult<Vec<PathBuf>> {
 }
 
 #[tauri::command]
-pub fn scan_windows_terminal_profiles(
+pub async fn scan_windows_terminal_profiles(
     state: tauri::State<'_, AppState>,
     project_id: String,
 ) -> AppResult<WindowsTerminalScanResult> {
-    scan_windows_terminal_profiles_inner(&state, &project_id)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        scan_windows_terminal_profiles_inner(&state, &project_id)
+    })
+    .await
+    .map_err(|error| {
+        AppError::Configuration(format!("Windows Terminal scan worker failed: {error}"))
+    })?
 }
 
 #[tauri::command]
-pub fn scan_windows_terminal_templates(
+pub async fn scan_windows_terminal_templates(
     state: tauri::State<'_, AppState>,
 ) -> AppResult<WindowsTerminalScanResult> {
-    scan_windows_terminal_templates_inner(&state)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || scan_windows_terminal_templates_inner(&state))
+        .await
+        .map_err(|error| {
+            AppError::Configuration(format!("Windows Terminal scan worker failed: {error}"))
+        })?
 }
 
 #[tauri::command]
-pub fn import_windows_terminal_profiles(
+pub async fn import_windows_terminal_profiles(
     state: tauri::State<'_, AppState>,
     project_id: String,
     keys: Vec<String>,
 ) -> AppResult<WindowsTerminalImportResult> {
-    import_windows_terminal_profiles_inner(&state, &project_id, &keys)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        import_windows_terminal_profiles_inner(&state, &project_id, &keys)
+    })
+    .await
+    .map_err(|error| {
+        AppError::Configuration(format!("Windows Terminal import worker failed: {error}"))
+    })?
 }
 
 #[tauri::command]
-pub fn import_windows_terminal_templates(
+pub async fn import_windows_terminal_templates(
     state: tauri::State<'_, AppState>,
     keys: Vec<String>,
 ) -> AppResult<WindowsTerminalTemplateImportResult> {
-    import_windows_terminal_templates_inner(&state, &keys)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        import_windows_terminal_templates_inner(&state, &keys)
+    })
+    .await
+    .map_err(|error| {
+        AppError::Configuration(format!("Windows Terminal import worker failed: {error}"))
+    })?
 }
 
 #[cfg(test)]
