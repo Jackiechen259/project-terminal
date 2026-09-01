@@ -95,9 +95,7 @@ beforeEach(() => {
   vi.mocked(windowService.workspaceInfo).mockReset();
   vi.mocked(terminalService.listWorkspaceSessions).mockReset();
   vi.mocked(persistenceService.loadWorkspaceState).mockReset();
-  vi.mocked(migrateLocalPersistence)
-    .mockReset()
-    .mockResolvedValue(null);
+  vi.mocked(migrateLocalPersistence).mockReset().mockResolvedValue(null);
   // Matches every other test file's assumption: JSDOM is not the Tauri
   // WebView. Tests below that need the Tauri branch opt in explicitly.
   vi.mocked(isTauriRuntime).mockReset().mockReturnValue(false);

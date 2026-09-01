@@ -74,9 +74,7 @@ describe("mix", () => {
 describe("ensureContrastRgb", () => {
   it("leaves the color unchanged when minimumContrast is 1 or below", () => {
     const foreground: [number, number, number] = [200, 200, 200];
-    expect(ensureContrastRgb(foreground, [255, 255, 255], 1)).toBe(
-      foreground,
-    );
+    expect(ensureContrastRgb(foreground, [255, 255, 255], 1)).toBe(foreground);
   });
 
   it("leaves the color unchanged when it already meets the threshold", () => {

@@ -95,9 +95,13 @@ function touch(
 // `persistToBackend()` below already owns saving this state to SQLite.
 // `createThrottledJSONStorage` no-ops localStorage entirely in that runtime
 // (see @/lib/throttledStorage) and throttles it elsewhere.
-const collectionStoreStorage = createThrottledJSONStorage<
-  Pick<CollectionStoreState, "collections" | "collapsed" | "ungroupedProjectIds">
->();
+const collectionStoreStorage =
+  createThrottledJSONStorage<
+    Pick<
+      CollectionStoreState,
+      "collections" | "collapsed" | "ungroupedProjectIds"
+    >
+  >();
 
 export const useCollectionStore = create<CollectionStoreState>()(
   persist(

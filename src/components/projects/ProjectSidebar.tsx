@@ -326,10 +326,7 @@ export function ProjectSidebar() {
   // memo regardless of how cheap the closure itself is to create.
   const beginPointerDrag = useCallback(
     (projectId: string, event: React.PointerEvent<HTMLDivElement>) => {
-      if (
-        event.button > 0 ||
-        (event.target as HTMLElement).closest("button")
-      ) {
+      if (event.button > 0 || (event.target as HTMLElement).closest("button")) {
         return;
       }
       // Touch and pen inputs get implicit pointer capture on `pointerdown`,
@@ -376,17 +373,14 @@ export function ProjectSidebar() {
     flushSync(() => setDropTarget(target));
   }, []);
 
-  const isProjectDrag = useCallback(
-    (event: React.DragEvent<HTMLElement>) => {
-      // WebView2 can report an empty `dataTransfer.types` list during
-      // `dragover`, even when the drag started in this app. The ref is set
-      // at drag start, so it is the reliable source of truth for our own
-      // drags.
-      void event;
-      return draggedProjectRef.current !== null;
-    },
-    [],
-  );
+  const isProjectDrag = useCallback((event: React.DragEvent<HTMLElement>) => {
+    // WebView2 can report an empty `dataTransfer.types` list during
+    // `dragover`, even when the drag started in this app. The ref is set
+    // at drag start, so it is the reliable source of truth for our own
+    // drags.
+    void event;
+    return draggedProjectRef.current !== null;
+  }, []);
 
   const handleDropTarget = useCallback(
     (target: DropTarget) => {
