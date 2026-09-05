@@ -186,8 +186,9 @@ pub fn run() {
             .invoke_handler(tauri::generate_handler![
                 // Platform capabilities (host OS + available project types/shells)
                 commands::platform::get_platform_info,
-                // Clipboard (native read avoids a WebView paste permission prompt)
+                // Clipboard (native read/write avoid the WebView permission model)
                 commands::clipboard::read_clipboard_text,
+                commands::clipboard::write_clipboard_text,
                 // Opening terminal links (scheme-validated; never the WebView)
                 commands::opener::open_external_url,
                 // Terminal colour schemes

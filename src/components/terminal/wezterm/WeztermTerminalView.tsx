@@ -86,6 +86,16 @@ function selectionFor(
   };
 }
 
+function selectionHasRange(
+  selection: TerminalSelection | null,
+): selection is TerminalSelection {
+  return (
+    selection !== null &&
+    (selection.anchor.stableRow !== selection.focus.stableRow ||
+      selection.anchor.column !== selection.focus.column)
+  );
+}
+
 function buttonFor(
   event: MouseEvent<HTMLCanvasElement>,
 ): TerminalMouseEvent["button"] {
@@ -274,7 +284,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
 
   const copySelection = useCallback(async () => {
     const current = selectionRef.current;
-    if (!current) return;
+    if (!selectionHasRange(current)) return;
     let text: string;
     try {
       text = await terminalService.selectionText(
@@ -293,7 +303,14 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       // action left to perform once the authoritative model is gone.
       return;
     }
-    if (text) await navigator.clipboard.writeText(text);
+    if (!text) return;
+    try {
+      // Native write: `navigator.clipboard.writeText` needs a user-activation
+      // token that is already spent by the selection IPC above.
+      await terminalService.writeClipboardText(text);
+    } catch {
+      return;
+    }
     updateSelection(null);
     focusInput();
   }, [focusInput, sessionId, updateSelection]);
@@ -637,7 +654,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       event.preventDefault();
       event.stopPropagation();
       if (frameRef.current?.mouseReporting) return;
-      if (selectionRef.current) {
+      if (selectionHasRange(selectionRef.current)) {
         void copySelection();
       } else {
         void pasteClipboard().catch(() => {});
@@ -1040,8 +1057,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
           onMouseLeave={handleMouseUp}
           onWheel={handleWheel}
           onDoubleClick={() => {
-            const current = selectionRef.current;
-            if (current) void copySelection();
+            if (selectionHasRange(selectionRef.current)) void copySelection();
           }}
         />
         <textarea

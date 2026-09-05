@@ -593,6 +593,8 @@ export const fileService = {
 
 export const terminalService = {
   readClipboardText: () => invokeOrThrow<string>("read_clipboard_text"),
+  writeClipboardText: (text: string) =>
+    invokeOrThrow<void>("write_clipboard_text", { text }),
   create: (request: CreateTerminalRequest): Promise<string> =>
     invokeOrThrow<string>("create_terminal", { request }),
   attachRender: async (

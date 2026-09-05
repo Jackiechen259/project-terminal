@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.2] - 2026-09-06
+
+### Fixed
+
+- Routed terminal selection copy through the native Windows clipboard so right-click copy works reliably.
+- Made terminal right-click paste work when the click leaves only a collapsed selection.
+- Added Unicode clipboard round-trip and terminal context-menu regression coverage.
+
 ## [0.6.1] - 2026-09-01
 
 ### Fixed

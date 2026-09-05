@@ -1,4 +1,4 @@
-import { act, render } from "@testing-library/react";
+import { act, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
@@ -31,7 +31,7 @@ const mocks = vi.hoisted(() => {
     setSelection: vi.fn(),
     setSearchMatch: vi.fn(),
     selectionText: vi.fn(() => ""),
-    rowAtPoint: vi.fn(() => null),
+    rowAtPoint: vi.fn((): { column: number; row: number } | null => null),
     linkAtPoint: vi.fn(() => null),
     rowText: vi.fn(() => ""),
     dispose: vi.fn(),
@@ -59,6 +59,11 @@ const mocks = vi.hoisted(() => {
     requestRenderSnapshot: vi.fn(async () => undefined),
     detach: vi.fn(async () => undefined),
     search: vi.fn(async () => []),
+    selectionText: vi.fn(async () => ""),
+    writeClipboardText: vi.fn(async () => undefined),
+    readClipboardText: vi.fn(async () => ""),
+    paste: vi.fn(async () => undefined),
+    bracketedPasteEnabled: vi.fn(async () => true),
   };
 
   return {
@@ -143,6 +148,18 @@ describe("WeztermTerminalView render synchronization", () => {
     mocks.terminalService.resize.mockClear();
     mocks.terminalService.requestRenderSnapshot.mockClear();
     mocks.terminalService.detach.mockClear();
+    mocks.terminalService.selectionText.mockReset();
+    mocks.terminalService.selectionText.mockResolvedValue("");
+    mocks.terminalService.writeClipboardText.mockReset();
+    mocks.terminalService.writeClipboardText.mockResolvedValue(undefined);
+    mocks.terminalService.readClipboardText.mockReset();
+    mocks.terminalService.readClipboardText.mockResolvedValue("");
+    mocks.terminalService.paste.mockReset();
+    mocks.terminalService.paste.mockResolvedValue(undefined);
+    mocks.terminalService.bracketedPasteEnabled.mockReset();
+    mocks.terminalService.bracketedPasteEnabled.mockResolvedValue(true);
+    mocks.renderer.rowAtPoint.mockReset();
+    mocks.renderer.rowAtPoint.mockReturnValue(null);
     mocks.resetAttachment();
     useSettingsStore.setState({
       ...DEFAULT_GENERAL_SETTINGS,
@@ -353,5 +370,119 @@ describe("WeztermTerminalView render synchronization", () => {
 
     view.unmount();
     expect(mocks.terminalService.detach).toHaveBeenCalledTimes(1);
+  });
+
+  it("copies a dragged selection through the native clipboard after the model fetch", async () => {
+    // WebView2 denies clipboard.writeText once the user-activation token is
+    // consumed by the awaited selection IPC. Copy must not depend on it.
+    const writeText = vi.fn(async () => {
+      throw new DOMException("Write permission denied", "NotAllowedError");
+    });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    mocks.terminalService.selectionText.mockImplementation(async () => {
+      await Promise.resolve();
+      return "hello";
+    });
+
+    const { WeztermTerminalView } = await import("./WeztermTerminalView");
+    const view = render(
+      <WeztermTerminalView
+        sessionId="session-1"
+        active
+        defaultTitle="Terminal"
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      mocks.resolveResize();
+      await Promise.resolve();
+    });
+    act(() => {
+      mocks.getAttachedOnMessage()?.({
+        type: "frame",
+        frame: frame(40, 120, 1),
+      });
+    });
+
+    mocks.renderer.rowAtPoint
+      .mockReturnValueOnce({ column: 0, row: 0 })
+      .mockReturnValueOnce({ column: 5, row: 0 })
+      .mockReturnValueOnce({ column: 5, row: 0 });
+
+    const canvas = view.getByLabelText("Terminal");
+    fireEvent.mouseDown(canvas, { clientX: 8, clientY: 8, button: 0 });
+    fireEvent.mouseMove(canvas, { clientX: 48, clientY: 8, buttons: 1 });
+    fireEvent.mouseUp(canvas, { clientX: 48, clientY: 8, button: 0 });
+
+    await act(async () => {
+      fireEvent.contextMenu(canvas.closest(".terminal-renderer")!);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mocks.terminalService.selectionText).toHaveBeenCalledWith(
+      "session-1",
+      { stableRow: 0, column: 0 },
+      { stableRow: 0, column: 5 },
+    );
+    expect(mocks.terminalService.writeClipboardText).toHaveBeenCalledWith(
+      "hello",
+    );
+    expect(writeText).not.toHaveBeenCalled();
+
+    view.unmount();
+  });
+
+  it("pastes on right-click when the click left only a collapsed selection", async () => {
+    mocks.terminalService.readClipboardText.mockResolvedValue("paste-me");
+
+    const { WeztermTerminalView } = await import("./WeztermTerminalView");
+    const view = render(
+      <WeztermTerminalView
+        sessionId="session-1"
+        active
+        defaultTitle="Terminal"
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      mocks.resolveResize();
+      await Promise.resolve();
+    });
+    act(() => {
+      mocks.getAttachedOnMessage()?.({
+        type: "frame",
+        frame: frame(40, 120, 1),
+      });
+    });
+
+    mocks.renderer.rowAtPoint.mockReturnValue({ column: 3, row: 0 });
+    const canvas = view.getByLabelText("Terminal");
+    fireEvent.mouseDown(canvas, { clientX: 24, clientY: 8, button: 0 });
+    fireEvent.mouseUp(canvas, { clientX: 24, clientY: 8, button: 0 });
+
+    await act(async () => {
+      fireEvent.contextMenu(canvas.closest(".terminal-renderer")!);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mocks.terminalService.selectionText).not.toHaveBeenCalled();
+    expect(mocks.terminalService.writeClipboardText).not.toHaveBeenCalled();
+    expect(mocks.terminalService.paste).toHaveBeenCalledWith(
+      "session-1",
+      "paste-me",
+    );
+
+    view.unmount();
   });
 });
