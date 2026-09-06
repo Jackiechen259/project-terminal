@@ -1129,6 +1129,9 @@ pub fn session_attach_render(
         let mut frames = subscription.frames;
         let mut controls = subscription.controls;
         let mut cancellation = subscription.cancellation;
+        let mut paused_rx = subscription.paused;
+        let hub = subscription.hub;
+        let mut paused = *paused_rx.borrow();
         loop {
             tokio::select! {
                 changed = cancellation.changed() => {
@@ -1136,9 +1139,19 @@ pub fn session_attach_render(
                         break;
                     }
                 }
+                changed = paused_rx.changed() => {
+                    if changed.is_err() {
+                        break;
+                    }
+                    paused = *paused_rx.borrow();
+                }
                 frame = frames.recv() => {
-                    let body = match frame {
-                        Ok(frame) => DesktopRenderFrame::Frame { frame: &frame }.to_body(),
+                    let body = match &frame {
+                        Ok(_) if paused => None,
+                        Ok(frame) => DesktopRenderFrame::Frame {
+                            frame: frame.as_ref(),
+                        }
+                        .to_body(),
                         Err(RecvError::Lagged(_)) => {
                             session.request_render_snapshot();
                             DesktopRenderFrame::Lagged.to_body()
@@ -1149,6 +1162,9 @@ pub fn session_attach_render(
                         if on_frame.send(body).is_err() {
                             break;
                         }
+                    }
+                    if !matches!(frame, Err(RecvError::Closed)) {
+                        hub.mark_frame_consumed();
                     }
                 }
                 event = controls.recv() => {
@@ -1196,6 +1212,18 @@ pub fn session_detach(
     client_id: String,
 ) -> AppResult<()> {
     terminal.manager.detach(&session_id, &client_id)
+}
+
+#[tauri::command]
+pub fn session_set_renderer_paused(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+    client_id: String,
+    paused: bool,
+) -> AppResult<()> {
+    terminal
+        .manager
+        .set_renderer_paused(&session_id, &client_id, paused)
 }
 
 #[tauri::command]

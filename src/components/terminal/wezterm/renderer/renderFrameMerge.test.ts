@@ -7,7 +7,7 @@ import type {
   TerminalRenderRow,
 } from "@/lib/terminalFrames";
 
-import { applyFrameToRowCache } from "./renderFrameMerge";
+import { applyFrameToRowCache, forEachCellCluster } from "./renderFrameMerge";
 
 function defaultColor(): RenderColor {
   return { kind: "default" };
@@ -63,6 +63,36 @@ function frame(
     fullSnapshot: options.fullSnapshot ?? false,
   };
 }
+
+describe("compacted render runs", () => {
+  it("walks a compacted ASCII run as one cluster per column", () => {
+    const clusters: Array<[number, string, number]> = [];
+    forEachCellCluster(
+      { column: 2, text: "hello", width: 5 },
+      (column, text, width) => {
+        clusters.push([column, text, width]);
+      },
+    );
+    expect(clusters).toEqual([
+      [2, "h", 1],
+      [3, "e", 1],
+      [4, "l", 1],
+      [5, "l", 1],
+      [6, "o", 1],
+    ]);
+  });
+
+  it("keeps a single wide cluster intact", () => {
+    const clusters: Array<[number, string, number]> = [];
+    forEachCellCluster(
+      { column: 0, text: "界", width: 2 },
+      (column, text, width) => {
+        clusters.push([column, text, width]);
+      },
+    );
+    expect(clusters).toEqual([[0, "界", 2]]);
+  });
+});
 
 describe("RenderFrame cache semantics", () => {
   it("retains overlapping rows when automatic scrolling moves the viewport", () => {

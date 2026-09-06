@@ -889,7 +889,9 @@ mod tests {
         assert!(!frame.full_snapshot);
         assert_eq!(frame.dirty_rows.len(), 1);
         assert_eq!(frame.dirty_rows[0].stable_row, 0);
-        assert_eq!(frame.dirty_rows[0].cells[0].text, "h");
+        assert_eq!(frame.dirty_rows[0].cells[0].text, "hello");
+        assert_eq!(frame.dirty_rows[0].cells[0].width, 5);
+        assert_eq!(frame.dirty_rows[0].cells.len(), 1);
         assert_eq!(frame.cursor.column, 5);
         assert!(engine.take_render_frame().is_none());
     }
@@ -950,6 +952,8 @@ mod tests {
         assert_eq!(row.cells[0].foreground, RenderColor::Rgba([1, 2, 3, 255]));
         assert_eq!(row.cells[1].text, "界");
         assert_eq!(row.cells[1].width, 2);
+        assert_eq!(row.cells[2].text, "link");
+        assert_eq!(row.cells[2].width, 4);
         assert_eq!(
             row.cells[2].hyperlink.as_deref(),
             Some("https://example.com")

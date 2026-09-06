@@ -54,7 +54,16 @@ export interface TerminalImageCellFrame {
  */
 export interface TerminalRenderCell {
   column: number;
+  /**
+   * Columns occupied by `text`. A single wide cluster is 2; a compacted run
+   * of five ASCII characters is 5. Absent means 1.
+   */
   width?: number;
+  /**
+   * One grapheme, or a compacted run of adjacent graphemes that share every
+   * attribute. Renderers must walk clusters when they need per-column work
+   * such as selection; painting may draw the whole run in one call.
+   */
   text: string;
   foreground?: RenderColor;
   background?: RenderColor;

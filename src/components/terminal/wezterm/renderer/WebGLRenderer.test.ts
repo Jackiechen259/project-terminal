@@ -231,6 +231,90 @@ describe("WebGLRenderer surface initialization", () => {
     renderer.dispose();
   });
 
+  it("draws a compacted ASCII run as per-column atlas glyphs", () => {
+    const renderer = new WebGLRenderer();
+    const canvas = document.createElement("canvas");
+    configureGpu(renderer, canvas);
+    const atlas = configureAtlas(renderer);
+    configureGrid(renderer);
+    renderer.resize(80, 34, 2, 8);
+
+    const compactedRow: TerminalRenderRow = {
+      stableRow: 0,
+      cells: [{ column: 0, text: "hello", width: 5 }],
+    };
+    renderer.render({ ...frame(1, 0, [compactedRow], true), cols: 8 });
+    flushPrimaryFrame();
+
+    expect(atlas.get.mock.calls.map((call) => [call[0], call[1]])).toEqual([
+      ["h", 1],
+      ["e", 1],
+      ["l", 1],
+      ["l", 1],
+      ["o", 1],
+    ]);
+    renderer.dispose();
+  });
+
+  it("does not enter Canvas fallback after the atlas recycles mid-pass", () => {
+    const renderer = new WebGLRenderer();
+    const canvas = document.createElement("canvas");
+    configureGpu(renderer, canvas);
+    const atlas = configureAtlas(renderer);
+    configureGrid(renderer);
+    renderer.resize(80, 34, 2, 8);
+
+    const record = {
+      u0: 0,
+      v0: 0,
+      u1: 1,
+      v1: 1,
+      padding: 2,
+      color: false,
+    };
+    let pass = 0;
+    atlas.beginPass.mockImplementation(() => {
+      pass += 1;
+    });
+    atlas.get.mockImplementation(() => (pass === 1 ? null : record));
+    atlas.wasResetDuringPass.mockImplementation(() => pass === 1);
+
+    const compactedRow: TerminalRenderRow = {
+      stableRow: 0,
+      cells: [{ column: 0, text: "ab", width: 2 }],
+    };
+    renderer.render({ ...frame(1, 0, [compactedRow], true), cols: 8 });
+    flushPrimaryFrame();
+
+    expect((renderer as unknown as { gpuFallback: boolean }).gpuFallback).toBe(
+      false,
+    );
+    expect(pass).toBe(2);
+    renderer.dispose();
+  });
+
+  it("does not schedule a GPU paint when the selection changes", () => {
+    const renderer = new WebGLRenderer();
+    const canvas = document.createElement("canvas");
+    configureGpu(renderer, canvas);
+    configureAtlas(renderer);
+    configureGrid(renderer);
+    renderer.resize(80, 34, 2, 4);
+
+    renderer.renderImmediate(frame(1, 0, [row(0)], true));
+    callbacks.clear();
+
+    renderer.setSelection({
+      anchor: { stableRow: 0, column: 0 },
+      focus: { stableRow: 0, column: 2 },
+    });
+
+    expect(
+      (renderer as unknown as { frameRequest: number | null }).frameRequest,
+    ).toBeNull();
+    renderer.dispose();
+  });
+
   it("uses the complete fractional-DPR drawing buffer for the background", () => {
     const renderer = new WebGLRenderer();
     const canvas = document.createElement("canvas");
@@ -300,6 +384,9 @@ function configureGpu(renderer: WebGLRenderer, canvas: HTMLCanvasElement) {
     disableVertexAttribArray: vi.fn(),
     vertexAttrib4f: vi.fn(),
     uniform2f: vi.fn(),
+    uniform1i: vi.fn(),
+    activeTexture: vi.fn(),
+    bindTexture: vi.fn(),
     drawArrays: vi.fn(),
     deleteBuffer: vi.fn(),
     deleteProgram: vi.fn(),
@@ -323,12 +410,41 @@ function configureGpu(renderer: WebGLRenderer, canvas: HTMLCanvasElement) {
   internals.solidPositionLocation = 0;
   internals.solidColorLocation = 1;
   internals.solidResolutionLocation = {};
+  internals.glyphProgram = {};
+  internals.glyphBuffer = {};
+  internals.glyphPositionLocation = 0;
+  internals.glyphTexCoordLocation = 1;
+  internals.glyphColorLocation = 2;
+  internals.glyphColorGlyphLocation = 3;
+  internals.glyphResolutionLocation = {};
+  internals.glyphAtlasLocation = {};
 
   return gl as WebGL2RenderingContext & {
     viewport: ReturnType<typeof vi.fn>;
     bufferData: ReturnType<typeof vi.fn>;
     uniform2f: ReturnType<typeof vi.fn>;
   };
+}
+
+function configureAtlas(renderer: WebGLRenderer) {
+  const record = {
+    u0: 0,
+    v0: 0,
+    u1: 1,
+    v1: 1,
+    padding: 2,
+    color: false,
+  };
+  const atlas = {
+    configure: vi.fn(),
+    beginPass: vi.fn(),
+    wasResetDuringPass: vi.fn(() => false),
+    getTexture: vi.fn(() => ({})),
+    dispose: vi.fn(),
+    get: vi.fn(() => record),
+  };
+  (renderer as unknown as { atlas: typeof atlas }).atlas = atlas;
+  return atlas;
 }
 
 function flushPrimaryFrame() {

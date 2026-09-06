@@ -6,7 +6,7 @@
 //! session with no frame subscribers keeps parsing and retaining terminal state
 //! but does not continuously serialize or publish render frames.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex as StdMutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -19,13 +19,25 @@ use crate::terminal_engine::{
 };
 
 const FRAME_INTERVAL: Duration = Duration::from_millis(16);
-const FRAME_CHANNEL_CAPACITY: usize = 32;
+const FRAME_CHANNEL_CAPACITY: usize = 4;
+const IN_FLIGHT_TIMEOUT: Duration = Duration::from_millis(80);
 const CONTROL_CHANNEL_CAPACITY: usize = 128;
 
 pub struct TerminalFrameSubscription {
     pub frames: broadcast::Receiver<Arc<RenderFrame>>,
     pub controls: broadcast::Receiver<Arc<TerminalControlEvent>>,
     pub cancellation: tokio::sync::watch::Receiver<bool>,
+    pub paused: tokio::sync::watch::Receiver<bool>,
+    pub(crate) hub: Arc<TerminalFrameHub>,
+}
+
+impl TerminalFrameSubscription {
+    /// Release scheduler backpressure after this frame has been serialized
+    /// onto the renderer transport. Skipping this stalls later extracts so
+    /// dirty rows accumulate instead of overflowing the broadcast buffer.
+    pub fn note_consumed(&self) {
+        self.hub.mark_frame_consumed();
+    }
 }
 
 pub struct TerminalFrameHub {
@@ -38,6 +50,15 @@ pub struct TerminalFrameHub {
     /// window can skip the mutex lock and condvar notify entirely.
     pending: AtomicBool,
     shutdown: AtomicBool,
+    /// True while a published frame has not yet been acknowledged by a
+    /// consumer. The scheduler refuses to extract another frame until this
+    /// clears, so wezterm dirty tracking accumulates instead of dropping
+    /// rows and then forcing a full snapshot.
+    in_flight: AtomicBool,
+    /// Subscribers that currently want render frames. Hidden desktop views
+    /// decrement this; control events still flow. Extract is skipped when
+    /// the count is zero so a background agent TUI does not serialize JSON.
+    active_frame_consumers: AtomicUsize,
 }
 
 impl TerminalFrameHub {
@@ -50,6 +71,8 @@ impl TerminalFrameHub {
             signal: Arc::new((StdMutex::new(false), Condvar::new())),
             pending: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
+            in_flight: AtomicBool::new(false),
+            active_frame_consumers: AtomicUsize::new(0),
         });
 
         let hub_for_thread = Arc::clone(&hub);
@@ -57,13 +80,45 @@ impl TerminalFrameHub {
         hub
     }
 
-    pub fn subscribe(&self) -> TerminalFrameSubscription {
+    pub fn subscribe(self: &Arc<Self>) -> TerminalFrameSubscription {
+        self.active_frame_consumers.fetch_add(1, Ordering::AcqRel);
         let cancellation = tokio::sync::watch::channel(false).1;
+        let paused = tokio::sync::watch::channel(false).1;
         TerminalFrameSubscription {
             frames: self.frames.subscribe(),
             controls: self.controls.subscribe(),
             cancellation,
+            paused,
+            hub: Arc::clone(self),
         }
+    }
+
+    pub fn pause_frame_delivery(&self) {
+        self.active_frame_consumers
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                Some(count.saturating_sub(1))
+            })
+            .ok();
+    }
+
+    pub fn resume_frame_delivery(&self) {
+        self.active_frame_consumers.fetch_add(1, Ordering::AcqRel);
+        self.notify();
+    }
+
+    fn wants_frames(&self) -> bool {
+        self.active_frame_consumers.load(Ordering::Acquire) > 0
+    }
+
+    pub fn mark_frame_consumed(&self) {
+        self.in_flight.store(false, Ordering::Release);
+        // Always wake the scheduler. `notify()` coalesces through `pending`
+        // and can skip the condvar if a PTY burst already set it, which
+        // would leave this wait sitting until `IN_FLIGHT_TIMEOUT`.
+        let (pending, wake) = &*self.signal;
+        *pending.lock().unwrap() = true;
+        self.pending.store(true, Ordering::Release);
+        wake.notify_one();
     }
 
     pub fn renderer_count(&self) -> usize {
@@ -130,6 +185,20 @@ fn run_scheduler(engine: Arc<Mutex<WeztermTerminalEngine>>, hub: Arc<TerminalFra
             let (next, _) = wake.wait_timeout(is_pending, remaining).unwrap();
             is_pending = next;
         }
+        if hub.in_flight.load(Ordering::Acquire) {
+            let deadline = Instant::now() + IN_FLIGHT_TIMEOUT;
+            while hub.in_flight.load(Ordering::Acquire)
+                && Instant::now() < deadline
+                && !hub.shutdown.load(Ordering::Acquire)
+            {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                let (next, _) = wake.wait_timeout(is_pending, remaining).unwrap();
+                is_pending = next;
+            }
+            if hub.in_flight.load(Ordering::Acquire) {
+                hub.in_flight.store(false, Ordering::Release);
+            }
+        }
         drop(is_pending);
 
         if hub.shutdown.load(Ordering::Acquire) {
@@ -141,7 +210,11 @@ fn run_scheduler(engine: Arc<Mutex<WeztermTerminalEngine>>, hub: Arc<TerminalFra
 
         let (frame, controls) = {
             let mut model = engine.lock();
-            let frame = model.take_render_frame().map(Arc::new);
+            let frame = if hub.wants_frames() {
+                model.take_render_frame().map(Arc::new)
+            } else {
+                None
+            };
             let controls = model
                 .drain_control_events()
                 .into_iter()
@@ -151,7 +224,10 @@ fn run_scheduler(engine: Arc<Mutex<WeztermTerminalEngine>>, hub: Arc<TerminalFra
         };
 
         if let Some(frame) = frame {
-            let _ = hub.frames.send(frame);
+            hub.in_flight.store(true, Ordering::Release);
+            if hub.frames.send(frame).is_err() {
+                hub.in_flight.store(false, Ordering::Release);
+            }
         }
         for event in controls {
             let _ = hub.controls.send(event);
@@ -163,7 +239,7 @@ fn run_scheduler(engine: Arc<Mutex<WeztermTerminalEngine>>, hub: Arc<TerminalFra
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal_engine::{TerminalEngine, WeztermTerminalConfig};
+    use crate::terminal_engine::{TerminalControlEvent, TerminalEngine, WeztermTerminalConfig};
     use std::io::Write;
     use std::time::Instant;
     use wezterm_term::TerminalSize;
@@ -216,7 +292,10 @@ mod tests {
         let mut frames = Vec::new();
         while Instant::now() < deadline && frames.is_empty() {
             match subscription.frames.try_recv() {
-                Ok(frame) => frames.push(frame),
+                Ok(frame) => {
+                    subscription.note_consumed();
+                    frames.push(frame);
+                }
                 Err(broadcast::error::TryRecvError::Empty) => {
                     thread::sleep(Duration::from_millis(2));
                 }
@@ -232,6 +311,156 @@ mod tests {
             frames.push(frame);
         }
         assert_eq!(frames.len(), 1, "a no-op scheduler tick emitted a frame");
+
+        hub.shutdown();
+    }
+
+    #[test]
+    fn holds_dirty_rows_until_the_previous_frame_is_consumed() {
+        let model = Arc::new(Mutex::new(engine()));
+        let hub = TerminalFrameHub::new(Arc::clone(&model));
+        let mut subscription = hub.subscribe();
+
+        {
+            let mut model = model.lock();
+            model.feed(b"one\r\n");
+        }
+        hub.notify();
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let first = loop {
+            match subscription.frames.try_recv() {
+                Ok(frame) => break frame,
+                Err(broadcast::error::TryRecvError::Empty) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(2));
+                }
+                Err(error) => panic!("first frame failed: {error}"),
+            }
+        };
+        assert!(
+            first
+                .dirty_rows
+                .iter()
+                .any(|row| row.cells.iter().any(|cell| cell.text.contains("one"))),
+            "first frame missed the initial output"
+        );
+
+        {
+            let mut model = model.lock();
+            model.feed(b"two\r\n");
+        }
+        hub.notify();
+        thread::sleep(FRAME_INTERVAL + Duration::from_millis(8));
+        match subscription.frames.try_recv() {
+            Ok(_) => panic!("extracted a second frame before the first was consumed"),
+            Err(broadcast::error::TryRecvError::Empty) => {}
+            Err(error) => panic!("backpressure check failed: {error}"),
+        }
+
+        subscription.note_consumed();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let second = loop {
+            match subscription.frames.try_recv() {
+                Ok(frame) => {
+                    subscription.note_consumed();
+                    break frame;
+                }
+                Err(broadcast::error::TryRecvError::Empty) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(2));
+                }
+                Err(error) => panic!("second frame failed: {error}"),
+            }
+        };
+        assert!(
+            second
+                .dirty_rows
+                .iter()
+                .any(|row| row.cells.iter().any(|cell| cell.text.contains("two"))),
+            "accumulated output was lost while the first frame was in flight"
+        );
+
+        hub.shutdown();
+    }
+
+    #[test]
+    fn skips_frame_extract_while_every_subscriber_is_paused_but_still_emits_controls() {
+        let model = Arc::new(Mutex::new(engine()));
+        let hub = TerminalFrameHub::new(Arc::clone(&model));
+        let mut subscription = hub.subscribe();
+        hub.pause_frame_delivery();
+
+        {
+            let mut model = model.lock();
+            model.feed(b"hidden\r\n\x07");
+        }
+        hub.notify();
+        thread::sleep(FRAME_INTERVAL + Duration::from_millis(8));
+        match subscription.frames.try_recv() {
+            Ok(_) => panic!("extracted a frame while every subscriber was paused"),
+            Err(broadcast::error::TryRecvError::Empty) => {}
+            Err(error) => panic!("paused extract check failed: {error}"),
+        }
+        let mut saw_bell = false;
+        while let Ok(event) = subscription.controls.try_recv() {
+            if matches!(event.as_ref(), TerminalControlEvent::Bell) {
+                saw_bell = true;
+            }
+        }
+        assert!(
+            saw_bell,
+            "control events must still flow while frames are paused"
+        );
+
+        hub.shutdown();
+    }
+
+    #[test]
+    fn extracts_again_after_one_subscriber_resumes() {
+        let model = Arc::new(Mutex::new(engine()));
+        let hub = TerminalFrameHub::new(Arc::clone(&model));
+        let mut subscription = hub.subscribe();
+        hub.pause_frame_delivery();
+
+        {
+            let mut model = model.lock();
+            model.feed(b"paused-output\r\n");
+        }
+        hub.notify();
+        thread::sleep(FRAME_INTERVAL + Duration::from_millis(8));
+        assert!(
+            matches!(
+                subscription.frames.try_recv(),
+                Err(broadcast::error::TryRecvError::Empty)
+            ),
+            "paused subscriber still received a frame"
+        );
+
+        {
+            let mut model = model.lock();
+            model.request_full_snapshot();
+        }
+        hub.resume_frame_delivery();
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let resumed = loop {
+            match subscription.frames.try_recv() {
+                Ok(frame) => {
+                    subscription.note_consumed();
+                    break frame;
+                }
+                Err(broadcast::error::TryRecvError::Empty) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(2));
+                }
+                Err(error) => panic!("resumed frame failed: {error}"),
+            }
+        };
+        assert!(
+            resumed.dirty_rows.iter().any(|row| row
+                .cells
+                .iter()
+                .any(|cell| cell.text.contains("paused-output"))),
+            "resume snapshot missed output accumulated while paused"
+        );
 
         hub.shutdown();
     }

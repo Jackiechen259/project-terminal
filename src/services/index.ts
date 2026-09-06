@@ -612,6 +612,12 @@ export const terminalService = {
   },
   detach: (sessionId: string, clientId: string) =>
     invokeOrThrow<void>("session_detach", { sessionId, clientId }),
+  setRendererPaused: (sessionId: string, clientId: string, paused: boolean) =>
+    invokeOrThrow<void>("session_set_renderer_paused", {
+      sessionId,
+      clientId,
+      paused,
+    }),
   requestRenderSnapshot: (sessionId: string) =>
     invokeOrThrow<void>("terminal_request_render_snapshot", { sessionId }),
   list: () =>

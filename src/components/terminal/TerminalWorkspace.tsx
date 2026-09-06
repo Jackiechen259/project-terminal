@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -98,6 +99,9 @@ export function TerminalWorkspace() {
   const activeProjectId = useTerminalStore((s) => s.activeProjectId);
   const projects = useProjectStore((s) => s.projects);
   const tabsById = useTerminalStore((s) => s.tabsById);
+  const allTabIds = useTerminalStore(
+    useShallow((s) => Object.keys(s.tabsById)),
+  );
   const tabGroups = useTerminalStore((s) => s.tabGroupsByProjectId);
   const splitViews = useTerminalStore((s) => s.splitViewsByProjectId);
   const setActiveTab = useTerminalStore((s) => s.setActiveTab);
@@ -1234,7 +1238,9 @@ export function TerminalWorkspace() {
               bounds change when entering or leaving a split, so a layout
               change never disposes/recreates a renderer or its PTY.
             */}
-            {Object.values(tabsById).map((tab) => {
+            {allTabIds.map((tabId) => {
+              const tab = tabsById[tabId];
+              if (!tab) return null;
               const pane = paneRenderByTabId.get(tab.id);
               const isSplitPane =
                 tab.projectId === activeProjectId && Boolean(pane);

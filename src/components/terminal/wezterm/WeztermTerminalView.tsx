@@ -169,6 +169,10 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     height: number;
   } | null>(null);
   const resizeRequestRef = useRef(0);
+  const clientIdRef = useRef<string | null>(null);
+  const activeRef = useRef(active);
+  const wasActiveRef = useRef(active);
+  activeRef.current = active;
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -734,8 +738,17 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     if (!renderer) return;
     renderer.setVisible(active);
     renderer.setFocused(focused);
+    const clientId = clientIdRef.current;
+    if (clientId) {
+      void terminalService
+        .setRendererPaused(sessionId, clientId, !active)
+        .catch(() => {});
+    }
+    const becameVisible = active && !wasActiveRef.current;
+    wasActiveRef.current = active;
     if (active) renderer.redraw();
-  }, [active, focused]);
+    if (becameVisible) requestRenderSnapshot();
+  }, [active, focused, requestRenderSnapshot, sessionId]);
 
   const resizeSurface = useCallback(() => {
     const surface = surfaceRef.current;
@@ -808,6 +821,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
 
   useEffect(() => {
     const clientId = newClientId();
+    clientIdRef.current = clientId;
     let cancelled = false;
     let detachRequested = false;
 
@@ -914,7 +928,16 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
 
     void terminalService
       .attachRender(sessionId, clientId, onMessage)
-      .then((attachment) => {
+      .then(async (attachment) => {
+        if (cancelled) {
+          detach();
+          return;
+        }
+        if (!activeRef.current) {
+          await terminalService
+            .setRendererPaused(sessionId, clientId, true)
+            .catch(() => {});
+        }
         if (cancelled) {
           detach();
           return;
@@ -938,6 +961,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       cancelled = true;
       resizeRequestRef.current += 1;
       detach();
+      clientIdRef.current = null;
       awaitingSnapshotRef.current = false;
       snapshotRequestedRef.current = false;
     };

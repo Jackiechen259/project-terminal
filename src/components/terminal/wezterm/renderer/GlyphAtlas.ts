@@ -16,12 +16,20 @@ export interface GlyphRecord {
   color: boolean;
 }
 
-const ATLAS_SIZE = 1024;
+const ATLAS_SIZE = 2048;
 
 function deviceFont(font: string, dpr: number) {
   return font.replace(/(\d+(?:\.\d+)?)px/u, (_, size: string) => {
     return `${Number(size) * dpr}px`;
   });
+}
+
+/** ASCII cannot be colour-emoji; skip the per-glyph pixel scan. */
+export function glyphMayBeColor(text: string) {
+  for (let index = 0; index < text.length; index += 1) {
+    if (text.charCodeAt(index) > 127) return true;
+  }
+  return false;
 }
 
 export class GlyphAtlas {
@@ -35,6 +43,7 @@ export class GlyphAtlas {
   private cellHeight = 17;
   private baseline = 14;
   private dpr = 1;
+  private resetDuringPass = false;
 
   constructor(private readonly gl: WebGL2RenderingContext) {
     const canvas = document.createElement("canvas");
@@ -101,7 +110,12 @@ export class GlyphAtlas {
       this.cursorY += this.rowHeight;
       this.rowHeight = 0;
     }
-    if (this.cursorY + height > ATLAS_SIZE) return null;
+    if (this.cursorY + height > ATLAS_SIZE) {
+      if (this.records.size === 0) return null;
+      this.reset();
+      this.resetDuringPass = true;
+      return null;
+    }
 
     const x = this.cursorX;
     const y = this.cursorY;
@@ -114,13 +128,15 @@ export class GlyphAtlas {
     context.fillText(text, x + padding, y + padding + this.baseline * this.dpr);
     const pixels = context.getImageData(x, y, width, height);
     let color = false;
-    for (let index = 0; index < pixels.data.length; index += 4) {
-      if (
-        pixels.data[index] !== pixels.data[index + 1] ||
-        pixels.data[index + 1] !== pixels.data[index + 2]
-      ) {
-        color = true;
-        break;
+    if (glyphMayBeColor(text)) {
+      for (let index = 0; index < pixels.data.length; index += 4) {
+        if (
+          pixels.data[index] !== pixels.data[index + 1] ||
+          pixels.data[index + 1] !== pixels.data[index + 2]
+        ) {
+          color = true;
+          break;
+        }
       }
     }
 
@@ -156,9 +172,25 @@ export class GlyphAtlas {
     return this.texture;
   }
 
+  beginPass() {
+    this.resetDuringPass = false;
+  }
+
+  wasResetDuringPass() {
+    return this.resetDuringPass;
+  }
+
   dispose() {
     this.gl.deleteTexture(this.texture);
     this.records.clear();
+  }
+
+  private reset() {
+    this.records.clear();
+    this.cursorX = 0;
+    this.cursorY = 0;
+    this.rowHeight = 0;
+    this.clearTexture();
   }
 
   private clearTexture() {

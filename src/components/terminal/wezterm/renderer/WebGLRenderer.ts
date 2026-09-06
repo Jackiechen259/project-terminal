@@ -23,7 +23,7 @@ import type {
   TerminalSelection,
   TerminalSelectionPoint,
 } from "./TerminalRenderer";
-import { applyFrameToRowCache } from "./renderFrameMerge";
+import { applyFrameToRowCache, forEachCellCluster } from "./renderFrameMerge";
 
 type Rgba = [number, number, number, number];
 
@@ -146,20 +146,11 @@ function createProgram(
   return program;
 }
 
-function normalizeSelection(
-  anchor: TerminalSelectionPoint,
-  focus: TerminalSelectionPoint,
-): [TerminalSelectionPoint, TerminalSelectionPoint] {
-  const anchorBeforeFocus =
-    anchor.stableRow < focus.stableRow ||
-    (anchor.stableRow === focus.stableRow && anchor.column <= focus.column);
-  return anchorBeforeFocus ? [anchor, focus] : [focus, anchor];
-}
-
-function fontForCell(cell: TerminalRenderCell, font: TerminalFontOptions) {
-  const style = cell.italic ? "italic " : "";
-  const weight = cell.intensity === "bold" ? font.weightBold : font.weight;
-  return `${style}${weight} ${font.size}px ${font.family}`;
+function isSpaceOnly(text: string) {
+  for (let index = 0; index < text.length; index += 1) {
+    if (text.charCodeAt(index) !== 32) return false;
+  }
+  return true;
 }
 
 /**
@@ -209,12 +200,14 @@ export class WebGLRenderer implements TerminalRenderer {
     lineHeight: 1.2,
     letterSpacing: 0,
   };
+  private fontNormal = "400 14px monospace";
+  private fontBold = "700 14px monospace";
+  private fontItalic = "italic 400 14px monospace";
+  private fontBoldItalic = "italic 700 14px monospace";
   private canvasRenderer = new CanvasRenderer();
   private rowCache = new Map<number, TerminalRenderRow>();
   private frame: TerminalRenderFrame | null = null;
   private frameRequest: number | null = null;
-  private selection: TerminalSelection | null = null;
-  private searchMatch: TerminalSearchMatch | null = null;
   private gpuFallback = false;
   private visible = true;
   /** Reused, geometrically-grown vertex scratch buffers - see `pushRect`/
@@ -409,6 +402,10 @@ export class WebGLRenderer implements TerminalRenderer {
 
   setFont(font: TerminalFontOptions) {
     this.font = font;
+    this.fontNormal = `${font.weight} ${font.size}px ${font.family}`;
+    this.fontBold = `${font.weightBold} ${font.size}px ${font.family}`;
+    this.fontItalic = `italic ${font.weight} ${font.size}px ${font.family}`;
+    this.fontBoldItalic = `italic ${font.weightBold} ${font.size}px ${font.family}`;
     this.canvasRenderer.setFont(font);
     this.updateMetrics();
     this.atlas?.configure(
@@ -449,18 +446,11 @@ export class WebGLRenderer implements TerminalRenderer {
   }
 
   setSelection(selection: TerminalSelection | null) {
-    this.selection = selection;
     this.canvasRenderer.setSelection(selection);
-    // Coalesce to one repaint per animation frame instead of one per
-    // pointermove - the previous synchronous paintCurrentFrame() call here
-    // repainted the entire grid on every mouse-move event of a drag.
-    this.schedulePaint();
   }
 
   setSearchMatch(match: TerminalSearchMatch | null) {
-    this.searchMatch = match;
     this.canvasRenderer.setSearchMatch(match);
-    this.schedulePaint();
   }
 
   selectionText(anchor: TerminalSelectionPoint, focus: TerminalSelectionPoint) {
@@ -664,20 +654,14 @@ export class WebGLRenderer implements TerminalRenderer {
       const row = this.rowCache.get(stableRow);
       if (!row) continue;
       for (const cell of row.cells) {
-        const selected = this.cellIsSelected(stableRow, cell);
-        const searched = this.cellIsSearchMatched(stableRow, cell);
-        if (
-          (cell.background?.kind ?? "default") === "default" &&
-          !cell.reverse &&
-          !selected &&
-          !searched
-        )
+        const width = Math.max(1, cell.width ?? 1);
+        if ((cell.background?.kind ?? "default") === "default" && !cell.reverse)
           continue;
-        const colors = this.cellColors(cell, stableRow);
+        const colors = this.cellColors(cell);
         this.pushRect(
           cell.column * this.cellWidth,
           rowOffset * this.cellHeight,
-          this.cellWidth * Math.max(1, cell.width ?? 1),
+          this.cellWidth * width,
           colors[1],
         );
       }
@@ -721,33 +705,52 @@ export class WebGLRenderer implements TerminalRenderer {
     const atlas = this.atlas;
     if (!gl || !program || !buffer || !atlas) return false;
     atlas.configure(this.cellWidth, this.cellHeight, this.baseline, this.dpr);
-    this.glyphVertexCount = 0;
-    for (let rowOffset = 0; rowOffset < frame.rows; rowOffset++) {
-      const stableRow = frame.viewportTop + rowOffset;
-      const row = this.rowCache.get(stableRow);
-      if (!row) continue;
-      for (const cell of row.cells) {
-        if (cell.invisible || !cell.text) continue;
-        const record = atlas.get(
-          cell.text,
-          Math.max(1, cell.width ?? 1),
-          fontForCell(cell, this.font),
-        );
-        if (!record) return false;
-        const colors = this.cellColors(cell, stableRow)[0];
-        const alpha = (colors[3] / 255) * (cell.intensity === "half" ? 0.5 : 1);
-        this.pushGlyph(
-          cell.column * this.cellWidth,
-          rowOffset * this.cellHeight,
-          this.cellWidth * Math.max(1, cell.width ?? 1),
-          this.cellHeight,
-          record,
-          colors[0] / 255,
-          colors[1] / 255,
-          colors[2] / 255,
-          alpha,
-        );
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      atlas.beginPass();
+      this.glyphVertexCount = 0;
+      let restart = false;
+      rowLoop: for (let rowOffset = 0; rowOffset < frame.rows; rowOffset++) {
+        const stableRow = frame.viewportTop + rowOffset;
+        const row = this.rowCache.get(stableRow);
+        if (!row) continue;
+        for (const cell of row.cells) {
+          if (cell.invisible || !cell.text) continue;
+          const font = this.fontForCell(cell);
+          const draw = (column: number, text: string, width: number) => {
+            if (!text || isSpaceOnly(text)) return true;
+            const record = atlas.get(text, width, font);
+            if (!record) return false;
+            const colors = this.cellColors(cell)[0];
+            const alpha =
+              (colors[3] / 255) * (cell.intensity === "half" ? 0.5 : 1);
+            this.pushGlyph(
+              column * this.cellWidth,
+              rowOffset * this.cellHeight,
+              this.cellWidth * width,
+              this.cellHeight,
+              record,
+              colors[0] / 255,
+              colors[1] / 255,
+              colors[2] / 255,
+              alpha,
+            );
+            return true;
+          };
+          let failed = false;
+          forEachCellCluster(cell, (column, text, clusterWidth) => {
+            if (!failed && !draw(column, text, clusterWidth)) failed = true;
+          });
+          if (failed) {
+            if (atlas.wasResetDuringPass()) {
+              restart = true;
+              break rowLoop;
+            }
+            return false;
+          }
+        }
       }
+      if (!restart) break;
+      if (attempt === 1) return false;
     }
     if (this.glyphVertexCount === 0) return true;
     const { width, height } = this.drawingBufferSize();
@@ -961,55 +964,23 @@ export class WebGLRenderer implements TerminalRenderer {
     this.contrastCache.clear();
   }
 
-  private cellColors(
-    cell: TerminalRenderCell,
-    stableRow: number,
-  ): [Rgba, Rgba] {
+  private cellColors(cell: TerminalRenderCell): [Rgba, Rgba] {
     let foreground = this.colorFor(cell.foreground, "foreground");
     let background = this.colorFor(cell.background, "background");
     if (cell.reverse) [foreground, background] = [background, foreground];
-    if (this.cellIsSelected(stableRow, cell)) {
-      background = this.cachedParseColor(
-        this.theme.selectionBackground ?? this.theme.foreground,
-      );
-      foreground = this.cachedParseColor(this.theme.foreground);
-    } else if (this.cellIsSearchMatched(stableRow, cell)) {
-      background = this.cachedParseColor(this.theme.yellow ?? "#a68b00");
-      foreground = this.cachedParseColor(this.theme.background);
-    } else {
-      foreground = this.cachedEnsureContrast(
-        foreground,
-        background,
-        this.theme.minimumContrast,
-      );
-    }
+    foreground = this.cachedEnsureContrast(
+      foreground,
+      background,
+      this.theme.minimumContrast,
+    );
     return [foreground, background];
   }
 
-  private cellIsSelected(stableRow: number, cell: TerminalRenderCell) {
-    if (!this.selection) return false;
-    const [start, end] = normalizeSelection(
-      this.selection.anchor,
-      this.selection.focus,
-    );
-    if (start.stableRow === end.stableRow && start.column === end.column)
-      return false;
-    if (stableRow < start.stableRow || stableRow > end.stableRow) return false;
-    const from = stableRow === start.stableRow ? start.column : 0;
-    const to =
-      stableRow === end.stableRow ? end.column : Number.MAX_SAFE_INTEGER;
-    return (
-      cell.column < to && cell.column + Math.max(1, cell.width ?? 1) > from
-    );
-  }
-
-  private cellIsSearchMatched(stableRow: number, cell: TerminalRenderCell) {
-    const match = this.searchMatch;
-    if (!match || match.stableRow !== stableRow) return false;
-    return (
-      cell.column < match.endColumn &&
-      cell.column + Math.max(1, cell.width ?? 1) > match.startColumn
-    );
+  private fontForCell(cell: TerminalRenderCell) {
+    if (cell.italic) {
+      return cell.intensity === "bold" ? this.fontBoldItalic : this.fontItalic;
+    }
+    return cell.intensity === "bold" ? this.fontBold : this.fontNormal;
   }
 }
 

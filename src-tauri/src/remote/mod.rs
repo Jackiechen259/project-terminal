@@ -893,6 +893,7 @@ async fn websocket_loop(
     let mut frames = subscription.frames;
     let mut controls = subscription.controls;
     let mut cancellation = subscription.cancellation;
+    let hub = subscription.hub;
     let mut message_times = VecDeque::new();
     loop {
         tokio::select! {
@@ -916,6 +917,7 @@ async fn websocket_loop(
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                 };
+                hub.mark_frame_consumed();
                 if sent.is_err() {
                     break;
                 }

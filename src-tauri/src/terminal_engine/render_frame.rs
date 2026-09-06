@@ -130,6 +130,8 @@ pub struct ImageCellFrame {
 #[serde(rename_all = "camelCase")]
 pub struct RenderCell {
     pub column: u16,
+    /// Columns occupied by `text`. A single wide cluster is 2; a compacted
+    /// run of five ASCII characters is 5. Default 1 is omitted on the wire.
     #[serde(skip_serializing_if = "is_default_width", default = "default_width")]
     pub width: u8,
     pub text: String,
@@ -369,7 +371,75 @@ pub(crate) fn render_row(stable_row: i64, line: &Line) -> RenderRow {
         .visible_cells()
         .map(|cell: wezterm_term::CellRef<'_>| render_cell(cell))
         .collect();
-    RenderRow { stable_row, cells }
+    RenderRow {
+        stable_row,
+        cells: compact_render_cells(cells),
+    }
+}
+
+/// Collapse adjacent cells that share attributes into one run.
+///
+/// Agent TUIs rewrite whole lines of identically-styled text (status bars,
+/// spinners, markdown, file lists). One run serializes as a single JSON
+/// object whose `width` is the occupied column count, instead of one object
+/// per column. Renderers treat `width` as the columns occupied by `text`,
+/// which already held for a single wide cluster.
+pub(crate) fn compact_render_cells(cells: Vec<RenderCell>) -> Vec<RenderCell> {
+    let mut compacted = Vec::with_capacity(cells.len());
+    for cell in cells {
+        if let Some(previous) = compacted.last_mut() {
+            if try_merge_render_cell(previous, &cell) {
+                continue;
+            }
+        }
+        compacted.push(cell);
+    }
+    compacted
+}
+
+fn try_merge_render_cell(previous: &mut RenderCell, next: &RenderCell) -> bool {
+    if !can_merge_render_cell(previous, next) {
+        return false;
+    }
+    previous.text.push_str(&next.text);
+    previous.width = previous.width.saturating_add(next.width);
+    true
+}
+
+fn can_merge_render_cell(previous: &RenderCell, next: &RenderCell) -> bool {
+    let previous_end = previous.column as u32 + previous.width as u32;
+    let Some(previous_cluster_width) = cluster_width(previous) else {
+        return false;
+    };
+    let Some(next_cluster_width) = cluster_width(next) else {
+        return false;
+    };
+    previous_end == next.column as u32
+        && previous_cluster_width == next_cluster_width
+        && next.text.chars().count() == 1
+        && previous.foreground == next.foreground
+        && previous.background == next.background
+        && previous.underline_color == next.underline_color
+        && previous.intensity == next.intensity
+        && previous.underline == next.underline
+        && previous.italic == next.italic
+        && previous.reverse == next.reverse
+        && previous.strikethrough == next.strikethrough
+        && previous.invisible == next.invisible
+        && previous.hyperlink == next.hyperlink
+        && previous.images.is_empty()
+        && next.images.is_empty()
+}
+
+fn cluster_width(cell: &RenderCell) -> Option<u8> {
+    let clusters = cell.text.chars().count();
+    if clusters == 0 || cell.width == 0 {
+        return None;
+    }
+    if cell.width as usize % clusters != 0 {
+        return None;
+    }
+    u8::try_from(cell.width as usize / clusters).ok()
 }
 
 fn render_cell(cell: CellRef<'_>) -> RenderCell {
@@ -413,6 +483,81 @@ mod tests {
             hyperlink: None,
             images: Vec::new(),
         }
+    }
+
+    #[test]
+    fn compact_cells_merges_adjacent_runs_with_the_same_attributes() {
+        let cells = compact_render_cells(vec![
+            plain_cell(0, "h"),
+            plain_cell(1, "e"),
+            plain_cell(2, "l"),
+            plain_cell(3, "l"),
+            plain_cell(4, "o"),
+        ]);
+        assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0].column, 0);
+        assert_eq!(cells[0].text, "hello");
+        assert_eq!(cells[0].width, 5);
+    }
+
+    #[test]
+    fn compact_cells_do_not_merge_across_attribute_or_column_gaps() {
+        let mut red = plain_cell(0, "a");
+        red.foreground = RenderColor::Palette(1);
+        let mut blue = plain_cell(1, "b");
+        blue.foreground = RenderColor::Palette(4);
+        let later = plain_cell(4, "c");
+
+        let cells = compact_render_cells(vec![red, blue, later]);
+        assert_eq!(cells.len(), 3);
+        assert_eq!(cells[0].text, "a");
+        assert_eq!(cells[1].text, "b");
+        assert_eq!(cells[2].column, 4);
+        assert_eq!(cells[2].text, "c");
+    }
+
+    #[test]
+    fn compact_cells_keep_wide_clusters_and_hyperlink_runs_intact() {
+        let mut wide = plain_cell(0, "界");
+        wide.width = 2;
+        let mut linked = plain_cell(2, "l");
+        linked.hyperlink = Some("https://example.com".into());
+        let mut i = plain_cell(3, "i");
+        i.hyperlink = Some("https://example.com".into());
+        let mut n = plain_cell(4, "n");
+        n.hyperlink = Some("https://example.com".into());
+        let mut k = plain_cell(5, "k");
+        k.hyperlink = Some("https://example.com".into());
+
+        let cells = compact_render_cells(vec![wide, linked, i, n, k]);
+        assert_eq!(cells.len(), 2);
+        assert_eq!(cells[0].text, "界");
+        assert_eq!(cells[0].width, 2);
+        assert_eq!(cells[1].text, "link");
+        assert_eq!(cells[1].width, 4);
+        assert_eq!(cells[1].hyperlink.as_deref(), Some("https://example.com"));
+    }
+
+    #[test]
+    fn compact_cells_shrink_a_full_width_agent_tui_line() {
+        let cells = compact_render_cells(
+            (0..80)
+                .map(|column| {
+                    let mut cell = plain_cell(column, " ");
+                    cell.background = RenderColor::Palette(4);
+                    cell
+                })
+                .collect(),
+        );
+        assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0].text, " ".repeat(80));
+        assert_eq!(cells[0].width, 80);
+        let json = serde_json::to_string(&cells).unwrap();
+        assert!(
+            json.len() < 200,
+            "agent-style space run stayed too large: {} bytes",
+            json.len()
+        );
     }
 
     /// The whole point of the sparse encoding: a plain cell (the overwhelming

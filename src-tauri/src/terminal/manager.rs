@@ -165,6 +165,15 @@ impl TerminalManager {
         Ok(())
     }
 
+    pub fn set_renderer_paused(
+        &self,
+        session_id: &str,
+        client_id: &str,
+        paused: bool,
+    ) -> AppResult<()> {
+        self.get(session_id)?.set_renderer_paused(client_id, paused)
+    }
+
     pub fn list(&self) -> Vec<SessionInfo> {
         // Do not hold the registry lock while reading individual session
         // state. A slow PTY write or resize in one session must not block
@@ -332,7 +341,9 @@ mod tests {
 
         manager.write(&id, b"echo BOTH_CLIENTS\r\n").unwrap();
         wait_for_model_text(&manager, &id, "BOTH_CLIENTS");
-        while second.frames.try_recv().is_ok() {}
+        while second.frames.try_recv().is_ok() {
+            second.note_consumed();
+        }
 
         // The command mirrors the renderer lifecycle: the stream task drops
         // its subscription before the manager removes the attachment.
@@ -345,6 +356,7 @@ mod tests {
         let mut received_frame = false;
         while Instant::now() < deadline {
             if second.frames.try_recv().is_ok() {
+                second.note_consumed();
                 received_frame = true;
                 break;
             }
@@ -423,6 +435,7 @@ mod tests {
         while Instant::now() < deadline {
             all_models_ready = ids.iter().all(|id| !query(id).unwrap().is_empty());
             while let Ok(frame) = active_frames.frames.try_recv() {
+                active_frames.note_consumed();
                 active_frame_ready |= frame.full_snapshot
                     || frame.dirty_rows.iter().any(|row| {
                         row.cells

@@ -1,4 +1,12 @@
-import { lazy, memo, Suspense, useCallback, type CSSProperties } from "react";
+import {
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useEffect,
+  useState,
+  type CSSProperties,
+} from "react";
 import { LoaderCircle, RotateCcw } from "lucide-react";
 
 import { useTranslation } from "@/i18n";
@@ -52,6 +60,10 @@ export const TerminalPane = memo(function TerminalPane({
       : undefined,
   );
   const { t } = useTranslation();
+  const [hasBeenVisible, setHasBeenVisible] = useState(visible);
+  useEffect(() => {
+    if (visible) setHasBeenVisible(true);
+  }, [visible]);
   const select = useCallback(() => {
     if (visible) onSelect(tabId);
   }, [onSelect, tabId, visible]);
@@ -103,7 +115,7 @@ export const TerminalPane = memo(function TerminalPane({
       }}
       onMouseDown={select}
     >
-      {tab.sessionId ? (
+      {tab.sessionId && hasBeenVisible ? (
         <Suspense
           fallback={
             <div className="flex h-full items-center justify-center bg-background">
@@ -134,7 +146,7 @@ export const TerminalPane = memo(function TerminalPane({
           <span>{t("Starting terminal…")}</span>
           <span className="text-xs opacity-70">{tab.defaultTitle}</span>
         </div>
-      ) : (
+      ) : tab.sessionId ? null : (
         <div className="flex h-full items-center justify-center bg-background">
           <button
             type="button"

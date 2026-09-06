@@ -73,6 +73,12 @@ pub struct TerminalStatusEvent {
     pub exit_code: Option<i32>,
 }
 
+struct RendererAttachment {
+    cancel: watch::Sender<bool>,
+    paused: watch::Sender<bool>,
+    is_paused: bool,
+}
+
 struct SessionInner {
     master: Box<dyn MasterPty + Send>,
     killer: Option<Box<dyn ChildKiller + Send + Sync>>,
@@ -224,7 +230,7 @@ pub struct TerminalSession {
     status_sender: broadcast::Sender<TerminalStatusEvent>,
     terminal_engine: Arc<Mutex<WeztermTerminalEngine>>,
     frame_hub: Arc<TerminalFrameHub>,
-    attachments: Mutex<HashMap<String, watch::Sender<bool>>>,
+    attachments: Mutex<HashMap<String, RendererAttachment>>,
     /// Serializes the ConPTY resize with the model resize across concurrent
     /// callers. Never held together with `terminal_engine` or `inner` across
     /// the blocking ConPTY syscall - see `resize()`.
@@ -620,13 +626,48 @@ impl TerminalSession {
         let mut subscription = self.frame_hub.subscribe();
         let status_receiver = self.status_sender.subscribe();
         let (cancel_tx, cancel_rx) = watch::channel(false);
-        if let Some(previous) = self.attachments.lock().insert(client_id, cancel_tx) {
-            let _ = previous.send(true);
+        let (paused_tx, paused_rx) = watch::channel(false);
+        if let Some(previous) = self.attachments.lock().insert(
+            client_id,
+            RendererAttachment {
+                cancel: cancel_tx,
+                paused: paused_tx,
+                is_paused: false,
+            },
+        ) {
+            if !previous.is_paused {
+                self.frame_hub.pause_frame_delivery();
+            }
+            let _ = previous.cancel.send(true);
         }
         subscription.cancellation = cancel_rx;
+        subscription.paused = paused_rx;
         self.terminal_engine.lock().request_full_snapshot();
         self.frame_hub.notify();
         (subscription, status_receiver)
+    }
+
+    pub fn set_renderer_paused(&self, client_id: &str, paused: bool) -> AppResult<()> {
+        let mut attachments = self.attachments.lock();
+        let Some(attachment) = attachments.get_mut(client_id) else {
+            return Err(AppError::Configuration(format!(
+                "Renderer attachment was not found: {client_id}"
+            )));
+        };
+        if attachment.is_paused == paused {
+            return Ok(());
+        }
+        attachment.is_paused = paused;
+        let _ = attachment.paused.send(paused);
+        drop(attachments);
+        if paused {
+            self.frame_hub.pause_frame_delivery();
+        } else {
+            self.frame_hub.resume_frame_delivery();
+            self.terminal_engine.lock().request_full_snapshot();
+            self.frame_hub.notify();
+        }
+        Ok(())
     }
 
     /// Number of renderer frame subscribers currently attached to this
@@ -650,8 +691,11 @@ impl TerminalSession {
     }
 
     pub fn detach(&self, client_id: &str) {
-        if let Some(cancellation) = self.attachments.lock().remove(client_id) {
-            let _ = cancellation.send(true);
+        if let Some(attachment) = self.attachments.lock().remove(client_id) {
+            if !attachment.is_paused {
+                self.frame_hub.pause_frame_delivery();
+            }
+            let _ = attachment.cancel.send(true);
         }
     }
 
@@ -669,8 +713,11 @@ impl TerminalSession {
         guard.status = SessionStatus::Exited;
         drop(guard);
         self.frame_hub.shutdown();
-        for (_, cancellation) in self.attachments.lock().drain() {
-            let _ = cancellation.send(true);
+        for (_, attachment) in self.attachments.lock().drain() {
+            if !attachment.is_paused {
+                self.frame_hub.pause_frame_delivery();
+            }
+            let _ = attachment.cancel.send(true);
         }
     }
 }
@@ -799,6 +846,7 @@ mod tests {
         while Instant::now() < deadline {
             match subscription.frames.try_recv() {
                 Ok(frame) => {
+                    subscription.note_consumed();
                     if frame.full_snapshot {
                         saw_full_snapshot = true;
                         break;
@@ -827,6 +875,7 @@ mod tests {
         while Instant::now() < deadline {
             match subscription.frames.try_recv() {
                 Ok(frame) => {
+                    subscription.note_consumed();
                     saw_marker |= frame.dirty_rows.iter().any(|row| {
                         let text = row
                             .cells

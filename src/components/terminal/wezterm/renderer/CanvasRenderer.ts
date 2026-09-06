@@ -23,7 +23,7 @@ import type {
   TerminalCursorStyle,
   TerminalRendererTheme,
 } from "./TerminalRenderer";
-import { applyFrameToRowCache } from "./renderFrameMerge";
+import { applyFrameToRowCache, forEachCellCluster } from "./renderFrameMerge";
 
 const IMAGE_CACHE_CAPACITY = 256;
 
@@ -552,7 +552,7 @@ export class CanvasRenderer implements TerminalRenderer {
     }
 
     for (const cell of row.cells) {
-      this.paintCell(context, cell, cell.column * this.cellWidth, y, stableRow);
+      this.paintCell(context, cell, y, stableRow);
     }
     context.restore();
   }
@@ -560,12 +560,21 @@ export class CanvasRenderer implements TerminalRenderer {
   private paintCell(
     context: CanvasRenderingContext2D,
     cell: TerminalRenderCell,
-    x: number,
     y: number,
     stableRow: number,
   ) {
-    const selected = this.cellIsSelected(stableRow, cell);
-    const searched = !selected && this.cellIsSearchMatched(stableRow, cell);
+    const selected = this.rangeIsSelected(
+      stableRow,
+      cell.column,
+      Math.max(1, cell.width ?? 1),
+    );
+    const searched =
+      !selected &&
+      this.rangeIsSearchMatched(
+        stableRow,
+        cell.column,
+        Math.max(1, cell.width ?? 1),
+      );
     // As a WebGLRenderer overlay (`!textVisible && !cellBackgroundVisible`),
     // this method contributes only images, underline/strikethrough, and the
     // cursor - the GPU already owns glyphs and cell backgrounds, including
@@ -584,7 +593,37 @@ export class CanvasRenderer implements TerminalRenderer {
       return;
     }
 
-    const cellWidth = this.cellWidth * Math.max(1, cell.width ?? 1);
+    if ((selected || searched) && Array.from(cell.text).length > 1) {
+      forEachCellCluster(cell, (column, text, width) => {
+        this.paintCluster(context, cell, column, text, width, y, stableRow);
+      });
+      return;
+    }
+    this.paintCluster(
+      context,
+      cell,
+      cell.column,
+      cell.text,
+      Math.max(1, cell.width ?? 1),
+      y,
+      stableRow,
+    );
+  }
+
+  private paintCluster(
+    context: CanvasRenderingContext2D,
+    cell: TerminalRenderCell,
+    column: number,
+    text: string,
+    width: number,
+    y: number,
+    stableRow: number,
+  ) {
+    const selected = this.rangeIsSelected(stableRow, column, width);
+    const searched =
+      !selected && this.rangeIsSearchMatched(stableRow, column, width);
+    const x = column * this.cellWidth;
+    const cellWidth = this.cellWidth * width;
     let foreground = cssColor(cell.foreground, this.theme, "foreground");
     let background = cssColor(cell.background, this.theme, "background");
     if (cell.reverse) [foreground, background] = [background, foreground];
@@ -610,7 +649,12 @@ export class CanvasRenderer implements TerminalRenderer {
       cell.reverse ||
       selected ||
       searched;
-    if (paintsDefaultBackground && this.cellBackgroundVisible) {
+    const overlayHighlight =
+      (selected || searched) && !this.cellBackgroundVisible;
+    if (
+      (paintsDefaultBackground && this.cellBackgroundVisible) ||
+      overlayHighlight
+    ) {
       context.fillStyle = background;
       context.fillRect(x, y, cellWidth, this.cellHeight);
     }
@@ -629,13 +673,13 @@ export class CanvasRenderer implements TerminalRenderer {
       this.cellHeight,
       -1,
     );
-    if (this.textVisible) {
+    if (this.textVisible || overlayHighlight) {
       context.globalAlpha = cell.intensity === "half" ? 0.5 : 1;
       context.font = fontFor(cell, this.font);
       context.fillStyle = foreground;
       context.textBaseline = "alphabetic";
       context.fillText(
-        cell.text,
+        text,
         x + this.font.letterSpacing / 2,
         y + this.baseline,
       );
@@ -802,7 +846,7 @@ export class CanvasRenderer implements TerminalRenderer {
     context.restore();
   }
 
-  private cellIsSelected(stableRow: number, cell: TerminalRenderCell) {
+  private rangeIsSelected(stableRow: number, column: number, width: number) {
     if (!this.selection) return false;
     const [start, end] = normalizeSelection(
       this.selection.anchor,
@@ -817,18 +861,17 @@ export class CanvasRenderer implements TerminalRenderer {
     const from = stableRow === start.stableRow ? start.column : 0;
     const to =
       stableRow === end.stableRow ? end.column : Number.MAX_SAFE_INTEGER;
-    return (
-      cell.column < to && cell.column + Math.max(1, cell.width ?? 1) > from
-    );
+    return column < to && column + width > from;
   }
 
-  private cellIsSearchMatched(stableRow: number, cell: TerminalRenderCell) {
+  private rangeIsSearchMatched(
+    stableRow: number,
+    column: number,
+    width: number,
+  ) {
     const match = this.searchMatch;
     if (!match || match.stableRow !== stableRow) return false;
-    return (
-      cell.column < match.endColumn &&
-      cell.column + Math.max(1, cell.width ?? 1) > match.startColumn
-    );
+    return column < match.endColumn && column + width > match.startColumn;
   }
 
   private redrawVisibleRows() {
@@ -938,12 +981,11 @@ function textForColumns(
 ): string {
   let text = "";
   for (const cell of row.cells) {
-    const cellStart = cell.column;
-    const cellEnd = cell.column + Math.max(1, cell.width ?? 1);
-    if (cellEnd <= from) continue;
-    if (cellStart >= to) break;
-    const value = cell.text || " ";
-    text += value;
+    forEachCellCluster(cell, (column, value, width) => {
+      const cellEnd = column + width;
+      if (cellEnd <= from || column >= to) return;
+      text += value || " ";
+    });
   }
   return text;
 }
@@ -977,25 +1019,26 @@ function rowTextWithColumns(row: TerminalRenderRow) {
   let terminalColumn = 0;
   const columns: number[] = [];
   for (const cell of row.cells) {
-    while (terminalColumn < cell.column) {
-      text += " ";
-      columns.push(terminalColumn);
-      terminalColumn += 1;
-    }
-    const value = cell.text || " ";
-    for (const character of value) {
-      text += character;
-      for (let offset = 0; offset < character.length; offset += 1) {
-        columns.push(cell.column);
+    forEachCellCluster(cell, (column, value, width) => {
+      while (terminalColumn < column) {
+        text += " ";
+        columns.push(terminalColumn);
+        terminalColumn += 1;
       }
-    }
-    const width = Math.max(1, cell.width ?? 1);
-    for (let offset = 1; offset < width; offset += 1) {
-      // Wide cells occupy one extra terminal column after their grapheme.
-      text += " ";
-      columns.push(cell.column + offset);
-    }
-    terminalColumn = cell.column + width;
+      const clusterText = value || " ";
+      for (const character of clusterText) {
+        text += character;
+        for (let offset = 0; offset < character.length; offset += 1) {
+          columns.push(column);
+        }
+      }
+      for (let offset = 1; offset < width; offset += 1) {
+        // Wide cells occupy one extra terminal column after their grapheme.
+        text += " ";
+        columns.push(column + offset);
+      }
+      terminalColumn = column + width;
+    });
   }
   return { text, columns };
 }

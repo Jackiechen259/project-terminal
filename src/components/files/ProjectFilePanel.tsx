@@ -114,12 +114,13 @@ export function ProjectFilePanel({
   );
 
   useEffect(() => {
+    if (hidden) return;
     setListing(null);
     setQuery("");
     setMessage(null);
     setError(null);
     void load();
-  }, [load]);
+  }, [hidden, load]);
 
   const uploadPaths = useCallback(
     async (paths: string[]) => {

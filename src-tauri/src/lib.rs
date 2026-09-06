@@ -262,6 +262,7 @@ pub fn run() {
                 commands::terminal::create_terminal,
                 commands::terminal::session_attach_render,
                 commands::terminal::session_detach,
+                commands::terminal::session_set_renderer_paused,
                 commands::terminal::session_list,
                 commands::terminal::session_get,
                 commands::terminal::list_workspace_sessions,

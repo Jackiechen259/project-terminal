@@ -57,6 +57,7 @@ const mocks = vi.hoisted(() => {
         }),
     ),
     requestRenderSnapshot: vi.fn(async () => undefined),
+    setRendererPaused: vi.fn(async () => undefined),
     detach: vi.fn(async () => undefined),
     search: vi.fn(async () => []),
     selectionText: vi.fn(async () => ""),
@@ -147,6 +148,7 @@ describe("WeztermTerminalView render synchronization", () => {
     mocks.terminalService.attachRender.mockClear();
     mocks.terminalService.resize.mockClear();
     mocks.terminalService.requestRenderSnapshot.mockClear();
+    mocks.terminalService.setRendererPaused.mockClear();
     mocks.terminalService.detach.mockClear();
     mocks.terminalService.selectionText.mockReset();
     mocks.terminalService.selectionText.mockResolvedValue("");
@@ -299,7 +301,7 @@ describe("WeztermTerminalView render synchronization", () => {
     expect(mocks.terminalService.detach).toHaveBeenCalledTimes(1);
   });
 
-  it("accepts live frames while visible and hidden without a visibility snapshot", async () => {
+  it("pauses render delivery while hidden and snapshots on show", async () => {
     const { WeztermTerminalView } = await import("./WeztermTerminalView");
     const view = render(
       <WeztermTerminalView
@@ -312,30 +314,16 @@ describe("WeztermTerminalView render synchronization", () => {
     await act(async () => {
       await Promise.resolve();
     });
+    const clientId = mocks.terminalService.attachRender.mock.calls[0]?.[1] as
+      string | undefined;
+    expect(clientId).toBeTruthy();
     const firstAttachment = mocks.getAttachedOnMessage();
     act(() => {
       firstAttachment?.({ type: "frame", frame: frame(40, 120, 10) });
     });
 
-    mocks.renderer.render.mockClear();
     mocks.terminalService.requestRenderSnapshot.mockClear();
-    act(() => {
-      firstAttachment?.({
-        type: "frame",
-        frame: frame(40, 120, 11, false),
-      });
-      firstAttachment?.({
-        type: "frame",
-        frame: frame(40, 120, 12, false),
-      });
-      firstAttachment?.({
-        type: "frame",
-        frame: frame(40, 120, 13, false),
-      });
-    });
-    expect(mocks.renderer.render).toHaveBeenCalledTimes(3);
-    expect(mocks.terminalService.requestRenderSnapshot).not.toHaveBeenCalled();
-
+    mocks.terminalService.setRendererPaused.mockClear();
     view.rerender(
       <WeztermTerminalView
         sessionId="session-1"
@@ -343,20 +331,19 @@ describe("WeztermTerminalView render synchronization", () => {
         defaultTitle="Terminal"
       />,
     );
-    mocks.renderer.redraw.mockClear();
-    act(() => {
-      firstAttachment?.({
-        type: "frame",
-        frame: frame(40, 120, 14, false),
-      });
-      firstAttachment?.({
-        type: "frame",
-        frame: frame(40, 120, 15, false),
-      });
+    await act(async () => {
+      await Promise.resolve();
     });
-    expect(mocks.renderer.render).toHaveBeenCalledTimes(5);
+    expect(mocks.terminalService.setRendererPaused).toHaveBeenCalledWith(
+      "session-1",
+      clientId,
+      true,
+    );
     expect(mocks.terminalService.requestRenderSnapshot).not.toHaveBeenCalled();
+    expect(mocks.renderer.setVisible).toHaveBeenCalledWith(false);
 
+    mocks.renderer.redraw.mockClear();
+    mocks.terminalService.setRendererPaused.mockClear();
     view.rerender(
       <WeztermTerminalView
         sessionId="session-1"
@@ -364,6 +351,15 @@ describe("WeztermTerminalView render synchronization", () => {
         defaultTitle="Terminal"
       />,
     );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mocks.terminalService.setRendererPaused).toHaveBeenCalledWith(
+      "session-1",
+      clientId,
+      false,
+    );
+    expect(mocks.terminalService.requestRenderSnapshot).toHaveBeenCalled();
     expect(mocks.renderer.redraw).toHaveBeenCalledTimes(1);
     expect(mocks.terminalService.attachRender).toHaveBeenCalledTimes(1);
     expect(mocks.terminalService.detach).not.toHaveBeenCalled();

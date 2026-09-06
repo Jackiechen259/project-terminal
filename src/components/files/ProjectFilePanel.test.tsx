@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ProjectFilePanel } from "./ProjectFilePanel";
@@ -85,6 +91,25 @@ describe("ProjectFilePanel", () => {
             },
       ),
     );
+  });
+
+  it("does not list files while the panel is hidden", async () => {
+    render(<ProjectFilePanel onClose={vi.fn()} hidden />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mocks.list).not.toHaveBeenCalled();
+  });
+
+  it("lists files when a hidden panel becomes visible", async () => {
+    const view = render(<ProjectFilePanel onClose={vi.fn()} hidden />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mocks.list).not.toHaveBeenCalled();
+
+    view.rerender(<ProjectFilePanel onClose={vi.fn()} hidden={false} />);
+    await waitFor(() => expect(mocks.list).toHaveBeenCalled());
   });
 
   it("browses folders and downloads an SSH file", async () => {

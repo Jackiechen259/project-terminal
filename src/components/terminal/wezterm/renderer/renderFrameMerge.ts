@@ -1,4 +1,5 @@
 import type {
+  TerminalRenderCell,
   TerminalRenderFrame,
   TerminalRenderRow,
 } from "@/lib/terminalFrames";
@@ -77,6 +78,31 @@ export function applyFrameToRowCache(
  * every stable row ever seen while a terminal scrolls. Full snapshots on
  * explicit scrollback requests rehydrate rows outside this bounded window.
  */
+/**
+ * Walk a cell as column-sized clusters.
+ *
+ * Compacted runs keep one JSON object for a whole span (`text: "hello"`,
+ * `width: 5`). Selection, search, and text extraction still need the
+ * per-column view; painting can skip this and draw the run as one glyph.
+ */
+export function forEachCellCluster(
+  cell: TerminalRenderCell,
+  visit: (column: number, text: string, width: number) => void,
+) {
+  const chars = Array.from(cell.text);
+  if (chars.length <= 1) {
+    visit(cell.column, cell.text, Math.max(1, cell.width ?? 1));
+    return;
+  }
+  const totalWidth = Math.max(1, cell.width ?? 1);
+  const clusterWidth = Math.max(1, Math.round(totalWidth / chars.length));
+  let column = cell.column;
+  for (const text of chars) {
+    visit(column, text, clusterWidth);
+    column += clusterWidth;
+  }
+}
+
 export function pruneRowCache(
   cache: Map<number, TerminalRenderRow>,
   frame: Pick<TerminalRenderFrame, "viewportTop" | "rows">,

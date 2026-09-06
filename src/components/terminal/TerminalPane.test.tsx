@@ -76,10 +76,7 @@ describe("TerminalPane", () => {
     );
 
     await waitFor(() =>
-      expect(terminalViewRender.mock.calls).toEqual([
-        ["session-one"],
-        ["session-two"],
-      ]),
+      expect(terminalViewRender.mock.calls).toEqual([["session-one"]]),
     );
 
     const hiddenPane = container.children[1] as HTMLElement;
@@ -96,7 +93,59 @@ describe("TerminalPane", () => {
     await waitFor(() =>
       expect(terminalViewRender.mock.calls).toEqual([
         ["session-one"],
-        ["session-two"],
+        ["session-one"],
+      ]),
+    );
+  });
+
+  it("does not mount a terminal view until the pane has been visible", async () => {
+    render(
+      <TerminalPane
+        tabId="two"
+        visible={false}
+        focused={false}
+        panePosition="inset-0"
+        onSelect={vi.fn()}
+        onRestart={vi.fn()}
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(terminalViewRender).not.toHaveBeenCalled();
+  });
+
+  it("keeps the view mounted after the pane is hidden", async () => {
+    const view = render(
+      <TerminalPane
+        tabId="one"
+        visible
+        focused
+        panePosition="inset-0"
+        onSelect={vi.fn()}
+        onRestart={vi.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(terminalViewRender.mock.calls).toEqual([["session-one"]]),
+    );
+
+    view.rerender(
+      <TerminalPane
+        tabId="one"
+        visible={false}
+        focused={false}
+        panePosition="inset-0"
+        onSelect={vi.fn()}
+        onRestart={vi.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(terminalViewRender.mock.calls).toEqual([
+        ["session-one"],
         ["session-one"],
       ]),
     );
