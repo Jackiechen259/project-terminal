@@ -1276,6 +1276,27 @@ mod tests {
     }
 
     #[test]
+    fn encodes_num_lock_keypad_digits_as_text() {
+        let (mut engine, output) = capture_engine();
+        let _ = engine.take_render_frame();
+
+        engine
+            .key_down(&TerminalKeyEvent {
+                key: "1".into(),
+                code: Some("Numpad1".into()),
+                location: 3,
+                num_lock: true,
+                shift: false,
+                alt: false,
+                ctrl: false,
+                meta: false,
+            })
+            .unwrap();
+
+        assert_eq!(wait_for_output(&output), b"1");
+    }
+
+    #[test]
     fn encodes_ctrl_c_as_a_terminal_control_character() {
         let (mut engine, output) = capture_engine();
         let _ = engine.take_render_frame();

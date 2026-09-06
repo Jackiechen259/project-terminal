@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.6.3] - 2026-09-06
+
 ### Performance
 
 - Compacted adjacent same-style terminal cells into runs so agent TUI full-screen redraws send far less JSON per frame.
@@ -11,6 +13,10 @@
 - Mounted terminal renderer views only after a pane was first visible, so restoring many tabs no longer creates a WebGL context per hidden session.
 - Painted selection and search highlights on the Canvas overlay instead of rebuilding the GPU grid on every pointermove.
 - Skipped project file listings while the Files panel is hidden behind Memos.
+
+### Fixed
+
+- Sent Num Lock keypad digits and decimal input to the terminal as text instead of navigation escape sequences.
 
 ## [0.6.2] - 2026-09-06
 

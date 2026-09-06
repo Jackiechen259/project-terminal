@@ -123,17 +123,22 @@ impl TerminalKeyEvent {
 
 fn numpad_key_code(code: &str, num_lock: bool) -> Option<KeyCode> {
     Some(match code {
-        "Numpad0" if num_lock => KeyCode::Numpad0,
-        "Numpad1" if num_lock => KeyCode::Numpad1,
-        "Numpad2" if num_lock => KeyCode::Numpad2,
-        "Numpad3" if num_lock => KeyCode::Numpad3,
-        "Numpad4" if num_lock => KeyCode::Numpad4,
-        "Numpad5" if num_lock => KeyCode::Numpad5,
-        "Numpad6" if num_lock => KeyCode::Numpad6,
-        "Numpad7" if num_lock => KeyCode::Numpad7,
-        "Numpad8" if num_lock => KeyCode::Numpad8,
-        "Numpad9" if num_lock => KeyCode::Numpad9,
-        "NumpadDecimal" if num_lock => KeyCode::Decimal,
+        // wezterm-term interprets its Numpad key codes as navigation keys
+        // unless the application has explicitly enabled keypad mode. Num Lock
+        // is the browser's declaration that these physical keys produced text,
+        // so preserve that text rather than asking the terminal model to infer
+        // it again.
+        "Numpad0" if num_lock => KeyCode::Char('0'),
+        "Numpad1" if num_lock => KeyCode::Char('1'),
+        "Numpad2" if num_lock => KeyCode::Char('2'),
+        "Numpad3" if num_lock => KeyCode::Char('3'),
+        "Numpad4" if num_lock => KeyCode::Char('4'),
+        "Numpad5" if num_lock => KeyCode::Char('5'),
+        "Numpad6" if num_lock => KeyCode::Char('6'),
+        "Numpad7" if num_lock => KeyCode::Char('7'),
+        "Numpad8" if num_lock => KeyCode::Char('8'),
+        "Numpad9" if num_lock => KeyCode::Char('9'),
+        "NumpadDecimal" if num_lock => KeyCode::Char('.'),
         "NumpadDivide" => KeyCode::Divide,
         "NumpadMultiply" => KeyCode::Multiply,
         "NumpadSubtract" => KeyCode::Subtract,
@@ -240,10 +245,10 @@ mod tests {
     }
 
     #[test]
-    fn preserves_physical_numpad_semantics_for_application_keypad_modes() {
+    fn maps_num_lock_keypad_digits_to_text_and_other_keys_to_their_physical_key() {
         assert_eq!(
             key("1", Some("Numpad1"), true).key_code(),
-            Some(KeyCode::Numpad1)
+            Some(KeyCode::Char('1'))
         );
         assert_eq!(
             key("End", Some("Numpad1"), false).key_code(),
