@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.6.3] - 2026-09-08
+
 ### Fixed
 
 - Forwarded mouse motion to TUI apps that enable any-event tracking (DECSET 1003), including hover, and filled in cell pixel offsets for SGR pixel mouse.
@@ -14,8 +16,7 @@
 - Held TUI redraws wrapped in DECSET 2026 until the frame ended (or 150ms elapsed) so spinners and live dashboards no longer tear mid-update, and advertised the mode to apps that query it.
 - Played kitty/GIF animation frames on the overlay instead of freezing on the first frame.
 - Blinked SGR 5/6 text instead of dropping the blink attribute.
-
-## [0.6.3] - 2026-09-06
+- Sent Num Lock keypad digits and decimal input to the terminal as text instead of navigation escape sequences.
 
 ### Performance
 
@@ -26,10 +27,6 @@
 - Mounted terminal renderer views only after a pane was first visible, so restoring many tabs no longer creates a WebGL context per hidden session.
 - Painted selection and search highlights on the Canvas overlay instead of rebuilding the GPU grid on every pointermove.
 - Skipped project file listings while the Files panel is hidden behind Memos.
-
-### Fixed
-
-- Sent Num Lock keypad digits and decimal input to the terminal as text instead of navigation escape sequences.
 
 ## [0.6.2] - 2026-09-06
 

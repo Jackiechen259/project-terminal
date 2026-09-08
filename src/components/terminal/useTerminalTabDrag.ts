@@ -67,7 +67,7 @@ export function useTerminalTabDrag({
   );
   const tabListRef = useRef<HTMLDivElement>(null);
   const splitTabGroupRef = useRef<HTMLDivElement>(null);
-  const workspaceRef = useRef<HTMLDivElement>(null);
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
   const pointerDragRef = useRef<{
     tabId: string;
     pointerId: number;

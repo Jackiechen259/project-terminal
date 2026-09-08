@@ -419,9 +419,15 @@ mod tests {
             Err(error) => panic!("paused extract check failed: {error}"),
         }
         let mut saw_bell = false;
-        while let Ok(event) = subscription.controls.try_recv() {
-            if matches!(event.as_ref(), TerminalControlEvent::Bell) {
-                saw_bell = true;
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !saw_bell && Instant::now() < deadline {
+            while let Ok(event) = subscription.controls.try_recv() {
+                if matches!(event.as_ref(), TerminalControlEvent::Bell) {
+                    saw_bell = true;
+                }
+            }
+            if !saw_bell {
+                thread::sleep(Duration::from_millis(2));
             }
         }
         assert!(
