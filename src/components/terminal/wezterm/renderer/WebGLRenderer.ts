@@ -350,34 +350,34 @@ export class WebGLRenderer implements TerminalRenderer {
     return grid;
   }
 
-  render(frame: TerminalRenderFrame) {
-    if (!this.acceptFrame(frame)) return;
+  render(frame: TerminalRenderFrame): boolean {
+    if (!this.acceptFrame(frame)) return false;
     if (this.gpuFallback) {
       // The GPU draws nothing in fallback mode - `paintCurrentFrame` would
       // just proxy straight to the overlay - so let CanvasRenderer own its
       // own incremental paint schedule directly instead of scheduling a
       // second rAF here that does nothing but call back into it.
-      this.canvasRenderer.render(frame);
-      return;
+      return this.canvasRenderer.render(frame);
     }
     this.canvasRenderer.ingestFrame(frame);
     this.refreshCellBlinkTimer();
     this.schedulePaint();
+    return true;
   }
 
-  renderImmediate(frame: TerminalRenderFrame) {
+  renderImmediate(frame: TerminalRenderFrame): boolean {
     if (this.frameRequest !== null) {
       window.cancelAnimationFrame(this.frameRequest);
       this.frameRequest = null;
     }
-    if (!this.acceptFrame(frame)) return;
+    if (!this.acceptFrame(frame)) return false;
     if (this.gpuFallback) {
-      this.canvasRenderer.renderImmediate(frame);
-      return;
+      return this.canvasRenderer.renderImmediate(frame);
     }
     this.canvasRenderer.ingestFrame(frame);
     this.refreshCellBlinkTimer();
     if (this.visible) this.paintCurrentFrame();
+    return true;
   }
 
   redraw() {
@@ -474,6 +474,10 @@ export class WebGLRenderer implements TerminalRenderer {
     else this.stopCellBlink();
   }
 
+  noteInputActivity() {
+    this.canvasRenderer.noteInputActivity();
+  }
+
   setSelection(selection: TerminalSelection | null) {
     this.canvasRenderer.setSelection(selection);
   }
@@ -497,6 +501,7 @@ export class WebGLRenderer implements TerminalRenderer {
       y: this.frame.cursor.row * this.cellHeight,
       width: this.cellWidth,
       height: this.cellHeight,
+      visible: this.frame.cursor.visibility === "visible",
     };
   }
 
@@ -539,12 +544,12 @@ export class WebGLRenderer implements TerminalRenderer {
     this.contrastCache.clear();
   }
 
-  private acceptFrame(frame: TerminalRenderFrame) {
+  private acceptFrame(frame: TerminalRenderFrame): boolean {
     const cacheUpdate = applyFrameToRowCache(this.rowCache, this.frame, frame, {
       rows: this.rows,
       cols: this.cols,
     });
-    if (!cacheUpdate.accepted) return;
+    if (!cacheUpdate.accepted) return false;
     this.frame = frame;
     return true;
   }
@@ -627,12 +632,21 @@ export class WebGLRenderer implements TerminalRenderer {
   /** Keep the transparent Canvas2D overlay on the same backing store. */
   private syncOverlayBackingStore() {
     if (!this.canvas || !this.overlay) return;
+    let resized = false;
     if (this.overlay.width !== this.canvas.width) {
       this.overlay.width = this.canvas.width;
+      resized = true;
     }
     if (this.overlay.height !== this.canvas.height) {
       this.overlay.height = this.canvas.height;
+      resized = true;
     }
+    // Assigning `width`/`height` clears the backing bitmap, so anything the
+    // overlay's cursor tracker thinks is already painted is gone with it -
+    // a plain `paintOverlayPending` afterward would then skip repainting a
+    // cursor it believes is still on-screen. Force a full repaint so the
+    // overlay's retained state and its bitmap agree again.
+    if (resized) this.canvasRenderer.redraw();
   }
 
   private drawBackground() {

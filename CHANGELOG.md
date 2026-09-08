@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed
+
+- Coalesced PTY reads into complete redraw bursts before feeding the terminal model, so TUI repaints (vim, htop, lazygit, agent CLIs) no longer tear mid-update and the input cursor no longer jumps to a mid-repaint position.
+- Kept a partial CSI sequence pending across a DECSET 2026 timeout flush instead of corrupting it, and replaced the 150ms idle timeout with a 1s cap on total hold duration, so a continuously-redrawing TUI can no longer hold a frame open indefinitely.
+- Forced a full-viewport snapshot when entering or leaving the alternate screen, so exiting vim/htop/lazygit no longer leaves stale alt-screen content on screen until an unrelated repaint clears it.
+- Batched IME caret placement so the hidden textarea (and its candidate window) stops dragging across every intermediate model cursor position: a visible cursor now applies on the next frame, a hidden one waits for it to settle, and composition freezes the caret until it ends.
+- Reset cursor blink phase on every real cursor move or keystroke and de-duplicated overlay repaints, so the cursor no longer vanishes mid-blink after moving and no longer darkens from repeatedly stacked overlay paints.
+- Applied DECSCUSR cursor shape (block/underline/bar, blinking or steady) from the terminal model instead of ignoring it.
+- Changed: the cursor no longer blinks while its terminal pane is unfocused.
+
 ## [0.6.3] - 2026-09-08
 
 ### Fixed

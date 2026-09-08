@@ -57,8 +57,15 @@ export interface TerminalRenderer {
   mount(canvas: HTMLCanvasElement): void;
   resize(width: number, height: number, rows: number, cols: number): void;
   measureGrid(width: number, height: number): { rows: number; cols: number };
-  render(frame: TerminalRenderFrame): void;
-  renderImmediate(frame: TerminalRenderFrame): void;
+  /**
+   * Ingest one frame into the retained row cache and (for a visible
+   * renderer) schedule or perform its paint. Returns whether the frame was
+   * accepted into the cache - a caller must not advance its own frame
+   * sequence past a rejected frame, since the renderer's retained state
+   * still reflects an earlier one.
+   */
+  render(frame: TerminalRenderFrame): boolean;
+  renderImmediate(frame: TerminalRenderFrame): boolean;
   redraw(): void;
   setTheme(theme: TerminalRendererTheme): void;
   setFont(font: TerminalFontOptions): void;
@@ -74,6 +81,12 @@ export interface TerminalRenderer {
    * when the caller invokes redraw after becoming visible.
    */
   setVisible(visible: boolean): void;
+  /**
+   * Reset cursor-blink phase to visible in response to local input activity
+   * (a keypress, text input, or paste about to be sent). Does not itself
+   * schedule a full repaint; renderers repaint only the cursor's row.
+   */
+  noteInputActivity(): void;
   setSelection(selection: TerminalSelection | null): void;
   setSearchMatch(match: TerminalSearchMatch | null): void;
   selectionText(
@@ -98,6 +111,8 @@ export interface TerminalRenderer {
     y: number;
     width: number;
     height: number;
+    /** Backend cursor visibility (DECTCEM). Ignores focus and blink phase. */
+    visible: boolean;
   } | null;
   linkAtPoint(clientX: number, clientY: number): string | null;
   rowText(row: TerminalRenderRow): string;

@@ -6,13 +6,39 @@
 
 use std::time::{Duration, Instant};
 
-pub const HOLD_TIMEOUT: Duration = Duration::from_millis(150);
+/// Total-duration cap on a DECSET 2026 hold, measured from the moment the
+/// hold began - **not** an idle timeout. The hold used to reset this clock on
+/// every byte received while holding, so a TUI that kept animating inside
+/// `2026h` ... `2026l` (a busy spinner, a fast log) held forever and was
+/// never force-flushed. A total cap still frees a hold that legitimately
+/// idles out (a stalled or crashed app leaves `holding` true with no more
+/// bytes coming), while also bounding the worst case for one that never goes
+/// idle at all.
+pub const HOLD_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Hard ceiling on how large `hold_buffer` may grow. Without this, a
+/// misbehaving or malicious app that opens a hold and then emits output
+/// forever (see `HOLD_TIMEOUT`'s doc) would still buffer unboundedly in
+/// memory between the moment the hold starts and its 1s timeout - this
+/// releases the hold immediately once it is clearly not "one animation
+/// frame" any more.
+pub const HOLD_MAX_BYTES: usize = 8 * 1024 * 1024;
+
+/// A `NeedMore` classification whose unresolved tail already exceeds this
+/// many bytes is not a real in-flight CSI sequence waiting on the next PTY
+/// read - a real 2026/DECRQM/soft-reset sequence this parser recognizes is at
+/// most a dozen bytes. Treat the tail as ordinary bytes instead of parking it
+/// in `pending` forever, so a malformed or adversarial "sequence" that never
+/// reaches a final byte cannot grow `pending` without bound.
+const MAX_PENDING: usize = 32;
 
 pub struct SynchronizedOutput {
     holding: bool,
     hold_buffer: Vec<u8>,
     pending: Vec<u8>,
-    last_hold_byte_at: Option<Instant>,
+    /// Set once, when the hold begins (`BeginHold`) - never touched per byte
+    /// while holding. See `HOLD_TIMEOUT`.
+    hold_started_at: Option<Instant>,
 }
 
 pub struct PushOutcome {
@@ -41,7 +67,7 @@ impl SynchronizedOutput {
             holding: false,
             hold_buffer: Vec::new(),
             pending: Vec::new(),
-            last_hold_byte_at: None,
+            hold_started_at: None,
         }
     }
 
@@ -50,29 +76,41 @@ impl SynchronizedOutput {
         self.holding
     }
 
+    /// Test-only escape hatch for `HOLD_TIMEOUT`/`poll_timeout` without an
+    /// actual `sleep`: rewinds the hold's start time by `by`.
+    #[cfg(test)]
+    pub fn backdate_hold(&mut self, by: Duration) {
+        if let Some(started) = self.hold_started_at {
+            self.hold_started_at = Some(started - by);
+        }
+    }
+
     pub fn hold_remaining(&self) -> Option<Duration> {
         if !self.holding {
             return None;
         }
-        let started = self.last_hold_byte_at?;
+        let started = self.hold_started_at?;
         Some(HOLD_TIMEOUT.saturating_sub(started.elapsed()))
     }
 
+    /// Force-flushes the hold once it has been open for `HOLD_TIMEOUT`,
+    /// regardless of how recently a byte arrived (see `HOLD_TIMEOUT`'s doc).
+    /// Only `hold_buffer` is returned - a partial CSI sequence still sitting
+    /// in `pending` belongs to whatever `push` completes it next, not to a
+    /// timeout flush, so an in-flight escape sequence is never cut in half.
     pub fn poll_timeout(&mut self) -> Option<Vec<u8>> {
         if !self.holding {
             return None;
         }
-        let Some(started) = self.last_hold_byte_at else {
+        let Some(started) = self.hold_started_at else {
             return None;
         };
         if started.elapsed() < HOLD_TIMEOUT {
             return None;
         }
         self.holding = false;
-        self.last_hold_byte_at = None;
-        let mut flushed = std::mem::take(&mut self.hold_buffer);
-        flushed.extend(std::mem::take(&mut self.pending));
-        Some(flushed)
+        self.hold_started_at = None;
+        Some(std::mem::take(&mut self.hold_buffer))
     }
 
     pub fn push(&mut self, data: &[u8]) -> PushOutcome {
@@ -99,13 +137,22 @@ impl SynchronizedOutput {
         while index < input.len() {
             match classify(&input[index..]) {
                 Special::NeedMore => {
+                    if input.len() - index > MAX_PENDING {
+                        // Not a real in-flight sequence - see MAX_PENDING's
+                        // doc. Fall back to one ordinary byte and keep
+                        // reclassifying from the next one instead of parking
+                        // an ever-growing tail.
+                        self.emit(&input[index..index + 1], &mut flush);
+                        index += 1;
+                        continue;
+                    }
                     self.pending = input[index..].to_vec();
                     break;
                 }
                 Special::BeginHold { seq_len } => {
                     if !self.holding {
                         self.holding = true;
-                        self.last_hold_byte_at = Some(Instant::now());
+                        self.hold_started_at = Some(Instant::now());
                     }
                     index += seq_len;
                 }
@@ -113,7 +160,7 @@ impl SynchronizedOutput {
                     if self.holding {
                         self.holding = false;
                         flush.extend(std::mem::take(&mut self.hold_buffer));
-                        self.last_hold_byte_at = None;
+                        self.hold_started_at = None;
                     }
                     index += seq_len;
                 }
@@ -125,7 +172,7 @@ impl SynchronizedOutput {
                     if self.holding {
                         self.holding = false;
                         flush.extend(std::mem::take(&mut self.hold_buffer));
-                        self.last_hold_byte_at = None;
+                        self.hold_started_at = None;
                     }
                     self.emit(&input[index..index + seq_len], &mut flush);
                     index += seq_len;
@@ -146,7 +193,11 @@ impl SynchronizedOutput {
     fn emit(&mut self, bytes: &[u8], flush: &mut Vec<u8>) {
         if self.holding {
             self.hold_buffer.extend_from_slice(bytes);
-            self.last_hold_byte_at = Some(Instant::now());
+            if self.hold_buffer.len() >= HOLD_MAX_BYTES {
+                self.holding = false;
+                self.hold_started_at = None;
+                flush.extend(std::mem::take(&mut self.hold_buffer));
+            }
         } else {
             flush.extend_from_slice(bytes);
         }
@@ -271,9 +322,74 @@ mod tests {
     fn timeout_flushes_a_stuck_hold() {
         let mut sync = SynchronizedOutput::new();
         let _ = sync.push(b"\x1b[?2026hpartial");
-        std::thread::sleep(HOLD_TIMEOUT + Duration::from_millis(20));
+        sync.backdate_hold(HOLD_TIMEOUT + Duration::from_millis(20));
         let flushed = sync.poll_timeout().expect("timeout flush");
         assert_eq!(flushed, b"partial");
+        assert!(!sync.is_holding());
+    }
+
+    #[test]
+    fn timeout_keeps_a_partial_csi_pending() {
+        let mut sync = SynchronizedOutput::new();
+        // Everything through `\x1b[?20` is consumed: the hold begins, then
+        // "partial" is buffered, then the trailing `\x1b[?20` is an
+        // in-flight CSI (well under MAX_PENDING) that has to wait for more
+        // bytes to know what it is.
+        let first = sync.push(b"\x1b[?2026hpartial\x1b[?20");
+        assert!(first.flush.is_empty());
+        assert!(sync.is_holding());
+
+        sync.backdate_hold(HOLD_TIMEOUT + Duration::from_millis(20));
+        let flushed = sync.poll_timeout().expect("timeout flush");
+        // Only the hold buffer is flushed by the timeout - the partial CSI
+        // is not chopped in half just because the hold around it timed out.
+        assert_eq!(flushed, b"partial");
+        assert!(!sync.is_holding());
+
+        // The partial CSI survived the timeout flush in `pending` and still
+        // completes into a real 2026 sequence, starting a new hold.
+        let second = sync.push(b"26h more");
+        assert!(second.flush.is_empty());
+        assert!(
+            sync.is_holding(),
+            "the completed CSI carried over from `pending` must still be recognized"
+        );
+    }
+
+    #[test]
+    fn hold_buffer_byte_cap_releases_the_hold() {
+        let mut sync = SynchronizedOutput::new();
+        let begin = sync.push(b"\x1b[?2026h");
+        assert!(begin.flush.is_empty());
+        assert!(sync.is_holding());
+
+        let chunk = vec![b'x'; HOLD_MAX_BYTES];
+        let outcome = sync.push(&chunk);
+        assert_eq!(
+            outcome.flush.len(),
+            HOLD_MAX_BYTES,
+            "the byte cap must release everything buffered so far, not drop it"
+        );
+        assert!(
+            !sync.is_holding(),
+            "hold must release once the buffer cap is hit, without waiting for HOLD_TIMEOUT"
+        );
+    }
+
+    #[test]
+    fn overlong_csi_parameters_are_not_parked() {
+        let mut sync = SynchronizedOutput::new();
+        // An escape sequence whose parameter bytes never reach a final byte
+        // (0x40..=0x7e) - well past MAX_PENDING - must not be parked in
+        // `pending` forever waiting for a terminator that may never come.
+        let mut malformed = vec![0x1b, b'['];
+        malformed.extend(std::iter::repeat(b'9').take(40));
+
+        let outcome = sync.push(&malformed);
+        assert_eq!(
+            outcome.flush, malformed,
+            "an overlong unterminated sequence must fall back to literal bytes"
+        );
         assert!(!sync.is_holding());
     }
 }

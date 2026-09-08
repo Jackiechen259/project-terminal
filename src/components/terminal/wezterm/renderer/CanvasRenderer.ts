@@ -29,6 +29,14 @@ const IMAGE_CACHE_CAPACITY = 256;
 const SLOW_BLINK_MS = 500;
 const RAPID_BLINK_MS = 200;
 const BLINK_TICK_MS = 100;
+const CURSOR_BLINK_MS = 500;
+
+/** The cell last actually painted with a cursor overlay, for erase-on-move. */
+interface PaintedCursor {
+  stableRow: number;
+  column: number;
+  visible: boolean;
+}
 
 export function cellBlinkHidden(
   blink: TerminalRenderCell["blink"] | undefined,
@@ -154,6 +162,8 @@ export class CanvasRenderer implements TerminalRenderer {
   private rowCache = new Map<number, TerminalRenderRow>();
   private frame: TerminalRenderFrame | null = null;
   private paintedFrame: TerminalRenderFrame | null = null;
+  /** What is actually on the bitmap right now, for erase-on-move/dedup. */
+  private paintedCursor: PaintedCursor | null = null;
   private selection: TerminalSelection | null = null;
   private searchMatch: TerminalSearchMatch | null = null;
   private imageCache = new Map<string, CanvasImageSource>();
@@ -256,28 +266,30 @@ export class CanvasRenderer implements TerminalRenderer {
     };
   }
 
-  render(frame: TerminalRenderFrame) {
+  render(frame: TerminalRenderFrame): boolean {
     const cacheUpdate = this.acceptFrame(frame);
-    if (!cacheUpdate?.accepted) return;
+    if (!cacheUpdate?.accepted) return false;
     if (!this.visible) {
       this.cancelScheduledPaint();
       this.pendingDirtyRows.clear();
       this.pendingFullRedraw = true;
-      return;
+      return true;
     }
     this.schedulePaint();
+    return true;
   }
 
-  renderImmediate(frame: TerminalRenderFrame) {
+  renderImmediate(frame: TerminalRenderFrame): boolean {
     this.cancelScheduledPaint();
     const cacheUpdate = this.acceptFrame(frame);
-    if (!cacheUpdate?.accepted) return;
+    if (!cacheUpdate?.accepted) return false;
     if (!this.visible) {
       this.pendingDirtyRows.clear();
       this.pendingFullRedraw = true;
-      return;
+      return true;
     }
     this.paintPending();
+    return true;
   }
 
   /**
@@ -327,10 +339,19 @@ export class CanvasRenderer implements TerminalRenderer {
       for (const dirtyRow of frame.dirtyRows) {
         this.pendingDirtyRows.add(dirtyRow.stableRow);
       }
-      this.pendingDirtyRows.add(
-        previousFrame.viewportTop + previousFrame.cursor.row,
-      );
-      this.pendingDirtyRows.add(frame.viewportTop + frame.cursor.row);
+    }
+    // Any actual cursor movement (position, visibility, shape, or a
+    // viewport shift that moves it visually) restarts the blink phase at
+    // "on" - a mid-cycle move must not land in the off phase and vanish.
+    if (
+      previousFrame === null ||
+      previousFrame.cursor.row !== frame.cursor.row ||
+      previousFrame.cursor.column !== frame.cursor.column ||
+      previousFrame.cursor.visibility !== frame.cursor.visibility ||
+      previousFrame.cursor.shape !== frame.cursor.shape ||
+      previousFrame.viewportTop !== frame.viewportTop
+    ) {
+      this.resetCursorBlinkPhase();
     }
     return cacheUpdate;
   }
@@ -367,10 +388,34 @@ export class CanvasRenderer implements TerminalRenderer {
     }
 
     this.viewportTop = frame.viewportTop;
+    const target = this.describeCursor(frame);
+    const painted = this.paintedCursor;
+    const sameCell =
+      painted !== null &&
+      painted.stableRow === target.stableRow &&
+      painted.column === target.column;
+    const cursorChanged =
+      !painted || !sameCell || painted.visible !== target.visible;
+    // Erase the previously painted cursor cell before drawing dirty rows,
+    // unless that row is already about to be repainted below (which erases
+    // it for free) - otherwise a stale overlay pixel can survive under
+    // freshly painted, unrelated dirty rows.
+    if (
+      painted?.visible &&
+      cursorChanged &&
+      !this.pendingDirtyRows.has(painted.stableRow)
+    ) {
+      this.paintRow(painted.stableRow, this.rowCache.get(painted.stableRow));
+    }
     for (const stableRow of this.pendingDirtyRows) {
       this.paintRow(stableRow, this.rowCache.get(stableRow));
     }
-    this.paintCursor(frame, true);
+    // Only touch the cursor overlay when its cell changed or its row was
+    // just repainted (and so needs the overlay redrawn on top) - repainting
+    // an unchanged cursor every accepted frame is what stacks alpha.
+    if (cursorChanged || this.pendingDirtyRows.has(target.stableRow)) {
+      this.paintCursor(frame);
+    }
     this.paintedFrame = frame;
     this.pendingDirtyRows.clear();
     this.pendingFullRedraw = false;
@@ -399,16 +444,14 @@ export class CanvasRenderer implements TerminalRenderer {
   setCursorBlink(enabled: boolean) {
     if (this.cursorBlink === enabled) return;
     this.cursorBlink = enabled;
-    this.cursorBlinkVisible = true;
-    this.stopCursorBlink();
-    this.startCursorBlink();
+    this.resetCursorBlinkPhase();
     this.redrawVisibleRows();
   }
 
   setFocused(focused: boolean) {
     if (this.focused === focused) return;
     this.focused = focused;
-    this.cursorBlinkVisible = true;
+    this.resetCursorBlinkPhase();
     this.redrawVisibleRows();
   }
 
@@ -416,9 +459,8 @@ export class CanvasRenderer implements TerminalRenderer {
     if (this.visible === visible) return;
     this.visible = visible;
     if (visible) {
-      this.cursorBlinkVisible = true;
       this.pendingFullRedraw = true;
-      this.startCursorBlink();
+      this.resetCursorBlinkPhase();
       this.refreshCellBlinkTimer();
     } else {
       this.cancelScheduledPaint();
@@ -429,19 +471,75 @@ export class CanvasRenderer implements TerminalRenderer {
     }
   }
 
+  /** Reset the cursor to the "on" blink phase and restart its interval. */
+  private resetCursorBlinkPhase() {
+    this.cursorBlinkVisible = true;
+    this.stopCursorBlink();
+    if (this.visible && this.cursorShouldBlink(this.frame)) {
+      this.startCursorBlink();
+    }
+  }
+
   private startCursorBlink() {
-    if (!this.visible || !this.cursorBlink || this.cursorBlinkTimer !== null)
-      return;
+    if (this.cursorBlinkTimer !== null) return;
     this.cursorBlinkTimer = window.setInterval(() => {
       this.cursorBlinkVisible = !this.cursorBlinkVisible;
-      this.redrawVisibleRows();
-    }, 500);
+      this.repaintCursorRow();
+    }, CURSOR_BLINK_MS);
   }
 
   private stopCursorBlink() {
     if (this.cursorBlinkTimer === null) return;
     window.clearInterval(this.cursorBlinkTimer);
     this.cursorBlinkTimer = null;
+  }
+
+  /**
+   * Whether this cursor's visibility should currently follow the blink
+   * phase at all. An unfocused cursor never blinks (it renders in the
+   * inactive style, steady); DECSCUSR "default" defers to the user's
+   * blink setting, `blinking-*` always blinks, `steady-*` never does.
+   */
+  private cursorShouldBlink(frame: TerminalRenderFrame | null): boolean {
+    if (!frame || !this.focused) return false;
+    if (frame.cursor.shape === "default") return this.cursorBlink;
+    return frame.cursor.shape.startsWith("blinking-");
+  }
+
+  /**
+   * Called on a blink tick or local input activity: repaint only the
+   * cursor's row instead of the whole viewport. If a full or dirty-row
+   * paint is already queued (or the current frame hasn't been painted at
+   * all yet), defer to it instead of racing it with a redundant paint.
+   */
+  private repaintCursorRow() {
+    if (!this.visible) return;
+    const frame = this.frame;
+    if (!frame) return;
+    if (
+      this.pendingFullRedraw ||
+      this.pendingDirtyRows.size > 0 ||
+      this.paintedFrame !== frame
+    ) {
+      return;
+    }
+    const painted = this.paintedCursor;
+    const target = this.describeCursor(frame);
+    if (painted && painted.stableRow !== target.stableRow) {
+      this.paintRow(painted.stableRow, this.rowCache.get(painted.stableRow));
+    }
+    this.paintRow(target.stableRow, this.rowCache.get(target.stableRow));
+    this.paintCursor(frame);
+  }
+
+  /**
+   * Reset cursor-blink phase to visible in response to local input
+   * activity, without waiting for the backend's next frame to confirm the
+   * cursor actually moved.
+   */
+  noteInputActivity() {
+    this.resetCursorBlinkPhase();
+    this.repaintCursorRow();
   }
 
   setSelection(selection: TerminalSelection | null) {
@@ -510,6 +608,7 @@ export class CanvasRenderer implements TerminalRenderer {
       y: this.frame.cursor.row * this.cellHeight,
       width: this.cellWidth,
       height: this.cellHeight,
+      visible: this.frame.cursor.visibility === "visible",
     };
   }
 
@@ -549,6 +648,7 @@ export class CanvasRenderer implements TerminalRenderer {
     this.rowCache.clear();
     this.frame = null;
     this.paintedFrame = null;
+    this.paintedCursor = null;
     this.selection = null;
     this.searchMatch = null;
     for (const image of this.imageCache.values()) {
@@ -603,6 +703,9 @@ export class CanvasRenderer implements TerminalRenderer {
   }
 
   private clear() {
+    // Wipes the whole bitmap - whatever the tracker thought was painted is
+    // gone with it.
+    this.paintedCursor = null;
     const context = this.context;
     if (!context) return;
     context.save();
@@ -961,26 +1064,65 @@ export class CanvasRenderer implements TerminalRenderer {
     this.imageAnimations.set(cacheKey, animation);
   }
 
-  private paintCursor(frame: TerminalRenderFrame, visible: boolean) {
+  /**
+   * Compute where the cursor overlay belongs and whether it should be
+   * visible at all right now - out of the visible grid, DECTCEM-hidden, an
+   * explicit "none" style, and the current blink-off phase all count as
+   * invisible. Does not paint; callers use this to decide what to erase and
+   * `paintCursor` to decide what to draw.
+   */
+  private describeCursor(frame: TerminalRenderFrame): PaintedCursor {
+    const stableRow = frame.viewportTop + frame.cursor.row;
+    const column = frame.cursor.column;
+    const outOfBounds =
+      frame.cursor.row < 0 ||
+      frame.cursor.row >= frame.rows ||
+      column < 0 ||
+      column >= frame.cols;
+    const style = this.resolveCursorStyle(frame);
+    const blinkedOff = this.cursorShouldBlink(frame) && !this.cursorBlinkVisible;
+    const visible =
+      !outOfBounds &&
+      frame.cursor.visibility === "visible" &&
+      style !== "none" &&
+      !blinkedOff;
+    return { stableRow, column, visible };
+  }
+
+  /** Map DECSCUSR (`cursor.shape`) to a paint style, honoring focus. */
+  private resolveCursorStyle(
+    frame: TerminalRenderFrame,
+  ): TerminalCursorStyle | TerminalCursorInactiveStyle {
+    if (!this.focused) return this.inactiveCursorStyle;
+    const shape = frame.cursor.shape;
+    if (shape === "default") return this.cursorStyle;
+    if (shape.endsWith("-block")) return "block";
+    if (shape.endsWith("-underline")) return "underline";
+    if (shape.endsWith("-bar")) return "bar";
+    return this.cursorStyle;
+  }
+
+  /**
+   * Paint (or, if invisible, simply record) the cursor overlay for `frame`.
+   * Always updates `paintedCursor` to the freshly computed target so the
+   * next paint's erase/dedup logic stays accurate even when nothing was
+   * actually drawn.
+   */
+  private paintCursor(frame: TerminalRenderFrame): PaintedCursor {
+    const target = this.describeCursor(frame);
+    this.paintedCursor = target;
     const context = this.context;
-    if (
-      !context ||
-      frame.cursor.visibility === "hidden" ||
-      (this.cursorBlink && !this.cursorBlinkVisible)
-    ) {
-      return;
-    }
-    const style = this.focused ? this.cursorStyle : this.inactiveCursorStyle;
-    if (style === "none") return;
-    const x = frame.cursor.column * this.cellWidth;
-    const y = frame.cursor.row * this.cellHeight;
+    if (!context || !target.visible) return target;
+    const style = this.resolveCursorStyle(frame);
+    const x = target.column * this.cellWidth;
+    const y = (target.stableRow - frame.viewportTop) * this.cellHeight;
     const width = this.cellWidth;
     const height = this.cellHeight;
     context.save();
     context.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     context.strokeStyle = this.theme.cursor ?? this.theme.foreground;
     context.fillStyle = this.theme.cursor ?? this.theme.foreground;
-    context.globalAlpha = visible ? 0.9 : 0;
+    context.globalAlpha = 0.9;
     switch (style) {
       case "underline":
         context.fillRect(x, y + height - 2, width, 2);
@@ -989,14 +1131,17 @@ export class CanvasRenderer implements TerminalRenderer {
         context.fillRect(x, y, 2, height);
         break;
       case "block":
-        context.globalAlpha = visible ? 0.35 : 0;
+        context.globalAlpha = 0.35;
         context.fillRect(x, y, width, height);
         break;
       case "outline":
         context.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1);
         break;
+      case "none":
+        break;
     }
     context.restore();
+    return target;
   }
 
   private rangeIsSelected(stableRow: number, column: number, width: number) {
@@ -1038,7 +1183,7 @@ export class CanvasRenderer implements TerminalRenderer {
       const stableRow = frame.viewportTop + row;
       this.paintRow(stableRow, this.rowCache.get(stableRow));
     }
-    this.paintCursor(frame, true);
+    this.paintCursor(frame);
     this.paintedFrame = frame;
     this.pendingDirtyRows.clear();
     this.pendingFullRedraw = false;

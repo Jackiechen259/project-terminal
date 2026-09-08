@@ -236,8 +236,9 @@ fn run_scheduler(engine: Arc<Mutex<WeztermTerminalEngine>>, hub: Arc<TerminalFra
         last_frame_at = Some(Instant::now());
 
         // A DECSET 2026 hold has no further PTY bytes until the TUI ends the
-        // frame (or the 150ms timeout fires). Wake the scheduler ourselves so
-        // a stuck hold still flushes instead of freezing the pane.
+        // frame (or the 1s total-duration cap fires - see
+        // `sync_output::HOLD_TIMEOUT`). Wake the scheduler ourselves so a
+        // stuck hold still flushes instead of freezing the pane.
         if !extracted && hub.wants_frames() {
             if let Some(remaining) = engine.lock().synchronized_hold_remaining() {
                 let (pending_lock, wake) = &*hub.signal;
@@ -295,9 +296,12 @@ mod tests {
         let mut subscription = hub.subscribe();
 
         // Hold the model lock while feeding the burst so the scheduler cannot
-        // observe a partial burst. The production reader releases this same
-        // lock for each read, but all notifications within one frame window
-        // must still collapse to the latest model state.
+        // observe a partial burst. The production reader (`pty_pump`) also
+        // takes this same lock only once per coalesced burst rather than
+        // once per raw PTY read now, but this test still holds it across the
+        // whole loop below so every notification within one frame window
+        // collapses to the latest model state regardless of how many `feed`
+        // calls produced it.
         {
             let mut model = model.lock();
             for index in 0..100 {

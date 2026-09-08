@@ -5,7 +5,7 @@
 //! manager constructs it from resolved local, WSL, or SSH configuration.
 
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Duration;
@@ -21,8 +21,7 @@ use crate::terminal_engine::{
 };
 
 use super::frame_scheduler::{TerminalFrameHub, TerminalFrameSubscription};
-
-const PTY_READ_BUFFER_BYTES: usize = 16 * 1024;
+use super::pty_pump::spawn_pty_pump;
 
 /// What to spawn inside the PTY.
 #[derive(Debug, Clone)]
@@ -358,37 +357,34 @@ impl TerminalSession {
         let session_id = spawn.session_id.clone();
         let (status_sender, _) = broadcast::channel(16);
 
-        // Reader thread: scans for the one-shot ready marker, removes that
-        // protocol line, and feeds every other byte directly into the
-        // authoritative terminal model. No raw PTY history or frontend
-        // output stream is maintained here.
+        // Reader/parser pump: a dedicated OS-read thread coalesces PTY bytes
+        // into bursts (see `pty_pump`), and each burst is fed to the
+        // terminal model under a single lock acquisition - never once per
+        // raw `read`. The handshake filter still scans for the one-shot
+        // ready marker and removes that protocol line; every other byte goes
+        // straight into the authoritative terminal model. No raw PTY history
+        // or frontend output stream is maintained here. No extra "quiet
+        // point" delay is added on the frame-scheduler side: the coalesced
+        // burst boundary already is the quiet point, and the scheduler's own
+        // 16ms cadence is enough on top of it.
         let engine_for_reader = Arc::clone(&terminal_engine);
         let frame_hub_for_reader = Arc::clone(&frame_hub);
         let watcher_for_reader = ready_watcher.clone();
-        thread::spawn(move || {
-            let mut reader = reader;
-            let mut buf = [0u8; PTY_READ_BUFFER_BYTES];
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => match watcher_for_reader.lock().process(&buf[..n]) {
-                        Processed::PassThrough => {
-                            engine_for_reader.lock().feed(&buf[..n]);
-                            frame_hub_for_reader.notify();
-                        }
-                        Processed::Filtered(output) if !output.is_empty() => {
-                            engine_for_reader.lock().feed(&output);
-                            frame_hub_for_reader.notify();
-                        }
-                        Processed::Filtered(_) => {}
-                    },
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        continue;
-                    }
-                    Err(_) => break,
+        spawn_pty_pump(
+            &session_id,
+            reader,
+            move |burst: &[u8]| match watcher_for_reader.lock().process(burst) {
+                Processed::PassThrough => {
+                    engine_for_reader.lock().feed(burst);
+                    frame_hub_for_reader.notify();
                 }
-            }
-        });
+                Processed::Filtered(output) if !output.is_empty() => {
+                    engine_for_reader.lock().feed(&output);
+                    frame_hub_for_reader.notify();
+                }
+                Processed::Filtered(_) => {}
+            },
+        );
 
         let inner = Arc::new(Mutex::new(SessionInner {
             master,

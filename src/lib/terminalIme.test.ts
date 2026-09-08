@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  IME_CARET_MAX_WAIT_MS,
+  IME_CARET_SETTLE_MS,
   POST_COMPOSITION_SUPPRESS_MS,
   committedCompositionText,
+  createImeCaretScheduler,
   imeInputStyle,
   isImeKeyEvent,
   isWithinPostCompositionWindow,
   shouldSuppressPostCompositionKey,
+  type ImeCaretUpdate,
 } from "./terminalIme";
 
 describe("imeInputStyle", () => {
@@ -97,5 +101,255 @@ describe("committedCompositionText", () => {
     expect(committedCompositionText("", "你")).toBe("你");
     expect(committedCompositionText(null, "你")).toBe("你");
     expect(committedCompositionText("", "")).toBe("");
+  });
+});
+
+/**
+ * A deterministic stand-in for rAF/setTimeout/performance.now so the
+ * scheduler's timing rules can be tested without real clocks or flakiness.
+ */
+function createHarness() {
+  let currentTime = 0;
+  let nextFrameHandle = 0;
+  let nextTimerHandle = 0;
+  const frameCallbacks = new Map<number, () => void>();
+  const timers = new Map<number, { callback: () => void; due: number }>();
+  const applied: ImeCaretUpdate[] = [];
+
+  const scheduler = createImeCaretScheduler({
+    apply: (rect) => applied.push(rect),
+    now: () => currentTime,
+    requestFrame: (callback) => {
+      const handle = ++nextFrameHandle;
+      frameCallbacks.set(handle, callback);
+      return handle;
+    },
+    cancelFrame: (handle) => {
+      frameCallbacks.delete(handle);
+    },
+    setTimer: (callback, ms) => {
+      const handle = ++nextTimerHandle;
+      timers.set(handle, { callback, due: currentTime + ms });
+      return handle;
+    },
+    clearTimer: (handle) => {
+      timers.delete(handle);
+    },
+  });
+
+  function flushFrame() {
+    const pending = [...frameCallbacks.entries()];
+    frameCallbacks.clear();
+    for (const [, callback] of pending) callback();
+  }
+
+  function advance(ms: number) {
+    currentTime += ms;
+    for (;;) {
+      const due = [...timers.entries()].find(([, timer]) => timer.due <= currentTime);
+      if (!due) return;
+      const [handle, timer] = due;
+      timers.delete(handle);
+      timer.callback();
+    }
+  }
+
+  return {
+    scheduler,
+    applied,
+    flushFrame,
+    advance,
+    get pendingFrames() {
+      return frameCallbacks.size;
+    },
+    get pendingTimers() {
+      return timers.size;
+    },
+  };
+}
+
+function caret(x: number, visible: boolean): ImeCaretUpdate {
+  return { x, y: 16, width: 8, height: 17, visible };
+}
+
+describe("createImeCaretScheduler", () => {
+  it("applies a visible rect on the next frame, not synchronously", () => {
+    const harness = createHarness();
+    const { scheduler, applied, flushFrame } = harness;
+    const rect = caret(8, true);
+
+    scheduler.update(rect);
+    expect(applied).toEqual([]);
+    expect(harness.pendingFrames).toBe(1);
+
+    flushFrame();
+    expect(applied).toEqual([rect]);
+  });
+
+  it("skips scheduling when the rect has not changed", () => {
+    const harness = createHarness();
+    const { scheduler, applied, flushFrame } = harness;
+    const rect = caret(8, true);
+
+    scheduler.update(rect);
+    expect(harness.pendingFrames).toBe(1);
+    // A structurally identical rect (a fresh object each frame, as the
+    // renderer produces) must not reset or duplicate the pending schedule.
+    scheduler.update({ ...rect });
+    expect(harness.pendingFrames).toBe(1);
+    flushFrame();
+    expect(applied).toEqual([rect]);
+
+    // Once applied, reporting the same rect again is a pure no-op.
+    scheduler.update({ ...rect });
+    flushFrame();
+    expect(applied).toEqual([rect]);
+  });
+
+  it("debounces a moving hidden caret and applies once it settles", () => {
+    const { scheduler, applied, advance } = createHarness();
+
+    scheduler.update(caret(8, false));
+    advance(50);
+    scheduler.update(caret(16, false));
+
+    advance(IME_CARET_SETTLE_MS - 1);
+    expect(applied).toEqual([]);
+
+    advance(1);
+    expect(applied).toEqual([caret(16, false)]);
+  });
+
+  it("forces the caret to catch up after maxWaitMs of continuous hidden movement", () => {
+    const { scheduler, applied, advance } = createHarness();
+    const step = Math.floor(IME_CARET_SETTLE_MS / 2); // never lets it settle
+    let x = 0;
+    scheduler.update(caret(x, false));
+
+    let iterations = 0;
+    while (applied.length === 0 && iterations < 50) {
+      advance(step);
+      iterations += 1;
+      // The forced catch-up can fire from the timer that `advance` just
+      // ran - stop immediately so `x` still names the rect that was
+      // actually committed, instead of one step further along.
+      if (applied.length > 0) break;
+      x += 8;
+      scheduler.update(caret(x, false));
+    }
+
+    expect(applied).toEqual([caret(x, false)]);
+    // It should not have taken drastically longer than the hard cap to
+    // force a catch-up.
+    expect(iterations * step).toBeLessThan(IME_CARET_MAX_WAIT_MS + step * 2);
+  });
+
+  it("freezes the caret during composition and applies the latest rect once it ends", () => {
+    const { scheduler, applied, flushFrame } = createHarness();
+    const before = caret(8, true);
+    scheduler.update(before);
+    flushFrame();
+    expect(applied).toEqual([before]);
+
+    scheduler.setComposing(true);
+    const duringComposition = caret(24, true);
+    scheduler.update(duringComposition);
+    flushFrame();
+    // No DOM write while composing, even though a visible rect would
+    // normally apply on the very next frame.
+    expect(applied).toEqual([before]);
+
+    scheduler.setComposing(false);
+    expect(applied).toEqual([before, duringComposition]);
+  });
+
+  it("cancels a frame already scheduled before composition starts", () => {
+    const harness = createHarness();
+    const { scheduler, applied, flushFrame } = harness;
+
+    // A terminal frame arrives and schedules a caret move for the next
+    // rAF, but composition starts (a native compositionstart event) before
+    // that rAF fires - a real race between two independent event sources.
+    const race = caret(24, true);
+    scheduler.update(race);
+    expect(harness.pendingFrames).toBe(1);
+
+    scheduler.setComposing(true);
+    expect(harness.pendingFrames).toBe(0);
+
+    // The rAF the browser had already queued still fires; it must not
+    // write to the DOM mid-composition.
+    flushFrame();
+    expect(applied).toEqual([]);
+
+    scheduler.setComposing(false);
+    expect(applied).toEqual([race]);
+  });
+
+  it("cancels a settle timer already scheduled before composition starts", () => {
+    const harness = createHarness();
+    const { scheduler, applied, advance } = harness;
+
+    // Same race as above, but for a hidden caret's settle debounce instead
+    // of a visible caret's next-frame schedule.
+    const race = caret(24, false);
+    scheduler.update(race);
+    expect(harness.pendingTimers).toBe(1);
+
+    scheduler.setComposing(true);
+    expect(harness.pendingTimers).toBe(0);
+
+    advance(IME_CARET_MAX_WAIT_MS + 100);
+    expect(applied).toEqual([]);
+
+    scheduler.setComposing(false);
+    expect(applied).toEqual([race]);
+  });
+
+  describe("flush", () => {
+    it("synchronously applies the latest rect outside composition", () => {
+      const { scheduler, applied } = createHarness();
+      const rect = caret(8, false);
+      scheduler.update(rect);
+      expect(applied).toEqual([]);
+
+      scheduler.flush();
+      expect(applied).toEqual([rect]);
+    });
+
+    it("re-applies the already-fixed rect in place while composing", () => {
+      const { scheduler, applied } = createHarness();
+      const initial = caret(8, true);
+      scheduler.update(initial);
+      scheduler.flush();
+      expect(applied).toEqual([initial]);
+
+      scheduler.setComposing(true);
+      scheduler.update(caret(40, true));
+      scheduler.flush();
+      // Position must not move mid-composition even though a newer rect
+      // arrived - only the already-applied (frozen) rect is re-emitted, so
+      // a caller can still resize for a widening preedit string.
+      expect(applied).toEqual([initial, initial]);
+    });
+  });
+
+  it("cancels pending frame and settle timers on dispose", () => {
+    const harness = createHarness();
+    const { scheduler, applied, flushFrame, advance } = harness;
+
+    scheduler.update(caret(8, true));
+    expect(harness.pendingFrames).toBe(1);
+    scheduler.dispose();
+    expect(harness.pendingFrames).toBe(0);
+    flushFrame();
+    expect(applied).toEqual([]);
+
+    scheduler.update(caret(8, false));
+    expect(harness.pendingTimers).toBe(1);
+    scheduler.dispose();
+    expect(harness.pendingTimers).toBe(0);
+    advance(IME_CARET_MAX_WAIT_MS + 100);
+    expect(applied).toEqual([]);
   });
 });

@@ -19,8 +19,8 @@ const mocks = vi.hoisted(() => {
     mount: vi.fn(),
     resize: vi.fn(),
     measureGrid: vi.fn(() => ({ rows: 40, cols: 120 })),
-    render: vi.fn(),
-    renderImmediate: vi.fn(),
+    render: vi.fn(() => true),
+    renderImmediate: vi.fn(() => true),
     redraw: vi.fn(),
     setTheme: vi.fn(),
     setFont: vi.fn(),
@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => {
     setCursorBlink: vi.fn(),
     setFocused: vi.fn(),
     setVisible: vi.fn(),
+    noteInputActivity: vi.fn(),
     setSelection: vi.fn(),
     setSearchMatch: vi.fn(),
     selectionText: vi.fn(() => ""),
@@ -40,7 +41,13 @@ const mocks = vi.hoisted(() => {
       } | null => null,
     ),
     linkAtPoint: vi.fn(() => null),
-    cursorRect: vi.fn(() => ({ x: 16, y: 34, width: 8, height: 17 })),
+    cursorRect: vi.fn(() => ({
+      x: 16,
+      y: 34,
+      width: 8,
+      height: 17,
+      visible: true,
+    })),
     rowText: vi.fn(() => ""),
     dispose: vi.fn(),
   };
@@ -149,13 +156,18 @@ function frame(
 describe("WeztermTerminalView render synchronization", () => {
   beforeEach(() => {
     mocks.renderer.measureGrid.mockReturnValue({ rows: 40, cols: 120 });
-    mocks.renderer.render.mockClear();
-    mocks.renderer.renderImmediate.mockClear();
+    mocks.renderer.render.mockReset();
+    mocks.renderer.render.mockReturnValue(true);
+    mocks.renderer.renderImmediate.mockReset();
+    mocks.renderer.renderImmediate.mockReturnValue(true);
     mocks.renderer.redraw.mockClear();
     mocks.renderer.resize.mockClear();
     mocks.renderer.dispose.mockClear();
     mocks.renderer.setVisible.mockClear();
+    mocks.renderer.setCursorBlink.mockClear();
+    mocks.renderer.setCursorStyle.mockClear();
     mocks.renderer.setSearchMatch.mockClear();
+    mocks.renderer.noteInputActivity.mockClear();
     mocks.createTerminalRenderer.mockClear();
     mocks.terminalService.attachRender.mockClear();
     mocks.terminalService.resize.mockClear();
@@ -188,6 +200,7 @@ describe("WeztermTerminalView render synchronization", () => {
       y: 34,
       width: 8,
       height: 17,
+      visible: true,
     });
     mocks.resetAttachment();
     useSettingsStore.setState({
@@ -220,6 +233,10 @@ describe("WeztermTerminalView render synchronization", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    // A no-op unless an individual test opted into fake timers for the IME
+    // caret's settle debounce - guards against leaking them into later
+    // tests if one exits early.
+    vi.useRealTimers();
   });
 
   it("requests and renders a new-size snapshot after a delayed resize", async () => {
@@ -679,6 +696,144 @@ describe("WeztermTerminalView render synchronization", () => {
     );
     expect(mocks.terminalService.keyDown).not.toHaveBeenCalled();
     expect(view.queryByTestId("terminal-ime-preedit")).toBeNull();
+    view.unmount();
+  });
+
+  it("does not advance past a rejected frame and requests exactly one recovery snapshot", async () => {
+    const view = await mountReadyView();
+    mocks.terminalService.requestRenderSnapshot.mockClear();
+    // The renderer could not apply this frame to its row cache (e.g. it
+    // depends on rows the cache no longer has).
+    mocks.renderer.render.mockReturnValueOnce(false);
+
+    act(() => {
+      mocks.getAttachedOnMessage()?.({
+        type: "frame",
+        frame: frame(40, 120, 2, false),
+      });
+    });
+    expect(mocks.terminalService.requestRenderSnapshot).toHaveBeenCalledTimes(
+      1,
+    );
+
+    // The backend answers with a fresh full snapshot, accepted normally (the
+    // mock's default return value) - proving the component recovered rather
+    // than getting stuck behind the rejected sequence number, and that it
+    // did not ask for a second recovery snapshot on top of the first.
+    const recovery = frame(40, 120, 3, true);
+    act(() => {
+      mocks.getAttachedOnMessage()?.({ type: "frame", frame: recovery });
+    });
+    expect(mocks.renderer.renderImmediate).toHaveBeenCalledWith(recovery);
+    expect(mocks.terminalService.requestRenderSnapshot).toHaveBeenCalledTimes(
+      1,
+    );
+
+    view.unmount();
+  });
+
+  it("freezes the IME caret during composition and re-docks it once composition ends", async () => {
+    const view = await mountReadyView();
+    const input = view.getByLabelText("Terminal input") as HTMLTextAreaElement;
+    expect(input.style.left).toBe("16px");
+
+    fireEvent.compositionStart(input);
+
+    // The model cursor moves mid-composition (e.g. a status line redrawing
+    // elsewhere) - the caret must not chase it while composing.
+    mocks.renderer.cursorRect.mockReturnValue({
+      x: 64,
+      y: 34,
+      width: 8,
+      height: 17,
+      visible: true,
+    });
+    act(() => {
+      mocks.getAttachedOnMessage()?.({
+        type: "frame",
+        frame: frame(40, 120, 2, false),
+      });
+    });
+    expect(input.style.left).toBe("16px");
+
+    fireEvent.compositionEnd(input, { data: "" });
+    expect(input.style.left).toBe("64px");
+
+    view.unmount();
+  });
+
+  it("waits for a hidden cursor to settle before moving the IME caret", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const view = await mountReadyView();
+      const input = view.getByLabelText(
+        "Terminal input",
+      ) as HTMLTextAreaElement;
+      expect(input.style.left).toBe("16px");
+
+      // Full-screen TUIs often park a hidden cursor near the last edit
+      // rather than truly moving it - moving the (invisible) hidden
+      // textarea there immediately would drag the IME candidate window.
+      mocks.renderer.cursorRect.mockReturnValue({
+        x: 48,
+        y: 34,
+        width: 8,
+        height: 17,
+        visible: false,
+      });
+      act(() => {
+        mocks.getAttachedOnMessage()?.({
+          type: "frame",
+          frame: frame(40, 120, 2, false),
+        });
+      });
+      expect(input.style.left).toBe("16px");
+
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+      expect(input.style.left).toBe("48px");
+
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("calls noteInputActivity on a key press", async () => {
+    const view = await mountReadyView();
+    const input = view.getByLabelText("Terminal input");
+
+    fireEvent.keyDown(input, { key: "ArrowRight" });
+
+    expect(mocks.renderer.noteInputActivity).toHaveBeenCalled();
+    expect(mocks.terminalService.keyDown).toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it("calls setCursorBlink after switching terminalRenderer and recreating the renderer", async () => {
+    const view = await mountReadyView();
+    mocks.renderer.setCursorBlink.mockClear();
+    mocks.renderer.setCursorStyle.mockClear();
+    mocks.createTerminalRenderer.mockClear();
+
+    act(() => {
+      useSettingsStore.setState({ terminalRenderer: "webgl" });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Regression: the mount effect used to only mount/theme/font the fresh
+    // renderer, relying on a *different* effect (keyed on font/theme/typo,
+    // not on the renderer identity) to apply cursor style/blink - which
+    // never re-ran here since none of its own deps changed.
+    expect(mocks.createTerminalRenderer).toHaveBeenCalledTimes(1);
+    expect(mocks.renderer.setCursorBlink).toHaveBeenCalledWith(
+      DEFAULT_GENERAL_SETTINGS.cursorBlink,
+    );
+    expect(mocks.renderer.setCursorStyle).toHaveBeenCalled();
+
     view.unmount();
   });
 });

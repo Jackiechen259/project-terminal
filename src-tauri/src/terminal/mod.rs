@@ -9,6 +9,7 @@ pub mod escaping;
 pub mod frame_scheduler;
 pub mod initializer;
 pub mod manager;
+mod pty_pump;
 pub mod session;
 pub mod shell_integration;
 pub mod wsl;

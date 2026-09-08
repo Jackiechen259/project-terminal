@@ -100,15 +100,26 @@ describe("cellBlinkHidden", () => {
 describe("CanvasRenderer", () => {
   const callbacks = new Map<number, FrameRequestCallback>();
   let nextFrameId = 0;
+  const intervalCallbacks = new Map<number, () => void>();
+  let nextIntervalId = 0;
   let context: {
     fillText: ReturnType<typeof vi.fn>;
     measureText: ReturnType<typeof vi.fn>;
     fillRect: ReturnType<typeof vi.fn>;
+    clearRect: ReturnType<typeof vi.fn>;
+    strokeRect: ReturnType<typeof vi.fn>;
   };
+
+  /** Fire every pending `setInterval` callback (the cursor-blink tick). */
+  function tickIntervals() {
+    for (const callback of [...intervalCallbacks.values()]) callback();
+  }
 
   beforeEach(() => {
     callbacks.clear();
     nextFrameId = 0;
+    intervalCallbacks.clear();
+    nextIntervalId = 0;
     context = {
       fillText: vi.fn(),
       measureText: vi.fn(() => ({
@@ -117,6 +128,8 @@ describe("CanvasRenderer", () => {
         actualBoundingBoxDescent: 3,
       })),
       fillRect: vi.fn(),
+      clearRect: vi.fn(),
+      strokeRect: vi.fn(),
     };
     const canvasContext = {
       ...context,
@@ -144,6 +157,18 @@ describe("CanvasRenderer", () => {
     });
     vi.stubGlobal("cancelAnimationFrame", (id: number) => {
       callbacks.delete(id);
+    });
+    // A deterministic stand-in for the cursor-blink interval, in the same
+    // manual-stub style as the requestAnimationFrame mock above (rather than
+    // vi's global fake-timer engine, which would also swallow the
+    // `performance.now()` spies other tests in this file rely on).
+    vi.stubGlobal("setInterval", (callback: () => void) => {
+      const id = ++nextIntervalId;
+      intervalCallbacks.set(id, callback);
+      return id;
+    });
+    vi.stubGlobal("clearInterval", (id: number) => {
+      intervalCallbacks.delete(id);
     });
   });
 
@@ -524,7 +549,12 @@ describe("CanvasRenderer", () => {
     expect(renderer.cursorRect()).toBeNull();
 
     const next = frame([row(0, "text")], true);
-    next.cursor = { ...next.cursor, column: 3, row: 1 };
+    next.cursor = {
+      ...next.cursor,
+      column: 3,
+      row: 1,
+      visibility: "visible",
+    };
     renderer.renderImmediate(next);
 
     expect(renderer.cursorRect()).toEqual({
@@ -532,7 +562,285 @@ describe("CanvasRenderer", () => {
       y: 16.8,
       width: 8,
       height: 16.8,
+      visible: true,
     });
     renderer.dispose();
+  });
+
+  it("marks the cursor rect not visible when DECTCEM hides it", () => {
+    const renderer = new CanvasRenderer();
+    const canvas = document.createElement("canvas");
+    renderer.mount(canvas);
+    renderer.resize(80, 34, 2, 4);
+
+    const next = frame([row(0, "text")], true);
+    next.cursor = { ...next.cursor, column: 3, row: 1, visibility: "hidden" };
+    renderer.renderImmediate(next);
+
+    expect(renderer.cursorRect()).toEqual({
+      x: 24,
+      y: 16.8,
+      width: 8,
+      height: 16.8,
+      visible: false,
+    });
+    renderer.dispose();
+  });
+
+  it("returns false from render/renderImmediate when the frame is rejected", () => {
+    const renderer = new CanvasRenderer();
+    const canvas = document.createElement("canvas");
+    renderer.mount(canvas);
+    renderer.resize(80, 34, 2, 4);
+    renderer.renderImmediate(frame([row(0, "abcd")], true));
+
+    // A grid mismatch against what the renderer was actually sized to is
+    // rejected outright (see `applyFrameToRowCache`'s `expectedGridChanged`),
+    // whether or not the frame claims to be a full snapshot.
+    const mismatched = frame([row(0, "zzzz")], false, {
+      sequence: 2,
+      cols: 5,
+    });
+    expect(renderer.render(mismatched)).toBe(false);
+    expect(renderer.renderImmediate(mismatched)).toBe(false);
+    renderer.dispose();
+  });
+
+  describe("cursor overlay", () => {
+    /**
+     * The initial frame is always a full snapshot carrying both rows'
+     * content. A later cursor-only move must be a plain delta (no dirty
+     * rows, `fullSnapshot: false`) or `applyFrameToRowCache` would clear the
+     * cache and force a full redraw on every call, which would trivially
+     * "pass" the erase/dedup assertions below without actually exercising
+     * the incremental repaint path they exist to cover.
+     */
+    function visibleCursorFrame(
+      fullSnapshot: boolean,
+      overrides: Partial<
+        Pick<TerminalRenderFrame, "sequence" | "viewportTop" | "viewportBottom">
+      > = {},
+      cursor: Partial<TerminalRenderFrame["cursor"]> = {},
+    ) {
+      const dirtyRows = fullSnapshot
+        ? [row(0, "abcd"), row(1, "efgh")]
+        : [];
+      const built = frame(dirtyRows, fullSnapshot, {
+        rows: 2,
+        cols: 4,
+        ...overrides,
+      });
+      built.cursor = {
+        ...built.cursor,
+        row: 0,
+        column: 0,
+        visibility: "visible",
+        ...cursor,
+      };
+      return built;
+    }
+
+    function paintedCursor(renderer: CanvasRenderer) {
+      return (
+        renderer as unknown as {
+          paintedCursor: { stableRow: number; column: number; visible: boolean } | null;
+        }
+      ).paintedCursor;
+    }
+
+    it("starts blinking regardless of whether setCursorBlink or setVisible(true) runs first", () => {
+      const first = new CanvasRenderer();
+      const canvas1 = document.createElement("canvas");
+      first.mount(canvas1);
+      first.resize(80, 34, 2, 4);
+      first.renderImmediate(visibleCursorFrame(true));
+      // Already visible by default; toggling the setting on must itself
+      // start the interval.
+      first.setCursorBlink(true);
+      expect(
+        (first as unknown as { cursorBlinkTimer: number | null })
+          .cursorBlinkTimer,
+      ).not.toBeNull();
+      first.dispose();
+
+      const second = new CanvasRenderer();
+      const canvas2 = document.createElement("canvas");
+      second.mount(canvas2);
+      second.resize(80, 34, 2, 4);
+      second.setVisible(false);
+      // The setting is enabled while hidden - nothing to blink yet.
+      second.setCursorBlink(true);
+      expect(
+        (second as unknown as { cursorBlinkTimer: number | null })
+          .cursorBlinkTimer,
+      ).toBeNull();
+      second.renderImmediate(visibleCursorFrame(true));
+      // Becoming visible afterward must still pick it up.
+      second.setVisible(true);
+      expect(
+        (second as unknown as { cursorBlinkTimer: number | null })
+          .cursorBlinkTimer,
+      ).not.toBeNull();
+      second.dispose();
+    });
+
+    it("does not blink an unfocused cursor", () => {
+      const renderer = new CanvasRenderer();
+      const canvas = document.createElement("canvas");
+      renderer.mount(canvas);
+      renderer.resize(80, 34, 2, 4);
+      renderer.setCursorBlink(true);
+      renderer.renderImmediate(visibleCursorFrame(true));
+      expect(
+        (renderer as unknown as { cursorBlinkTimer: number | null })
+          .cursorBlinkTimer,
+      ).not.toBeNull();
+
+      renderer.setFocused(false);
+      expect(
+        (renderer as unknown as { cursorBlinkTimer: number | null })
+          .cursorBlinkTimer,
+      ).toBeNull();
+      renderer.dispose();
+    });
+
+    it("does not paint an out-of-bounds cursor, and does not throw", () => {
+      const renderer = new CanvasRenderer();
+      const canvas = document.createElement("canvas");
+      renderer.mount(canvas);
+      renderer.resize(80, 34, 2, 4);
+
+      expect(() =>
+        renderer.renderImmediate(
+          visibleCursorFrame(true, {}, { row: 5, column: 0 }),
+        ),
+      ).not.toThrow();
+      expect(paintedCursor(renderer)?.visible).toBe(false);
+      renderer.dispose();
+    });
+
+    it("resets blink phase to visible when the cursor moves", () => {
+      const renderer = new CanvasRenderer();
+      const canvas = document.createElement("canvas");
+      renderer.mount(canvas);
+      renderer.resize(80, 34, 2, 4);
+      renderer.setCursorBlink(true);
+      renderer.renderImmediate(visibleCursorFrame(true, { sequence: 1 }));
+
+      tickIntervals(); // flips the blink phase off
+      expect(paintedCursor(renderer)?.visible).toBe(false);
+
+      renderer.render(
+        visibleCursorFrame(false, { sequence: 2 }, { row: 0, column: 1 }),
+      );
+      const [id, callback] = [...callbacks.entries()][0];
+      callbacks.delete(id);
+      callback(16);
+
+      expect(paintedCursor(renderer)?.visible).toBe(true);
+      renderer.dispose();
+    });
+
+    it("noteInputActivity immediately lights up a blinked-off cursor", () => {
+      const renderer = new CanvasRenderer();
+      const canvas = document.createElement("canvas");
+      renderer.mount(canvas);
+      renderer.resize(80, 34, 2, 4);
+      renderer.setCursorBlink(true);
+      renderer.renderImmediate(visibleCursorFrame(true));
+
+      tickIntervals();
+      expect(paintedCursor(renderer)?.visible).toBe(false);
+
+      renderer.noteInputActivity();
+      expect(paintedCursor(renderer)?.visible).toBe(true);
+      renderer.dispose();
+    });
+
+    it("a blink tick repaints only the cursor's row", () => {
+      const renderer = new CanvasRenderer();
+      const canvas = document.createElement("canvas");
+      renderer.mount(canvas);
+      renderer.resize(80, 34, 2, 4);
+      renderer.setCursorBlink(true);
+      renderer.renderImmediate(visibleCursorFrame(true));
+      context.fillText.mockClear();
+
+      tickIntervals();
+
+      const painted = context.fillText.mock.calls.map(([text]) => text);
+      expect(painted).toEqual(expect.arrayContaining(["a", "b", "c", "d"]));
+      expect(painted).not.toEqual(expect.arrayContaining(["e"]));
+      renderer.dispose();
+    });
+
+    it("erases the previous cell when the cursor moves off it", () => {
+      const renderer = new CanvasRenderer();
+      const canvas = document.createElement("canvas");
+      renderer.mount(canvas);
+      // A transparent background erases via clearRect instead of a
+      // background-color fillRect, making the erasure unambiguous to assert.
+      renderer.setBackgroundVisible(false);
+      renderer.resize(80, 34, 2, 4);
+      renderer.renderImmediate(visibleCursorFrame(true, { sequence: 1 }));
+      // Only count clearRect calls from the incremental repaint below - the
+      // initial full redraw already clears every row once, which would
+      // otherwise make this assertion pass even without the erase-on-move
+      // fix it exists to cover.
+      context.clearRect.mockClear();
+
+      renderer.render(
+        visibleCursorFrame(false, { sequence: 2 }, { row: 1, column: 0 }),
+      );
+      const [id, callback] = [...callbacks.entries()][0];
+      callbacks.delete(id);
+      callback(16);
+
+      // Row 0 (where the cursor used to be) is erased even though it is not
+      // itself a dirty row in this delta - and nothing else needed erasing,
+      // since row 1's cell content never changed (only the cursor overlay
+      // moved onto it).
+      expect(context.clearRect).toHaveBeenCalledTimes(1);
+      expect(context.clearRect).toHaveBeenCalledWith(0, 0, 80, 16.8);
+      renderer.dispose();
+    });
+
+    it("does not stack alpha across repeated overlay paints of an unchanged cursor", () => {
+      const renderer = new CanvasRenderer();
+      const canvas = document.createElement("canvas");
+      renderer.mount(canvas);
+      renderer.resize(80, 34, 2, 4);
+      renderer.renderImmediate(visibleCursorFrame(true));
+      const fillRectCallsAfterFirstPaint = context.fillRect.mock.calls.length;
+
+      // WebGLRenderer calls this once per GL frame (redraw/resize/blink
+      // tick); with nothing new queued it must be a no-op for the cursor.
+      (renderer as unknown as { paintOverlayPending: () => void }).paintOverlayPending();
+      (renderer as unknown as { paintOverlayPending: () => void }).paintOverlayPending();
+
+      expect(context.fillRect.mock.calls.length).toBe(
+        fillRectCallsAfterFirstPaint,
+      );
+      renderer.dispose();
+    });
+
+    it("maps DECSCUSR shapes to cursor styles and honors steady (non-blinking) shapes", () => {
+      const renderer = new CanvasRenderer();
+      const canvas = document.createElement("canvas");
+      renderer.mount(canvas);
+      renderer.resize(80, 34, 2, 4);
+      renderer.setCursorBlink(true);
+
+      renderer.renderImmediate(
+        visibleCursorFrame(true, { sequence: 1 }, { shape: "steady-bar" }),
+      );
+      // A steady shape never enters the blink-off phase.
+      tickIntervals();
+      expect(paintedCursor(renderer)?.visible).toBe(true);
+      // "bar" paints a 2px-wide fillRect, distinct from the 8px-wide block.
+      expect(context.fillRect).toHaveBeenCalledWith(0, 0, 2, 16.8);
+
+      renderer.dispose();
+    });
   });
 });

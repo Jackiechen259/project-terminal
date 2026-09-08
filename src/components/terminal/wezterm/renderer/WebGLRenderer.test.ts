@@ -155,6 +155,21 @@ describe("WebGLRenderer stable-row cache", () => {
     ).toBe(previous);
     renderer.dispose();
   });
+
+  it("returns false from render/renderImmediate when the frame is rejected", () => {
+    const renderer = new WebGLRenderer();
+    configureGrid(renderer);
+    configureGpu(renderer, document.createElement("canvas"));
+    renderer.renderImmediate(frame(1, 0, [row(0)], true));
+
+    // A grid mismatch against what the renderer was configured for is
+    // rejected outright, whether or not the frame claims to be a full
+    // snapshot.
+    const mismatched = { ...frame(2, 0, [row(0)], false), cols: 5 };
+    expect(renderer.render(mismatched)).toBe(false);
+    expect(renderer.renderImmediate(mismatched)).toBe(false);
+    renderer.dispose();
+  });
 });
 
 describe("WebGLRenderer surface initialization", () => {
@@ -349,6 +364,71 @@ describe("WebGLRenderer surface initialization", () => {
       });
       renderer.dispose();
     }
+  });
+
+  it("redraw() repaints the overlay incrementally instead of a full redraw each call", () => {
+    const renderer = new WebGLRenderer();
+    const canvas = document.createElement("canvas");
+    configureGpu(renderer, canvas);
+    configureAtlas(renderer);
+    configureGrid(renderer);
+    renderer.resize(80, 34, 2, 4);
+
+    const canvasRenderer = (
+      renderer as unknown as {
+        canvasRenderer: { paintOverlayPending: () => void; redraw: () => void };
+      }
+    ).canvasRenderer;
+    const paintOverlaySpy = vi.spyOn(canvasRenderer, "paintOverlayPending");
+    const fullRedrawSpy = vi.spyOn(canvasRenderer, "redraw");
+
+    renderer.renderImmediate(frame(1, 0, [row(0)], true));
+    paintOverlaySpy.mockClear();
+    fullRedrawSpy.mockClear();
+
+    // Tab activation, a cell-blink tick, and a resize-triggered redraw can
+    // all call this back to back - none of them should force the overlay
+    // through a full wipe-and-repaint (which would stack the cursor's alpha
+    // right back in, defeating CanvasRenderer's own dedup).
+    renderer.redraw();
+    renderer.redraw();
+    renderer.redraw();
+
+    expect(paintOverlaySpy).toHaveBeenCalledTimes(3);
+    expect(fullRedrawSpy).not.toHaveBeenCalled();
+    renderer.dispose();
+  });
+
+  it("forces a full overlay redraw only when the backing store actually resizes", () => {
+    const renderer = new WebGLRenderer();
+    const canvas = document.createElement("canvas");
+    configureGpu(renderer, canvas);
+    configureAtlas(renderer);
+    configureGrid(renderer);
+
+    // A minimal stand-in for the overlay canvas - only `width`/`height` (set
+    // by `syncOverlayBackingStore`) and `remove` (called by `dispose`)
+    // matter here.
+    const overlay = { width: 0, height: 0, remove: vi.fn() } as unknown as
+      HTMLCanvasElement;
+    (renderer as unknown as { overlay: HTMLCanvasElement }).overlay = overlay;
+    const canvasRenderer = (
+      renderer as unknown as { canvasRenderer: { redraw: () => void } }
+    ).canvasRenderer;
+    const redrawSpy = vi.spyOn(canvasRenderer, "redraw");
+
+    renderer.resize(80, 34, 2, 4);
+    // Assigning `width`/`height` on a real canvas clears its bitmap, so the
+    // overlay's cursor tracking must be told to repaint from scratch - but
+    // only on the resize that actually changed the backing store.
+    expect(overlay.width).toBe(canvas.width);
+    expect(redrawSpy).toHaveBeenCalledTimes(1);
+
+    redrawSpy.mockClear();
+    renderer.resize(80, 34, 2, 4);
+    expect(redrawSpy).not.toHaveBeenCalled();
+
+    renderer.dispose();
   });
 });
 

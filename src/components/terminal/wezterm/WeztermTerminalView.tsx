@@ -40,10 +40,12 @@ import { resolveTerminalTabTitle } from "../terminalTitle";
 import { setTerminalAlternateScreen } from "@/lib/terminalScreenMode";
 import {
   committedCompositionText,
+  createImeCaretScheduler,
   imeInputStyle,
   isImeKeyEvent,
   isWithinPostCompositionWindow,
   shouldSuppressPostCompositionKey,
+  type ImeCaretUpdate,
 } from "@/lib/terminalIme";
 import { createTerminalRenderer } from "./renderer/WebGLRenderer";
 import type {
@@ -190,7 +192,6 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
   const compositionRef = useRef(false);
   const committedAtRef = useRef<number | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);
-  const applyImeCaretRef = useRef<() => void>(() => {});
   const searchOpenRef = useRef(false);
   const reportedExitRef = useRef(false);
   const bellTimerRef = useRef<number | null>(null);
@@ -314,11 +315,10 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     onFocus?.();
   }, [onFocus]);
 
-  const applyImeCaret = useCallback(() => {
+  const applyImeCaret = useCallback((rect: ImeCaretUpdate) => {
     const input = inputRef.current;
     if (!input) return;
-    const caret = rendererRef.current?.cursorRect() ?? null;
-    const style = imeInputStyle(caret, overlayRef.current?.scrollWidth ?? 0);
+    const style = imeInputStyle(rect, overlayRef.current?.scrollWidth ?? 0);
     if (!style) return;
     input.style.left = `${style.left}px`;
     input.style.top = `${style.top}px`;
@@ -330,11 +330,20 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     overlay.style.top = `${style.top}px`;
     overlay.style.height = `${style.height}px`;
   }, []);
-  applyImeCaretRef.current = applyImeCaret;
+  // Batches caret placement (rAF for a visible cursor, debounced settle for
+  // a hidden one) instead of dragging the hidden textarea to every
+  // intermediate model cursor position - see `createImeCaretScheduler`.
+  // `applyImeCaret` only reads refs, so the scheduler can live for the
+  // component's lifetime rather than being tied to the renderer's.
+  const imeCaretRef = useRef(createImeCaretScheduler({ apply: applyImeCaret }));
+  const syncImeCaret = useCallback(() => {
+    imeCaretRef.current.update(rendererRef.current?.cursorRect() ?? null);
+  }, []);
 
   const sendText = useCallback(
     (text: string) => {
       if (!text) return;
+      rendererRef.current?.noteInputActivity();
       if (inputRef.current) inputRef.current.value = "";
       void terminalService.textInput(sessionId, text).catch(() => {
         // The status channel owns lifecycle errors; input races during close
@@ -404,6 +413,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       ) {
         return;
       }
+      rendererRef.current?.noteInputActivity();
       await terminalService.paste(sessionId, text);
       focusInput();
     },
@@ -734,6 +744,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
         ctrl: event.ctrlKey,
         meta: event.metaKey,
       };
+      rendererRef.current?.noteInputActivity();
       void terminalService.keyDown(sessionId, input).catch(() => {});
     },
     [moveViewport, pasteClipboard, sessionId],
@@ -771,6 +782,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
 
   const handleCompositionStart = useCallback(() => {
     compositionRef.current = true;
+    imeCaretRef.current.setComposing(true);
     setPreedit("");
   }, []);
 
@@ -785,6 +797,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
   const handleCompositionEnd = useCallback(
     (event: CompositionEvent<HTMLTextAreaElement>) => {
       compositionRef.current = false;
+      imeCaretRef.current.setComposing(false);
       committedAtRef.current = performance.now();
       const text = committedCompositionText(
         event.data,
@@ -852,6 +865,12 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     renderer.setFocused(focused);
     renderer.setTheme(rendererTheme);
     renderer.setFont(font);
+    const settings = useSettingsStore.getState();
+    renderer.setCursorStyle(
+      settings.terminalCursorStyle,
+      settings.terminalCursorInactiveStyle,
+    );
+    renderer.setCursorBlink(settings.cursorBlink);
     rendererRef.current = renderer;
     return () => {
       resizeRequestRef.current += 1;
@@ -967,7 +986,8 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       width,
       height,
     };
-    applyImeCaret();
+    syncImeCaret();
+    imeCaretRef.current.flush();
     const resizeRequest = ++resizeRequestRef.current;
     void terminalService
       .resize(sessionId, grid.rows, grid.cols, width, height)
@@ -991,7 +1011,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
         snapshotRequestedRef.current = false;
         requestRenderSnapshot();
       });
-  }, [applyImeCaret, requestRenderSnapshot, sessionId]);
+  }, [requestRenderSnapshot, sessionId, syncImeCaret]);
 
   useEffect(() => {
     const surface = surfaceRef.current;
@@ -1064,18 +1084,27 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
           if (previousFrame === null || sequenceGap) requestRenderSnapshot();
           return;
         }
+        const accepted = frame.fullSnapshot
+          ? (rendererRef.current?.renderImmediate(frame) ?? false)
+          : (rendererRef.current?.render(frame) ?? false);
+        if (!accepted) {
+          // The renderer's retained row cache could not apply this frame
+          // (a mismatched grid, or a delta with no coherent prior state).
+          // Do not advance `frameRef` past a frame the renderer never
+          // actually painted - the next delta's dirty rows would merge onto
+          // a cache that is missing rows it depends on. Wait for the
+          // authoritative snapshot the backend sends instead.
+          awaitingSnapshotRef.current = true;
+          requestRenderSnapshot();
+          return;
+        }
         if (frame.fullSnapshot) {
           awaitingSnapshotRef.current = false;
           snapshotRequestedRef.current = false;
         }
         frameRef.current = frame;
         setTerminalAlternateScreen(sessionId, frame.alternateScreen);
-        if (frame.fullSnapshot) {
-          rendererRef.current?.renderImmediate(frame);
-        } else {
-          rendererRef.current?.render(frame);
-        }
-        applyImeCaretRef.current();
+        syncImeCaret();
         return;
       }
       if (message.type === "control") {
@@ -1150,7 +1179,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       awaitingSnapshotRef.current = false;
       snapshotRequestedRef.current = false;
     };
-  }, [pulseBell, requestRenderSnapshot, resizeSurface, sessionId]);
+  }, [pulseBell, requestRenderSnapshot, resizeSurface, sessionId, syncImeCaret]);
 
   useEffect(() => {
     const stopListening = listenForAppCommands((command) => {
@@ -1173,14 +1202,22 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
   }, []);
 
   useEffect(() => {
+    const imeCaret = imeCaretRef.current;
+    return () => imeCaret.dispose();
+  }, []);
+
+  useEffect(() => {
     setSearchIndex(0);
     refreshSearch(searchQuery);
     if (!searchQuery) rendererRef.current?.setSearchMatch(null);
   }, [refreshSearch, searchQuery]);
 
   useLayoutEffect(() => {
-    applyImeCaret();
-  }, [applyImeCaret, preedit]);
+    // The preedit overlay just resized (or appeared/disappeared) - re-apply
+    // the frozen composition-time rect so the caller can re-measure its
+    // width without moving the caret's position mid-composition.
+    imeCaretRef.current.flush();
+  }, [preedit]);
 
   useEffect(() => {
     const handleShortcut = (event: globalThis.KeyboardEvent) => {

@@ -54,6 +54,14 @@ fn find_osc_terminator(bytes: &[u8]) -> Option<(usize, usize)> {
 /// The PTY reader calls `feed`; a separate attachment/frame scheduler calls
 /// `take_render_frame`.  The two operations are intentionally independent so
 /// PTY read frequency never dictates IPC frequency.
+///
+/// Contract with the caller of `feed`: each call must carry one complete
+/// output burst - everything one ConPTY paint pass wrote, coalesced by the
+/// PTY pump (`terminal::pty_pump`) - applied under a single lock acquisition.
+/// Between any two `feed` calls, whatever `take_render_frame` observes is
+/// state that is actually eligible to be rendered; feeding a mid-repaint
+/// slice (half a redraw, a cursor hidden only because DECTCEM has not been
+/// re-enabled yet) makes that torn state paintable too.
 pub struct WeztermTerminalEngine {
     terminal: Terminal,
     /// WezTerm's sequence number is used internally for dirty-row queries;
@@ -355,6 +363,13 @@ impl WeztermTerminalEngine {
         self.sync_output.hold_remaining()
     }
 
+    /// Test-only escape hatch for `SynchronizedOutput`'s total-duration hold
+    /// cap without an actual `sleep`.
+    #[cfg(test)]
+    pub fn backdate_synchronized_hold(&mut self, by: Duration) {
+        self.sync_output.backdate_hold(by);
+    }
+
     fn set_viewport(&mut self, stable_row: i64) {
         let (first_row, bottom_top) = self.viewport_bounds();
         let next = stable_row.clamp(first_row, bottom_top);
@@ -463,7 +478,20 @@ impl TerminalEngine for WeztermTerminalEngine {
             mouse_reporting,
             cursor,
         ) = self.current_frame_state();
-        let full_snapshot = self.force_full_snapshot;
+        // Entering or leaving the alternate screen must always resync every
+        // visible row, not just whatever wezterm-term marked dirty: leaving
+        // alt screen marks the primary screen's dirty rows against the
+        // oldest physical row in scrollback, not the viewport, so relying on
+        // `get_changed_stable_rows` here leaves stale alt-screen content on
+        // screen until something else repaints it. Deliberately not routed
+        // through `request_full_snapshot()` - that also clears the pending
+        // control-event queue (bell, command-finished), which a screen
+        // switch must not discard.
+        let screen_switched = alternate_screen != self.last_alternate_screen;
+        if screen_switched {
+            self.known_image_keys.clear();
+        }
+        let full_snapshot = self.force_full_snapshot || screen_switched;
         let mut dirty_rows = self.changed_rows(full_snapshot, viewport_top, rows);
         self.prepare_image_payloads(&mut dirty_rows);
         let cursor_changed = self.last_cursor.as_ref() != Some(&cursor);
@@ -1611,7 +1639,9 @@ mod tests {
         let _ = engine.take_render_frame();
         engine.feed(b"\x1b[?2026h\x1b[Hpartial");
         assert!(engine.take_render_frame().is_none());
-        std::thread::sleep(Duration::from_millis(170));
+        engine.backdate_synchronized_hold(
+            crate::terminal_engine::sync_output::HOLD_TIMEOUT + Duration::from_millis(20),
+        );
         let frame = engine.take_render_frame().expect("timeout flush");
         let text: String = frame
             .dirty_rows
@@ -1621,6 +1651,115 @@ mod tests {
         assert!(
             text.contains("partial"),
             "timeout flush missed held output: {text:?}"
+        );
+    }
+
+    #[test]
+    fn synchronized_output_hold_is_capped_even_while_bytes_keep_arriving() {
+        let mut engine = engine();
+        let _ = engine.take_render_frame();
+
+        engine.feed(b"\x1b[?2026h\x1b[Hframe-1");
+        assert!(
+            engine.take_render_frame().is_none(),
+            "held mid-frame must not extract"
+        );
+
+        // More bytes keep arriving inside the hold - the old per-byte idle
+        // timer would push HOLD_TIMEOUT back on every one of these; the
+        // total-duration cap must not.
+        engine.feed(b"frame-2");
+        engine.feed(b"frame-3");
+        assert!(engine.take_render_frame().is_none());
+
+        engine.backdate_synchronized_hold(
+            crate::terminal_engine::sync_output::HOLD_TIMEOUT + Duration::from_millis(20),
+        );
+
+        let frame = engine.take_render_frame().expect("capped hold must flush");
+        let text: String = frame
+            .dirty_rows
+            .iter()
+            .flat_map(|row| row.cells.iter().map(|cell| cell.text.as_str()))
+            .collect();
+        assert!(
+            text.contains("frame-1frame-2frame-3"),
+            "capped flush must include everything buffered before the cap: {text:?}"
+        );
+    }
+
+    #[test]
+    fn repaint_split_across_feeds_exposes_the_hidden_cursor_between_them() {
+        // This is the bug the PTY pump exists to avoid: an extraction that
+        // lands between two `feed` calls covering one repaint sees the
+        // model's torn, mid-repaint state.
+        let mut engine = engine();
+        let _ = engine.take_render_frame();
+
+        engine.feed(b"\x1b[?25l\x1b[Hspinner");
+        let mid_repaint = engine
+            .take_render_frame()
+            .expect("mid-repaint frame extracted between two feeds");
+        assert_eq!(
+            mid_repaint.cursor.visibility,
+            CursorVisibility::Hidden,
+            "an extraction landing between two feeds must see the torn, hidden-cursor state"
+        );
+
+        engine.feed(b"\x1b[?25h");
+        let restored = engine.take_render_frame().expect("cursor restored frame");
+        assert_eq!(restored.cursor.visibility, CursorVisibility::Visible);
+
+        // The same bytes fed as a single burst - what the PTY pump
+        // guarantees - never exposes the intermediate hidden state: exactly
+        // one frame comes out, and its cursor is already visible.
+        let mut atomic_engine = engine_with_size(4, 12);
+        let _ = atomic_engine.take_render_frame();
+        atomic_engine.feed(b"\x1b[?25l\x1b[Hspinner\x1b[?25h");
+        let frame = atomic_engine
+            .take_render_frame()
+            .expect("single frame for the whole burst");
+        assert_eq!(frame.cursor.visibility, CursorVisibility::Visible);
+        assert!(
+            atomic_engine.take_render_frame().is_none(),
+            "one feed of one burst must produce exactly one frame"
+        );
+    }
+
+    #[test]
+    fn leaving_the_alternate_screen_emits_a_full_snapshot_of_primary_rows() {
+        let mut engine = engine_with_size(4, 12);
+        let _ = engine.take_render_frame();
+
+        // Scroll the primary screen first so restoring it has to repaint
+        // physical rows that already have scrollback above them - wezterm's
+        // dirty tracking marks those rows against the oldest physical row,
+        // not the visible viewport, so this only reproduces with existing
+        // scrollback.
+        for line in 0..8 {
+            engine.feed(format!("line {line}\r\n").as_bytes());
+        }
+        let _ = engine.take_render_frame();
+
+        engine.feed(b"\x1b[?1049h\x1b[2Jalt screen");
+        let alternate = engine.take_render_frame().expect("alternate frame");
+        assert!(alternate.alternate_screen);
+        assert!(
+            alternate.full_snapshot,
+            "switching screens must force a full snapshot"
+        );
+
+        engine.feed(b"\x1b[?1049l");
+        let primary = engine.take_render_frame().expect("restored frame");
+        assert!(!primary.alternate_screen);
+        assert!(
+            primary.full_snapshot,
+            "leaving the alternate screen must force a full snapshot of the primary rows"
+        );
+        assert_eq!(
+            primary.dirty_rows.len(),
+            primary.rows as usize,
+            "a full snapshot must include every visible row, not just wezterm's dirty-marked rows"
         );
     }
 
