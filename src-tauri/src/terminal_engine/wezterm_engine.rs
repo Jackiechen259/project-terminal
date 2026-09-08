@@ -1,7 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::io::Write;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use wezterm_term::input::{KeyCode, KeyModifiers};
 use wezterm_term::{Alert, AlertHandler, Terminal, TerminalConfiguration, TerminalSize};
@@ -33,6 +33,18 @@ impl Write for SharedWriter {
         self.inner.lock().unwrap().flush()
     }
 }
+
+/// How long a bare DECTCEM hide is treated as provisional.
+///
+/// A TUI repaint is bracketed by `CSI ? 25 l` ... `CSI ? 25 h`, and ConPTY
+/// hands those to us as separate reads, so publishing the hide immediately
+/// makes the cursor strobe once per keystroke at a shell prompt. This is the
+/// same "do not paint a half-finished repaint" problem `sync_output` solves
+/// for apps that speak DECSET 2026; the grace window covers the apps that do
+/// not. It only ever delays a hide - a hide that outlives the window is
+/// published normally, so an app that genuinely parks its cursor off-screen
+/// still gets what it asked for.
+const CURSOR_HIDE_GRACE: Duration = Duration::from_millis(90);
 
 const CONTROL_EVENT_CAPACITY: usize = 256;
 const IMAGE_CACHE_KEY_CAPACITY: usize = 1_024;
@@ -71,6 +83,9 @@ pub struct WeztermTerminalEngine {
     last_frame_sequence: u64,
     last_emitted_sequence: usize,
     last_cursor: Option<CursorState>,
+    /// When the model first reported a hidden cursor that has not been
+    /// published yet. See `CURSOR_HIDE_GRACE`.
+    cursor_hide_pending_since: Option<Instant>,
     last_scrollback_length: usize,
     last_alternate_screen: bool,
     last_mouse_reporting: bool,
@@ -161,6 +176,7 @@ impl WeztermTerminalEngine {
             last_frame_sequence: 0,
             last_emitted_sequence: 0,
             last_cursor: None,
+            cursor_hide_pending_since: None,
             last_scrollback_length: 0,
             last_alternate_screen: false,
             last_mouse_reporting: false,
@@ -357,10 +373,28 @@ impl WeztermTerminalEngine {
         let _ = writer.flush();
     }
 
+    /// Remaining time before a deferred cursor hide must be published, if one
+    /// is pending. Like `synchronized_hold_remaining`, this lets the frame
+    /// scheduler wake on its own: a hidden cursor produces no further PTY
+    /// bytes, so without this the hide would never reach the renderer.
+    pub fn cursor_hide_remaining(&self) -> Option<Duration> {
+        let since = self.cursor_hide_pending_since?;
+        Some(CURSOR_HIDE_GRACE.saturating_sub(since.elapsed()))
+    }
+
     /// Remaining time before a stuck DECSET 2026 hold is force-flushed.
     /// The frame scheduler uses this to wake without waiting for more PTY bytes.
     pub fn synchronized_hold_remaining(&self) -> Option<Duration> {
         self.sync_output.hold_remaining()
+    }
+
+    /// Age a pending cursor hide so a test can cross `CURSOR_HIDE_GRACE`
+    /// without sleeping.
+    #[cfg(test)]
+    pub fn backdate_cursor_hide(&mut self, by: Duration) {
+        if let Some(since) = self.cursor_hide_pending_since {
+            self.cursor_hide_pending_since = since.checked_sub(by);
+        }
     }
 
     /// Test-only escape hatch for `SynchronizedOutput`'s total-duration hold
@@ -500,6 +534,36 @@ impl TerminalEngine for WeztermTerminalEngine {
             || self.last_mouse_reporting != mouse_reporting
             || self.last_viewport_top != Some(viewport_top)
             || self.last_viewport_bottom != Some(viewport_bottom);
+
+        // Hold back a frame whose only news is that the cursor went away.
+        // Mid-repaint the model reports DECTCEM off and whatever position the
+        // paint happened to reach; both are transient, and a repaint that ends
+        // with `CSI ? 25 h` makes them never worth publishing at all. Only a
+        // bare hide is deferred - once real content, a viewport move, or a
+        // snapshot rides along, the frame goes out immediately with the
+        // model's true cursor, so nothing that affects what the user reads is
+        // ever delayed by this.
+        let bare_cursor_hide = cursor_changed
+            && !full_snapshot
+            && dirty_rows.is_empty()
+            && !viewport_changed
+            && cursor.visibility == CursorVisibility::Hidden
+            && self
+                .last_cursor
+                .as_ref()
+                .is_some_and(|last| last.visibility == CursorVisibility::Visible);
+        if bare_cursor_hide {
+            let since = *self
+                .cursor_hide_pending_since
+                .get_or_insert_with(Instant::now);
+            if since.elapsed() < CURSOR_HIDE_GRACE {
+                // Deliberately before any `last_*` bookkeeping: the hide must
+                // still look new on the next extract so it can be published
+                // once the grace window expires.
+                return None;
+            }
+        }
+        self.cursor_hide_pending_since = None;
 
         let has_render_state =
             full_snapshot || !dirty_rows.is_empty() || cursor_changed || viewport_changed;
@@ -1994,5 +2058,86 @@ mod tests {
             },
         );
         assert_eq!(selected, "one two\n界 alpha");
+    }
+
+    /// The regression this guards: ConPTY hands a shell's repaint to us as
+    /// `CSI ? 25 l` in one read and the redraw plus `CSI ? 25 h` in the next,
+    /// so publishing the bare hide made the cursor strobe once per keystroke.
+    #[test]
+    fn a_bare_cursor_hide_is_not_published_while_a_repaint_is_in_flight() {
+        let mut engine = engine();
+        engine.feed(b"prompt> ");
+        engine.take_render_frame().expect("initial frame");
+
+        // The repaint's opening hide arrives on its own: nothing to show yet.
+        engine.feed(b"\x1b[?25l");
+        assert!(
+            engine.take_render_frame().is_none(),
+            "a bare cursor hide must not reach the renderer on its own"
+        );
+
+        // The rest of the repaint lands, ending with the cursor shown again.
+        engine.feed(b"x\x1b[?25h");
+        let frame = engine.take_render_frame().expect("repaint frame");
+        assert_eq!(
+            frame.cursor.visibility,
+            CursorVisibility::Visible,
+            "the renderer must never observe the transient hidden state"
+        );
+        assert_eq!(frame.cursor.column, 9);
+    }
+
+    #[test]
+    fn a_cursor_hide_that_outlives_the_grace_window_is_published() {
+        let mut engine = engine();
+        engine.feed(b"prompt> ");
+        engine.take_render_frame().expect("initial frame");
+
+        engine.feed(b"\x1b[?25l");
+        assert!(engine.take_render_frame().is_none(), "hide deferred");
+
+        // An app that genuinely parks its cursor keeps it hidden; once the
+        // grace window passes the hide is honored rather than dropped.
+        engine.backdate_cursor_hide(CURSOR_HIDE_GRACE + Duration::from_millis(10));
+        let frame = engine
+            .take_render_frame()
+            .expect("a persistent hide must eventually be published");
+        assert_eq!(frame.cursor.visibility, CursorVisibility::Hidden);
+    }
+
+    #[test]
+    fn a_cursor_hide_that_arrives_with_content_is_published_immediately() {
+        let mut engine = engine();
+        engine.feed(b"prompt> ");
+        engine.take_render_frame().expect("initial frame");
+
+        // Deferral must never hold back a frame that carries real output -
+        // only the content-free hide is provisional.
+        engine.feed(b"\x1b[?25lredrawn");
+        let frame = engine
+            .take_render_frame()
+            .expect("a frame carrying dirty rows must not be deferred");
+        assert_eq!(frame.cursor.visibility, CursorVisibility::Hidden);
+        assert!(!frame.dirty_rows.is_empty());
+    }
+
+    #[test]
+    fn cursor_hide_remaining_reports_only_while_a_hide_is_pending() {
+        let mut engine = engine();
+        engine.feed(b"prompt> ");
+        engine.take_render_frame().expect("initial frame");
+        assert!(engine.cursor_hide_remaining().is_none());
+
+        engine.feed(b"\x1b[?25l");
+        assert!(engine.take_render_frame().is_none());
+        assert!(
+            engine.cursor_hide_remaining().is_some(),
+            "the scheduler needs a deadline to wake on, or the hide would \
+             never be published without more PTY output"
+        );
+
+        engine.feed(b"\x1b[?25h");
+        let _ = engine.take_render_frame();
+        assert!(engine.cursor_hide_remaining().is_none());
     }
 }

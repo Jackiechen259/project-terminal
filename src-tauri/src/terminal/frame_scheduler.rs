@@ -235,12 +235,23 @@ fn run_scheduler(engine: Arc<Mutex<WeztermTerminalEngine>>, hub: Arc<TerminalFra
         }
         last_frame_at = Some(Instant::now());
 
-        // A DECSET 2026 hold has no further PTY bytes until the TUI ends the
-        // frame (or the 1s total-duration cap fires - see
-        // `sync_output::HOLD_TIMEOUT`). Wake the scheduler ourselves so a
-        // stuck hold still flushes instead of freezing the pane.
+        // Two things can be waiting on a clock rather than on PTY bytes: a
+        // DECSET 2026 hold that has not been closed yet (or the 1s cap - see
+        // `sync_output::HOLD_TIMEOUT`), and a deferred cursor hide (see
+        // `CURSOR_HIDE_GRACE`). Neither produces further output on its own, so
+        // wake the scheduler ourselves for whichever comes first.
         if !extracted && hub.wants_frames() {
-            if let Some(remaining) = engine.lock().synchronized_hold_remaining() {
+            let deferred = {
+                let model = engine.lock();
+                match (
+                    model.synchronized_hold_remaining(),
+                    model.cursor_hide_remaining(),
+                ) {
+                    (Some(hold), Some(hide)) => Some(hold.min(hide)),
+                    (hold, hide) => hold.or(hide),
+                }
+            };
+            if let Some(remaining) = deferred {
                 let (pending_lock, wake) = &*hub.signal;
                 let mut is_pending = pending_lock.lock().unwrap();
                 if !*is_pending && !hub.shutdown.load(Ordering::Acquire) {

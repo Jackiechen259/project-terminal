@@ -10,6 +10,7 @@
 - Batched IME caret placement so the hidden textarea (and its candidate window) stops dragging across every intermediate model cursor position: a visible cursor now applies on the next frame, a hidden one waits for it to settle, and composition freezes the caret until it ends.
 - Reset cursor blink phase on every real cursor move or keystroke and de-duplicated overlay repaints, so the cursor no longer vanishes mid-blink after moving and no longer darkens from repeatedly stacked overlay paints.
 - Applied DECSCUSR cursor shape (block/underline/bar, blinking or steady) from the terminal model instead of ignoring it.
+- Deferred a bare DECTCEM cursor hide so a repaint that ends by showing the cursor again never publishes the hidden state. ConPTY delivers a shell's hide and its redraw as separate reads, so every keystroke at a PowerShell prompt used to emit an extra cursor-hidden frame and the cursor visibly strobed as the user typed.
 - Changed: the cursor no longer blinks while its terminal pane is unfocused.
 
 ## [0.6.3] - 2026-09-08

@@ -1249,4 +1249,357 @@ mod tests {
         );
         session.close();
     }
+
+    /// ConPTY's CreateProcessW does no PATH search, so resolve node.exe here.
+    /// `where.exe` is used rather than walking `PATH` because this test can be
+    /// launched from a shell whose `PATH` is not in native Windows form.
+    fn resolve_node_exe() -> String {
+        let output = std::process::Command::new("where.exe")
+            .arg("node.exe")
+            .output()
+            .expect("run where.exe");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let first = stdout
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .expect("node.exe not found by where.exe");
+        first.to_string()
+    }
+
+    /// Diagnostic: trace the cursor position of every render frame produced by
+    /// a REAL ConPTY session running an Ink-style TUI (hide cursor, repaint a
+    /// status area, park the cursor on the input cell, show cursor).
+    ///
+    /// The invariant a user perceives as "the cursor does not jump" is: every
+    /// frame whose cursor is VISIBLE must have it on the parked input cell.
+    /// Any other visible position is a mid-repaint sample leaking to the
+    /// renderer, which is exactly the reported symptom.
+    fn trace_ink_style_cursor(wrap_in_dec2026: bool) -> Vec<(u16, i32, bool, usize)> {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = dir.path().join("ink_tui.js");
+        // Row 3 / column 13 in 1-based VT terms == row 2 / column 12 0-based.
+        let body = if wrap_in_dec2026 {
+            r#"const F=['-','+','*','x'];let i=0;
+const t=setInterval(()=>{let o='\x1b[?2026h\x1b[?25l\x1b[H';
+o+=F[i%4]+' working...\x1b[K\r\n';o+='status line\x1b[K\r\n';o+='> typed text\x1b[K';
+o+='\x1b[3;13H\x1b[?25h\x1b[?2026l';process.stdout.write(o);
+if(++i>80){clearInterval(t);process.stdout.write('\r\n__TRACE_DONE__\r\n');}},12);"#
+        } else {
+            r#"const F=['-','+','*','x'];let i=0;
+const t=setInterval(()=>{let o='\x1b[?25l\x1b[H';
+o+=F[i%4]+' working...\x1b[K\r\n';o+='status line\x1b[K\r\n';o+='> typed text\x1b[K';
+o+='\x1b[3;13H\x1b[?25h';process.stdout.write(o);
+if(++i>80){clearInterval(t);process.stdout.write('\r\n__TRACE_DONE__\r\n');}},12);"#
+        };
+        std::fs::write(&script, body).expect("write script");
+
+        let session = TerminalSession::spawn(SessionSpawn {
+            session_id: "cursor-trace".to_string(),
+            project_id: "test-project".to_string(),
+            profile_id: "test-profile".to_string(),
+            workspace_id: None,
+            window_id: None,
+            program: resolve_node_exe(),
+            args: vec![script.to_string_lossy().to_string()],
+            cwd: None,
+            env: vec![],
+            env_remove: Vec::new(),
+            readiness_marker: None,
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+            scrollback_bytes: TEST_SCROLLBACK_BYTES,
+            scrollback_lines: None,
+        })
+        .expect("spawn node session");
+        let (mut subscription, _status) = session.attach_renderer("trace-client".into());
+        session.mark_running();
+
+        let mut trace = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(12);
+        while Instant::now() < deadline {
+            match subscription.frames.try_recv() {
+                Ok(frame) => {
+                    subscription.note_consumed();
+                    trace.push((
+                        frame.cursor.column,
+                        frame.cursor.row,
+                        matches!(
+                            frame.cursor.visibility,
+                            crate::terminal_engine::CursorVisibility::Visible
+                        ),
+                        frame.dirty_rows.len(),
+                    ));
+                }
+                Err(broadcast::error::TryRecvError::Empty) => {
+                    if model_contains(&session, "__TRACE_DONE__") {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Err(broadcast::error::TryRecvError::Lagged(_)) => {
+                    session.request_render_snapshot();
+                }
+                Err(broadcast::error::TryRecvError::Closed) => break,
+            }
+        }
+        session.close();
+        trace
+    }
+
+    fn report_trace(label: &str, trace: &[(u16, i32, bool, usize)]) -> usize {
+        let visible: Vec<_> = trace.iter().filter(|entry| entry.2).collect();
+        let stray: Vec<_> = visible
+            .iter()
+            .filter(|entry| !(entry.0 == 12 && entry.1 == 2))
+            .collect();
+        println!("=== {label} ===");
+        println!(
+            "frames={} visible={} stray={}",
+            trace.len(),
+            visible.len(),
+            stray.len()
+        );
+        let mut histogram: std::collections::BTreeMap<(u16, i32), usize> =
+            std::collections::BTreeMap::new();
+        for entry in &visible {
+            *histogram.entry((entry.0, entry.1)).or_default() += 1;
+        }
+        for ((column, row), count) in histogram {
+            let tag = if column == 12 && row == 2 {
+                "parked"
+            } else {
+                "STRAY"
+            };
+            println!("  col={column:<3} row={row:<3} count={count:<4} {tag}");
+        }
+        println!(
+            "  first 40 frames: {:?}",
+            trace.iter().take(40).collect::<Vec<_>>()
+        );
+        stray.len()
+    }
+
+    /// End-to-end guard over a real ConPTY session: an Ink-style TUI that
+    /// repaints without DECSET 2026 must never expose a mid-repaint cursor.
+    /// The only frame allowed to sit elsewhere is the initial snapshot taken
+    /// before the app has painted anything.
+    #[test]
+    fn an_ink_style_repaint_never_exposes_a_mid_repaint_cursor() {
+        let trace = trace_ink_style_cursor(false);
+        assert!(!trace.is_empty(), "no frames captured");
+        let stray = report_trace("no DEC 2026 (Ink-style)", &trace);
+        assert!(
+            stray <= 1,
+            "cursor left the parked input cell in {stray} frames"
+        );
+        let parked = trace
+            .iter()
+            .filter(|entry| entry.2 && entry.0 == 12 && entry.1 == 2)
+            .count();
+        assert!(parked > 5, "expected a steady parked cursor, saw {parked}");
+    }
+
+    #[test]
+    #[ignore = "diagnostic; run with cargo test -- --ignored --nocapture"]
+    fn trace_cursor_jitter_with_synchronized_output() {
+        let trace = trace_ink_style_cursor(true);
+        assert!(!trace.is_empty(), "no frames captured");
+        let stray = report_trace("with DEC 2026", &trace);
+        println!("stray-visible-cursor frames: {stray}");
+    }
+
+    /// Diagnostic: a TUI that streams scrolling output while keeping an input
+    /// cursor parked on the last row - the Claude-Code-CLI shape. Records the
+    /// cursor together with the viewport so an incoherent
+    /// (cursor.row, viewport_top) pair is visible.
+    #[test]
+    #[ignore = "diagnostic; run with cargo test -- --ignored --nocapture"]
+    fn trace_cursor_while_output_scrolls() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = dir.path().join("scroll_tui.js");
+        std::fs::write(
+            &script,
+            r#"let i=0;
+const t=setInterval(()=>{let o='\x1b[?25l';
+o+='output line '+i+'\x1b[K\r\n';o+='> typed text\x1b[K';
+o+='\r\x1b[12C\x1b[?25h';process.stdout.write(o);
+if(++i>60){clearInterval(t);process.stdout.write('\r\n__TRACE_DONE__\r\n');}},12);"#,
+        )
+        .expect("write script");
+
+        let session = TerminalSession::spawn(SessionSpawn {
+            session_id: "scroll-trace".to_string(),
+            project_id: "test-project".to_string(),
+            profile_id: "test-profile".to_string(),
+            workspace_id: None,
+            window_id: None,
+            program: resolve_node_exe(),
+            args: vec![script.to_string_lossy().to_string()],
+            cwd: None,
+            env: vec![],
+            env_remove: Vec::new(),
+            readiness_marker: None,
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+            scrollback_bytes: TEST_SCROLLBACK_BYTES,
+            scrollback_lines: None,
+        })
+        .expect("spawn node session");
+        let (mut subscription, _status) = session.attach_renderer("scroll-client".into());
+        session.mark_running();
+
+        let mut rows = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(12);
+        while Instant::now() < deadline {
+            match subscription.frames.try_recv() {
+                Ok(frame) => {
+                    subscription.note_consumed();
+                    rows.push((
+                        frame.cursor.column,
+                        frame.cursor.row,
+                        frame.viewport_top,
+                        frame.viewport_bottom,
+                        matches!(
+                            frame.cursor.visibility,
+                            crate::terminal_engine::CursorVisibility::Visible
+                        ),
+                        frame.dirty_rows.len(),
+                        frame.full_snapshot,
+                    ));
+                }
+                Err(broadcast::error::TryRecvError::Empty) => {
+                    if model_contains(&session, "__TRACE_DONE__") {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Err(broadcast::error::TryRecvError::Lagged(_)) => {
+                    session.request_render_snapshot();
+                }
+                Err(broadcast::error::TryRecvError::Closed) => break,
+            }
+        }
+        session.close();
+
+        println!("=== scrolling output, cursor parked at column 12 ===");
+        println!("frames={}", rows.len());
+        let mut stray = 0;
+        for (index, entry) in rows.iter().enumerate() {
+            let (column, row, top, bottom, visible, dirty, full) = *entry;
+            let bad = visible && column != 12;
+            if bad {
+                stray += 1;
+            }
+            if index < 30 || bad {
+                println!(
+                    "  #{index:<3} col={column:<3} row={row:<3} top={top:<5} bottom={bottom:<5} vis={visible} dirty={dirty:<3} full={full} {}",
+                    if bad { "STRAY" } else { "" }
+                );
+            }
+        }
+        println!("stray-column frames: {stray}");
+    }
+
+    /// Diagnostic: type into a real PowerShell/PSReadLine prompt one key at a
+    /// time and trace where the cursor lands per frame. This is the literal
+    /// "the input cursor jumps around while typing" report.
+    /// End-to-end guard for the reported symptom: typing at a real shell
+    /// prompt must not make the cursor blink out. PSReadLine brackets each
+    /// redraw with DECTCEM off/on and ConPTY splits that across reads, so
+    /// without the hide grace window every keystroke published a hidden-cursor
+    /// frame and the cursor strobed as the user typed.
+    #[test]
+    fn typing_at_a_shell_prompt_never_publishes_a_hidden_cursor() {
+        let session = TerminalSession::spawn(SessionSpawn {
+            session_id: "typing-trace".to_string(),
+            project_id: "test-project".to_string(),
+            profile_id: "test-profile".to_string(),
+            workspace_id: None,
+            window_id: None,
+            program: "powershell.exe".to_string(),
+            args: vec!["-NoLogo".to_string(), "-NoProfile".to_string()],
+            cwd: None,
+            env: vec![],
+            env_remove: Vec::new(),
+            readiness_marker: None,
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+            scrollback_bytes: TEST_SCROLLBACK_BYTES,
+            scrollback_lines: None,
+        })
+        .expect("spawn powershell");
+        let (mut subscription, _status) = session.attach_renderer("typing-client".into());
+        session.mark_running();
+        std::thread::sleep(Duration::from_millis(1500));
+        while subscription.frames.try_recv().is_ok() {
+            subscription.note_consumed();
+        }
+
+        let mut rows = Vec::new();
+        for byte in b"Write-Output HELLO" {
+            session.write(&[*byte]).expect("write key");
+            let settle = Instant::now() + Duration::from_millis(120);
+            while Instant::now() < settle {
+                match subscription.frames.try_recv() {
+                    Ok(frame) => {
+                        subscription.note_consumed();
+                        rows.push((
+                            *byte as char,
+                            frame.cursor.column,
+                            frame.cursor.row,
+                            matches!(
+                                frame.cursor.visibility,
+                                crate::terminal_engine::CursorVisibility::Visible
+                            ),
+                            frame.dirty_rows.len(),
+                        ));
+                    }
+                    Err(broadcast::error::TryRecvError::Empty) => {
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+        session.close();
+
+        println!("=== typing at a PowerShell prompt ===");
+        println!("frames={}", rows.len());
+        let mut previous_column: Option<u16> = None;
+        let mut regressions = 0;
+        for (index, entry) in rows.iter().enumerate() {
+            let (key, column, row, visible, dirty) = *entry;
+            let regressed = visible && previous_column.is_some_and(|previous| column < previous);
+            if regressed {
+                regressions += 1;
+            }
+            if visible {
+                previous_column = Some(column);
+            }
+            println!(
+                "  #{index:<3} key='{key}' col={column:<3} row={row:<3} vis={visible} dirty={dirty:<3} {}",
+                if regressed { "REGRESSED" } else { "" }
+            );
+        }
+        println!("column regressions while typing: {regressions}");
+
+        assert!(!rows.is_empty(), "no frames captured while typing");
+        assert_eq!(
+            regressions, 0,
+            "the cursor moved backwards while typing forwards"
+        );
+        let hidden = rows.iter().filter(|entry| !entry.3).count();
+        assert_eq!(
+            hidden, 0,
+            "{hidden} frames hid the cursor mid-keystroke, which reads as a \
+             strobing cursor while typing"
+        );
+    }
 }
