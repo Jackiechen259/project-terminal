@@ -1,6 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::io::Write;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use wezterm_term::input::{KeyCode, KeyModifiers};
 use wezterm_term::{Alert, AlertHandler, Terminal, TerminalConfiguration, TerminalSize};
@@ -14,7 +15,24 @@ use super::search::{
     TerminalSearchDirection, TerminalSearchMatch, TerminalSearchPosition, TerminalSearchQuery,
 };
 use super::selection::TerminalSelectionPoint;
+use super::sync_output::SynchronizedOutput;
 use super::TerminalEngine;
+
+const DECRQM_SYNCHRONIZED_OUTPUT_REPLY: &[u8] = b"\x1b[?2026;2$y";
+
+struct SharedWriter {
+    inner: Arc<Mutex<Box<dyn Write + Send>>>,
+}
+
+impl Write for SharedWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.inner.lock().unwrap().write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.lock().unwrap().flush()
+    }
+}
 
 const CONTROL_EVENT_CAPACITY: usize = 256;
 const IMAGE_CACHE_KEY_CAPACITY: usize = 1_024;
@@ -61,6 +79,8 @@ pub struct WeztermTerminalEngine {
     control_events: Arc<Mutex<VecDeque<TerminalControlEvent>>>,
     osc133_buffer: Vec<u8>,
     known_image_keys: HashSet<String>,
+    sync_output: SynchronizedOutput,
+    reply_writer: Arc<Mutex<Box<dyn Write + Send>>>,
 }
 
 #[derive(Clone)]
@@ -103,12 +123,15 @@ impl WeztermTerminalEngine {
     ) -> Self {
         let events = Arc::new(Mutex::new(VecDeque::new()));
         let last_title = Arc::new(Mutex::new(None));
+        let reply_writer = Arc::new(Mutex::new(writer));
         let mut terminal = Terminal::new(
             size,
             Arc::new(config) as Arc<dyn TerminalConfiguration + Send + Sync>,
             "project-terminal",
             env!("CARGO_PKG_VERSION"),
-            writer,
+            Box::new(SharedWriter {
+                inner: Arc::clone(&reply_writer),
+            }),
         );
         // ConPTY reports output using Windows console semantics.  Keeping
         // this upstream compatibility switch enabled is important for line
@@ -142,6 +165,8 @@ impl WeztermTerminalEngine {
             control_events: events,
             osc133_buffer: Vec::new(),
             known_image_keys: HashSet::new(),
+            sync_output: SynchronizedOutput::new(),
+            reply_writer,
         };
         engine.collect_control_events();
         engine
@@ -304,6 +329,32 @@ impl WeztermTerminalEngine {
             .collect()
     }
 
+    fn apply_bytes(&mut self, data: &[u8]) {
+        if data.is_empty() {
+            return;
+        }
+        self.collect_command_finished_marks(data);
+        self.terminal.advance_bytes(data);
+        self.collect_control_events();
+    }
+
+    fn reply_synchronized_output_queries(&self, count: usize) {
+        if count == 0 {
+            return;
+        }
+        let mut writer = self.reply_writer.lock().unwrap();
+        for _ in 0..count {
+            let _ = writer.write_all(DECRQM_SYNCHRONIZED_OUTPUT_REPLY);
+        }
+        let _ = writer.flush();
+    }
+
+    /// Remaining time before a stuck DECSET 2026 hold is force-flushed.
+    /// The frame scheduler uses this to wake without waiting for more PTY bytes.
+    pub fn synchronized_hold_remaining(&self) -> Option<Duration> {
+        self.sync_output.hold_remaining()
+    }
+
     fn set_viewport(&mut self, stable_row: i64) {
         let (first_row, bottom_top) = self.viewport_bounds();
         let next = stable_row.clamp(first_row, bottom_top);
@@ -324,6 +375,7 @@ impl WeztermTerminalEngine {
                     }
                     if self.known_image_keys.contains(&image.cache_key) {
                         image.data_base64 = None;
+                        image.animation_frames.clear();
                         continue;
                     }
                     if self.known_image_keys.len() >= IMAGE_CACHE_KEY_CAPACITY {
@@ -341,9 +393,9 @@ impl WeztermTerminalEngine {
 
 impl TerminalEngine for WeztermTerminalEngine {
     fn feed(&mut self, data: &[u8]) {
-        self.collect_command_finished_marks(data);
-        self.terminal.advance_bytes(data);
-        self.collect_control_events();
+        let outcome = self.sync_output.push(data);
+        self.apply_bytes(&outcome.flush);
+        self.reply_synchronized_output_queries(outcome.decrqm_replies);
     }
 
     fn resize(&mut self, size: TerminalSize) {
@@ -398,6 +450,9 @@ impl TerminalEngine for WeztermTerminalEngine {
     }
 
     fn take_render_frame(&mut self) -> Option<RenderFrame> {
+        if let Some(flushed) = self.sync_output.poll_timeout() {
+            self.apply_bytes(&flushed);
+        }
         let (
             rows,
             cols,
@@ -477,6 +532,10 @@ impl TerminalEngine for WeztermTerminalEngine {
         self.terminal
             .mouse_event(event.to_wezterm())
             .map_err(|error| error.to_string())
+    }
+
+    fn focus_changed(&mut self, focused: bool) {
+        self.terminal.focus_changed(focused);
     }
 
     fn send_paste(&mut self, text: &str) -> Result<(), String> {
@@ -748,7 +807,9 @@ fn rotate_backward(matches: &mut [TerminalSearchMatch], start: TerminalSearchPos
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal_engine::{RenderColor, TerminalEngine, DEFAULT_SCROLLBACK_LINES};
+    use crate::terminal_engine::{
+        CellBlink, RenderColor, TerminalEngine, DEFAULT_SCROLLBACK_LINES,
+    };
 
     #[derive(Clone)]
     struct CaptureWriter {
@@ -1032,6 +1093,31 @@ mod tests {
             image.data_base64.as_deref().map(|data| data.len()),
             Some(32)
         );
+    }
+
+    #[test]
+    fn decodes_kitty_graphics_into_model_owned_image_cells() {
+        const TINY_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAsAAAALCAYAAACprHcmAAAACXBIWXMAAAGKAAABigEzlzBYAAAAOUlEQVQYlZXOwQ0AMAzCQEdi7yaT0xWAN7JuDCac2PQKYxflycOoICOKtPIuqFCg4/LzKxiz6xjyAYh9DR1sLUN1AAAAAElFTkSuQmCC";
+
+        let mut engine = image_engine();
+        let _ = engine.take_render_frame();
+        engine.feed(format!("\x1b_Ga=T,t=d,f=100;{TINY_PNG_BASE64}\x1b\\").as_bytes());
+
+        let frame = engine.take_render_frame().expect("kitty frame");
+        let image = frame
+            .dirty_rows
+            .iter()
+            .flat_map(|row| row.cells.iter())
+            .flat_map(|cell| cell.images.iter())
+            .find(|image| image.data_base64.is_some())
+            .expect("kitty image payload");
+
+        // Kitty graphics decode into RGBA cells; the original PNG is not
+        // preserved as an encoded file the way iTerm inline images are.
+        assert_eq!(image.format, "rgba8");
+        assert!(image.width > 0);
+        assert!(image.height > 0);
+        assert!(image.data_base64.is_some());
     }
 
     #[test]
@@ -1347,6 +1433,119 @@ mod tests {
     }
 
     #[test]
+    fn encodes_any_event_mouse_moves_without_a_pressed_button() {
+        let (mut engine, output) = capture_engine();
+        let _ = engine.take_render_frame();
+
+        engine.feed(b"\x1b[?1003h\x1b[?1006h");
+        let frame = engine.take_render_frame().expect("mouse mode frame");
+        assert!(frame.mouse_reporting);
+        let _ = take_output(&output);
+
+        engine
+            .mouse_event(&TerminalMouseEvent {
+                kind: super::super::TerminalMouseEventKind::Move,
+                button: super::super::TerminalMouseButton::None,
+                x: 1,
+                y: 2,
+                x_pixel_offset: 0,
+                y_pixel_offset: 0,
+                shift: false,
+                alt: false,
+                ctrl: false,
+            })
+            .unwrap();
+
+        // SGR any-event motion uses button 32 + 3 (none) = 35.
+        assert_eq!(wait_for_output(&output), b"\x1b[<35;2;3M");
+    }
+
+    #[test]
+    fn button_event_mouse_does_not_encode_hover_moves() {
+        let (mut engine, output) = capture_engine();
+        let _ = engine.take_render_frame();
+
+        engine.feed(b"\x1b[?1002h\x1b[?1006h");
+        let _ = engine.take_render_frame();
+        let _ = take_output(&output);
+
+        engine
+            .mouse_event(&TerminalMouseEvent {
+                kind: super::super::TerminalMouseEventKind::Move,
+                button: super::super::TerminalMouseButton::None,
+                x: 4,
+                y: 1,
+                x_pixel_offset: 0,
+                y_pixel_offset: 0,
+                shift: false,
+                alt: false,
+                ctrl: false,
+            })
+            .unwrap();
+
+        assert!(take_output(&output).is_empty());
+    }
+
+    #[test]
+    fn reports_focus_in_and_out_when_decset_1004_is_enabled() {
+        let (mut engine, output) = capture_engine();
+        let _ = engine.take_render_frame();
+
+        engine.feed(b"\x1b[?1004h");
+        let _ = take_output(&output);
+
+        engine.focus_changed(false);
+        assert_eq!(wait_for_output(&output), b"\x1b[O");
+        engine.focus_changed(true);
+        assert_eq!(wait_for_output(&output), b"\x1b[I");
+        engine.focus_changed(true);
+        assert!(take_output(&output).is_empty());
+    }
+
+    #[test]
+    fn does_not_report_focus_when_tracking_is_disabled() {
+        let (mut engine, output) = capture_engine();
+        let _ = engine.take_render_frame();
+        let _ = take_output(&output);
+
+        engine.focus_changed(false);
+        assert!(take_output(&output).is_empty());
+    }
+
+    #[test]
+    fn osc_52_writes_decoded_clipboard_text_through_the_model_clipboard() {
+        use wezterm_term::{Clipboard, ClipboardSelection};
+
+        struct RecordingClipboard {
+            contents: Mutex<Option<String>>,
+        }
+
+        impl Clipboard for RecordingClipboard {
+            fn set_contents(
+                &self,
+                _selection: ClipboardSelection,
+                data: Option<String>,
+            ) -> anyhow::Result<()> {
+                *self.contents.lock().unwrap() = data;
+                Ok(())
+            }
+        }
+
+        let clipboard = Arc::new(RecordingClipboard {
+            contents: Mutex::new(None),
+        });
+        let (mut engine, _output) = capture_engine();
+        engine
+            .terminal_mut()
+            .set_clipboard(&(clipboard.clone() as Arc<dyn Clipboard>));
+
+        // OSC 52 clipboard payload for "hello".
+        engine.feed(b"\x1b]52;c;aGVsbG8=\x07");
+
+        assert_eq!(clipboard.contents.lock().unwrap().as_deref(), Some("hello"));
+    }
+
+    #[test]
     fn tracks_alternate_screen_as_render_state_and_restores_primary_screen() {
         let mut engine = engine();
         let _ = engine.take_render_frame();
@@ -1358,6 +1557,108 @@ mod tests {
         engine.feed(b"\x1b[?1049l");
         let primary = engine.take_render_frame().expect("restored frame");
         assert!(!primary.alternate_screen);
+    }
+
+    #[test]
+    fn in_place_spinner_on_alternate_screen_emits_each_glyph() {
+        let mut engine = engine();
+        let _ = engine.take_render_frame();
+        engine.feed(b"\x1b[?1049h\x1b[H\x1b[2J");
+        let _ = engine.take_render_frame();
+
+        engine.feed("\x1b[H⠋".as_bytes());
+        let first = engine.take_render_frame().expect("spinner frame 1");
+        assert!(first.dirty_rows.iter().any(|row| {
+            row.cells
+                .iter()
+                .any(|cell| cell.text.contains('\u{280B}') || cell.text.contains('⠋'))
+        }));
+
+        engine.feed("\x1b[H⠙".as_bytes());
+        let second = engine.take_render_frame().expect("spinner frame 2");
+        assert!(second.dirty_rows.iter().any(|row| {
+            row.cells
+                .iter()
+                .any(|cell| cell.text.contains('\u{2819}') || cell.text.contains('⠙'))
+        }));
+    }
+
+    #[test]
+    fn synchronized_output_holds_until_reset() {
+        let mut engine = engine();
+        let _ = engine.take_render_frame();
+        engine.feed(b"\x1b[?2026h\x1b[Hpartial");
+        assert!(
+            engine.take_render_frame().is_none(),
+            "held mid-frame must not extract"
+        );
+        engine.feed(b" done\x1b[?2026l");
+        let frame = engine.take_render_frame().expect("flushed frame");
+        let text: String = frame
+            .dirty_rows
+            .iter()
+            .flat_map(|row| row.cells.iter().map(|cell| cell.text.as_str()))
+            .collect();
+        assert!(
+            text.contains("partial done"),
+            "flushed frame missed held output: {text:?}"
+        );
+    }
+
+    #[test]
+    fn synchronized_output_flushes_after_timeout() {
+        let mut engine = engine();
+        let _ = engine.take_render_frame();
+        engine.feed(b"\x1b[?2026h\x1b[Hpartial");
+        assert!(engine.take_render_frame().is_none());
+        std::thread::sleep(Duration::from_millis(170));
+        let frame = engine.take_render_frame().expect("timeout flush");
+        let text: String = frame
+            .dirty_rows
+            .iter()
+            .flat_map(|row| row.cells.iter().map(|cell| cell.text.as_str()))
+            .collect();
+        assert!(
+            text.contains("partial"),
+            "timeout flush missed held output: {text:?}"
+        );
+    }
+
+    #[test]
+    fn sgr_blink_is_preserved_and_not_compacted_with_steady_cells() {
+        let mut engine = engine();
+        let _ = engine.take_render_frame();
+        engine.feed(b"\x1b[5mX\x1b[25mY");
+        let frame = engine.take_render_frame().expect("blink frame");
+        let cells: Vec<_> = frame
+            .dirty_rows
+            .iter()
+            .flat_map(|row| row.cells.iter())
+            .collect();
+        assert!(
+            cells
+                .iter()
+                .any(|cell| cell.text.contains('X') && cell.blink == CellBlink::Slow),
+            "missing blinking X: {cells:?}"
+        );
+        assert!(
+            cells
+                .iter()
+                .any(|cell| cell.text.contains('Y') && cell.blink == CellBlink::None),
+            "Y must stay steady: {cells:?}"
+        );
+        assert!(
+            !cells.iter().any(|cell| cell.text.contains("XY")),
+            "blink and steady cells were compacted: {cells:?}"
+        );
+    }
+
+    #[test]
+    fn synchronized_output_query_reports_supported() {
+        let (mut engine, output) = capture_engine();
+        let _ = take_output(&output);
+        engine.feed(b"\x1b[?2026$p");
+        assert_eq!(wait_for_output(&output), b"\x1b[?2026;2$y");
     }
 
     #[test]

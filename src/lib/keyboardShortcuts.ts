@@ -10,6 +10,7 @@ export type AppShortcut =
 
 /** Maps app shortcuts before WebView2 gets a chance to handle browser ones. */
 export function getAppShortcut(event: KeyboardEvent): AppShortcut | null {
+  if (event.isComposing || event.key === "Process") return null;
   const command = event.ctrlKey || event.metaKey;
   if (!command) return null;
 
@@ -46,6 +47,17 @@ export function getAppShortcut(event: KeyboardEvent): AppShortcut | null {
     return { type: "select-tab", index: Number(key) - 1 };
   }
   return null;
+}
+
+/**
+ * Chords a full-screen TUI commonly owns. On the alternate screen these must
+ * reach the PTY instead of switching tabs or selecting one by number.
+ */
+export function isTuiPassthroughShortcut(event: KeyboardEvent): boolean {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey) return false;
+  const key = event.key.toLowerCase();
+  if (key === "pageup" || key === "pagedown") return true;
+  return /^[1-9]$/.test(key) && !event.shiftKey;
 }
 
 /** WebView2/browser accelerators that have no place in the desktop shell. */

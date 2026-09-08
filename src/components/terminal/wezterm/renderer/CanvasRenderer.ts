@@ -26,6 +26,33 @@ import type {
 import { applyFrameToRowCache, forEachCellCluster } from "./renderFrameMerge";
 
 const IMAGE_CACHE_CAPACITY = 256;
+const SLOW_BLINK_MS = 500;
+const RAPID_BLINK_MS = 200;
+const BLINK_TICK_MS = 100;
+
+export function cellBlinkHidden(
+  blink: TerminalRenderCell["blink"] | undefined,
+  now = performance.now(),
+) {
+  if (blink === "slow") return Math.floor(now / SLOW_BLINK_MS) % 2 === 1;
+  if (blink === "rapid") return Math.floor(now / RAPID_BLINK_MS) % 2 === 1;
+  return false;
+}
+
+export function rowsHaveBlink(
+  frame: TerminalRenderFrame | null,
+  cache: Map<number, TerminalRenderRow>,
+) {
+  if (!frame) return false;
+  for (let row = 0; row < frame.rows; row += 1) {
+    const cells = cache.get(frame.viewportTop + row)?.cells;
+    if (!cells) continue;
+    for (const cell of cells) {
+      if (cell.blink === "slow" || cell.blink === "rapid") return true;
+    }
+  }
+  return false;
+}
 
 function rgbCss([red, green, blue]: Rgb) {
   return `rgb(${red}, ${green}, ${blue})`;
@@ -131,6 +158,16 @@ export class CanvasRenderer implements TerminalRenderer {
   private searchMatch: TerminalSearchMatch | null = null;
   private imageCache = new Map<string, CanvasImageSource>();
   private imageLoads = new Set<string>();
+  private imageAnimations = new Map<
+    string,
+    {
+      frames: CanvasImageSource[];
+      durations: number[];
+      index: number;
+      timer: number | null;
+    }
+  >();
+  private cellBlinkTimer: number | null = null;
   private pendingDirtyRows = new Set<number>();
   private pendingFullRedraw = false;
   private frameRequest: number | null = null;
@@ -159,6 +196,7 @@ export class CanvasRenderer implements TerminalRenderer {
   setTextVisible(visible: boolean) {
     if (this.textVisible === visible) return;
     this.textVisible = visible;
+    this.refreshCellBlinkTimer();
     if (this.frame) this.redrawVisibleRows();
   }
 
@@ -277,6 +315,7 @@ export class CanvasRenderer implements TerminalRenderer {
     if (!cacheUpdate.accepted) return cacheUpdate;
 
     this.frame = frame;
+    this.refreshCellBlinkTimer();
     if (
       cacheUpdate.cacheCleared ||
       cacheUpdate.viewportChanged ||
@@ -380,11 +419,13 @@ export class CanvasRenderer implements TerminalRenderer {
       this.cursorBlinkVisible = true;
       this.pendingFullRedraw = true;
       this.startCursorBlink();
+      this.refreshCellBlinkTimer();
     } else {
       this.cancelScheduledPaint();
       this.pendingDirtyRows.clear();
       this.pendingFullRedraw = true;
       this.stopCursorBlink();
+      this.stopCellBlink();
     }
   }
 
@@ -449,12 +490,26 @@ export class CanvasRenderer implements TerminalRenderer {
     const x = clientX - rect.left;
     const y = clientY - rect.top;
     if (x < 0 || y < 0 || x >= rect.width || y >= rect.height) return null;
+    const column = Math.max(
+      0,
+      Math.min(this.cols - 1, Math.floor(x / this.cellWidth)),
+    );
+    const row = Math.max(0, Math.floor(y / this.cellHeight));
     return {
-      column: Math.max(
-        0,
-        Math.min(this.cols - 1, Math.floor(x / this.cellWidth)),
-      ),
-      row: Math.max(0, Math.floor(y / this.cellHeight)),
+      column,
+      row,
+      xPixelOffset: Math.max(0, Math.round(x - column * this.cellWidth)),
+      yPixelOffset: Math.max(0, Math.round(y - row * this.cellHeight)),
+    };
+  }
+
+  cursorRect() {
+    if (!this.frame) return null;
+    return {
+      x: this.frame.cursor.column * this.cellWidth,
+      y: this.frame.cursor.row * this.cellHeight,
+      width: this.cellWidth,
+      height: this.cellHeight,
     };
   }
 
@@ -485,6 +540,8 @@ export class CanvasRenderer implements TerminalRenderer {
       window.clearInterval(this.cursorBlinkTimer);
       this.cursorBlinkTimer = null;
     }
+    this.stopCellBlink();
+    this.stopImageAnimations();
     this.pendingDirtyRows.clear();
     this.pendingFullRedraw = false;
     this.canvas = null;
@@ -499,6 +556,33 @@ export class CanvasRenderer implements TerminalRenderer {
     }
     this.imageCache.clear();
     this.imageLoads.clear();
+    this.imageAnimations.clear();
+  }
+
+  private refreshCellBlinkTimer() {
+    const needed = this.textVisible && rowsHaveBlink(this.frame, this.rowCache);
+    if (needed) this.startCellBlink();
+    else this.stopCellBlink();
+  }
+
+  private startCellBlink() {
+    if (!this.visible || this.cellBlinkTimer !== null) return;
+    this.cellBlinkTimer = window.setInterval(() => {
+      if (this.textVisible) this.redrawVisibleRows();
+    }, BLINK_TICK_MS);
+  }
+
+  private stopCellBlink() {
+    if (this.cellBlinkTimer === null) return;
+    window.clearInterval(this.cellBlinkTimer);
+    this.cellBlinkTimer = null;
+  }
+
+  private stopImageAnimations() {
+    for (const animation of this.imageAnimations.values()) {
+      if (animation.timer !== null) window.clearTimeout(animation.timer);
+    }
+    this.imageAnimations.clear();
   }
 
   private updateMetrics() {
@@ -673,7 +757,10 @@ export class CanvasRenderer implements TerminalRenderer {
       this.cellHeight,
       -1,
     );
-    if (this.textVisible || overlayHighlight) {
+    if (
+      (this.textVisible || overlayHighlight) &&
+      !cellBlinkHidden(cell.blink)
+    ) {
       context.globalAlpha = cell.intensity === "half" ? 0.5 : 1;
       context.font = fontFor(cell, this.font);
       context.fillStyle = foreground;
@@ -774,38 +861,104 @@ export class CanvasRenderer implements TerminalRenderer {
   }
 
   private loadImage(image: TerminalImageCellFrame): CanvasImageSource | null {
-    if (!image.dataBase64 || this.imageLoads.has(image.cacheKey)) return null;
+    if (this.imageLoads.has(image.cacheKey)) return null;
+    const animated = image.animationFrames?.length
+      ? image.animationFrames
+      : null;
+    if (!image.dataBase64 && !animated) return null;
     this.imageLoads.add(image.cacheKey);
-    void decodeImage(image)
-      .then((source) => {
-        if (source) {
-          if (
-            !this.imageCache.has(image.cacheKey) &&
-            this.imageCache.size >= IMAGE_CACHE_CAPACITY
-          ) {
-            const oldest = this.imageCache.keys().next().value as
-              string | undefined;
-            if (oldest) {
-              const evicted = this.imageCache.get(oldest);
-              if (
-                evicted &&
-                "close" in evicted &&
-                typeof evicted.close === "function"
-              ) {
-                evicted.close();
-              }
-              this.imageCache.delete(oldest);
-            }
-          }
-          this.imageCache.set(image.cacheKey, source);
-          this.redrawVisibleRows();
-        }
-      })
+    void this.decodeAndCacheImage(image, animated)
       .catch(() => {
         // A malformed or oversized image must not stop text rendering.
       })
       .finally(() => this.imageLoads.delete(image.cacheKey));
     return null;
+  }
+
+  private async decodeAndCacheImage(
+    image: TerminalImageCellFrame,
+    animated: NonNullable<TerminalImageCellFrame["animationFrames"]> | null,
+  ) {
+    const frames = animated
+      ? (
+          await Promise.all(
+            animated.map((frame) =>
+              decodeImage({
+                ...image,
+                dataBase64: frame.dataBase64,
+              }),
+            ),
+          )
+        ).filter((frame): frame is CanvasImageSource => frame !== null)
+      : [];
+    const source = frames[0] ?? (await decodeImage(image));
+    if (!source) return;
+    if (
+      !this.imageCache.has(image.cacheKey) &&
+      this.imageCache.size >= IMAGE_CACHE_CAPACITY
+    ) {
+      const oldest = this.imageCache.keys().next().value as string | undefined;
+      if (oldest) {
+        const evicted = this.imageCache.get(oldest);
+        if (
+          evicted &&
+          "close" in evicted &&
+          typeof evicted.close === "function"
+        ) {
+          evicted.close();
+        }
+        this.imageCache.delete(oldest);
+        const stopped = this.imageAnimations.get(oldest);
+        if (stopped?.timer !== null && stopped) {
+          window.clearTimeout(stopped.timer);
+        }
+        this.imageAnimations.delete(oldest);
+      }
+    }
+    this.imageCache.set(image.cacheKey, source);
+    if (frames.length > 1 && animated) {
+      this.startImageAnimation(
+        image.cacheKey,
+        frames,
+        animated.map((frame) => frame.durationMs),
+      );
+    }
+    this.redrawVisibleRows();
+  }
+
+  private startImageAnimation(
+    cacheKey: string,
+    frames: CanvasImageSource[],
+    durations: number[],
+  ) {
+    const existing = this.imageAnimations.get(cacheKey);
+    if (existing?.timer !== null && existing) {
+      window.clearTimeout(existing.timer);
+    }
+    const animation = {
+      frames,
+      durations,
+      index: 0,
+      timer: null as number | null,
+    };
+    const tick = () => {
+      const current = this.imageAnimations.get(cacheKey);
+      if (!current) return;
+      let next = (current.index + 1) % current.frames.length;
+      let guard = current.frames.length;
+      while (guard > 0 && (current.durations[next] ?? 0) === 0) {
+        next = (next + 1) % current.frames.length;
+        guard -= 1;
+      }
+      current.index = next;
+      this.imageCache.set(cacheKey, current.frames[next]);
+      const delay = Math.max(16, current.durations[next] ?? 100);
+      current.timer = window.setTimeout(tick, delay);
+      this.redrawVisibleRows();
+    };
+    const delay = Math.max(16, durations[0] ?? 100);
+    animation.timer = window.setTimeout(tick, delay);
+    this.imageAnimations.set(cacheKey, animation);
   }
 
   private paintCursor(frame: TerminalRenderFrame, visible: boolean) {

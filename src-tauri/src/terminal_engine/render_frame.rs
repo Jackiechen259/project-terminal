@@ -71,6 +71,28 @@ impl CellUnderline {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CellBlink {
+    #[default]
+    None,
+    Slow,
+    Rapid,
+}
+
+impl CellBlink {
+    fn is_none(&self) -> bool {
+        matches!(self, CellBlink::None)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageAnimationFrame {
+    pub data_base64: String,
+    pub duration_ms: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CursorShape {
@@ -116,6 +138,11 @@ pub struct ImageCellFrame {
     /// Stable identity for the image cache.  Pixel bytes are intentionally
     /// sent through a separate cache/control path, never once per frame.
     pub cache_key: String,
+    /// Extra GIF/kitty animation frames. Empty for still images; the first
+    /// frame still lives in `data_base64` so a client that ignores this field
+    /// paints a static image.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub animation_frames: Vec<ImageAnimationFrame>,
 }
 
 /// Almost every cell in a typical frame carries the terminal's default
@@ -153,6 +180,8 @@ pub struct RenderCell {
     pub strikethrough: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not", default)]
     pub invisible: bool,
+    #[serde(skip_serializing_if = "CellBlink::is_none", default)]
+    pub blink: CellBlink,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub hyperlink: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
@@ -241,6 +270,14 @@ fn cell_intensity(attrs: &CellAttributes) -> CellIntensity {
     }
 }
 
+fn cell_blink(attrs: &CellAttributes) -> CellBlink {
+    match attrs.blink() {
+        wezterm_term::Blink::None => CellBlink::None,
+        wezterm_term::Blink::Slow => CellBlink::Slow,
+        wezterm_term::Blink::Rapid => CellBlink::Rapid,
+    }
+}
+
 fn cell_underline(attrs: &CellAttributes) -> CellUnderline {
     match attrs.underline() {
         wezterm_term::Underline::None => CellUnderline::None,
@@ -282,8 +319,11 @@ fn image_frames(attrs: &CellAttributes) -> Vec<ImageCellFrame> {
                     .unwrap_or_else(|| "application/octet-stream".to_string()),
                 width: payload.as_ref().map(|payload| payload.width).unwrap_or(0),
                 height: payload.as_ref().map(|payload| payload.height).unwrap_or(0),
-                data_base64: payload.map(|payload| payload.data_base64),
+                data_base64: payload.as_ref().map(|payload| payload.data_base64.clone()),
                 cache_key: hex_encode(&data.hash()),
+                animation_frames: payload
+                    .map(|payload| payload.animation_frames)
+                    .unwrap_or_default(),
             }
         })
         .collect()
@@ -307,6 +347,7 @@ struct ImagePayload {
     width: u32,
     height: u32,
     data_base64: String,
+    animation_frames: Vec<ImageAnimationFrame>,
 }
 
 fn image_payload(data: &ImageData) -> Option<ImagePayload> {
@@ -315,6 +356,7 @@ fn image_payload(data: &ImageData) -> Option<ImagePayload> {
         format: &'static str,
         width: u32,
         height: u32,
+        animation_frames: Vec<ImageAnimationFrame>,
     ) -> Option<ImagePayload> {
         if data.len() > MAX_IMAGE_PAYLOAD_BYTES {
             return None;
@@ -325,30 +367,47 @@ fn image_payload(data: &ImageData) -> Option<ImagePayload> {
             width,
             height,
             data_base64: BASE64.encode(data),
+            animation_frames,
         })
     }
 
     match &*data.data() {
-        ImageDataType::EncodedFile(bytes) => encoded(bytes.clone(), "encoded", 0, 0),
+        ImageDataType::EncodedFile(bytes) => encoded(bytes.clone(), "encoded", 0, 0, Vec::new()),
         ImageDataType::EncodedLease(lease) => lease
             .get_data()
             .ok()
-            .and_then(|bytes| encoded(bytes, "encoded", 0, 0)),
+            .and_then(|bytes| encoded(bytes, "encoded", 0, 0, Vec::new())),
         ImageDataType::Rgba8 {
             data,
             width,
             height,
             ..
-        } => encoded(data.clone(), "rgba8", *width, *height),
+        } => encoded(data.clone(), "rgba8", *width, *height, Vec::new()),
         ImageDataType::AnimRgba8 {
             frames,
             width,
             height,
+            durations,
             ..
-        } => frames
-            .first()
-            .cloned()
-            .and_then(|data| encoded(data, "rgba8", *width, *height)),
+        } => {
+            let animation_frames = if frames.len() > 1 {
+                frames
+                    .iter()
+                    .zip(durations.iter())
+                    .filter(|frame| frame.0.len() <= MAX_IMAGE_PAYLOAD_BYTES)
+                    .map(|(frame, duration)| ImageAnimationFrame {
+                        data_base64: BASE64.encode(frame),
+                        duration_ms: duration.as_millis().min(u128::from(u32::MAX)) as u32,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            frames
+                .first()
+                .cloned()
+                .and_then(|data| encoded(data, "rgba8", *width, *height, animation_frames))
+        }
     }
 }
 
@@ -426,6 +485,7 @@ fn can_merge_render_cell(previous: &RenderCell, next: &RenderCell) -> bool {
         && previous.reverse == next.reverse
         && previous.strikethrough == next.strikethrough
         && previous.invisible == next.invisible
+        && previous.blink == next.blink
         && previous.hyperlink == next.hyperlink
         && previous.images.is_empty()
         && next.images.is_empty()
@@ -457,6 +517,7 @@ fn render_cell(cell: CellRef<'_>) -> RenderCell {
         reverse: attrs.reverse(),
         strikethrough: attrs.strikethrough(),
         invisible: attrs.invisible(),
+        blink: cell_blink(attrs),
         hyperlink: attrs.hyperlink().map(|link| link.uri().to_string()),
         images: image_frames(attrs),
     }
@@ -480,6 +541,7 @@ mod tests {
             reverse: false,
             strikethrough: false,
             invisible: false,
+            blink: CellBlink::None,
             hyperlink: None,
             images: Vec::new(),
         }
@@ -594,6 +656,7 @@ mod tests {
             reverse: true,
             strikethrough: true,
             invisible: true,
+            blink: CellBlink::Slow,
             hyperlink: Some("https://example.com".to_string()),
             images: vec![ImageCellFrame {
                 image_id: Some(1),
@@ -608,6 +671,7 @@ mod tests {
                 height: 4,
                 data_base64: Some("AAAA".to_string()),
                 cache_key: "abcd".to_string(),
+                animation_frames: Vec::new(),
             }],
         };
         let json = serde_json::to_string(&cell).unwrap();
@@ -624,10 +688,43 @@ mod tests {
             "reverse",
             "strikethrough",
             "invisible",
+            "blink",
             "hyperlink",
             "images",
         ] {
             assert!(json.contains(key), "expected {key} in {json}");
         }
+    }
+
+    #[test]
+    fn compact_cells_do_not_merge_blink_with_steady() {
+        let mut blinking = plain_cell(0, "X");
+        blinking.blink = CellBlink::Slow;
+        let steady = plain_cell(1, "Y");
+        let cells = compact_render_cells(vec![blinking, steady]);
+        assert_eq!(cells.len(), 2);
+        assert_eq!(cells[0].blink, CellBlink::Slow);
+        assert_eq!(cells[1].blink, CellBlink::None);
+    }
+
+    #[test]
+    fn anim_rgba8_payload_includes_every_frame() {
+        let frame_a = vec![255, 0, 0, 255];
+        let frame_b = vec![0, 255, 0, 255];
+        let data = wezterm_cell::image::ImageData::with_data(ImageDataType::AnimRgba8 {
+            width: 1,
+            height: 1,
+            durations: vec![
+                std::time::Duration::from_millis(40),
+                std::time::Duration::from_millis(80),
+            ],
+            frames: vec![frame_a, frame_b],
+            hashes: vec![[0; 32], [1; 32]],
+        });
+        let payload = image_payload(&data).expect("anim payload");
+        assert_eq!(payload.animation_frames.len(), 2);
+        assert_eq!(payload.animation_frames[0].duration_ms, 40);
+        assert_eq!(payload.animation_frames[1].duration_ms, 80);
+        assert!(!payload.data_base64.is_empty());
     }
 }

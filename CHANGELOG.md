@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Fixed
+
+- Forwarded mouse motion to TUI apps that enable any-event tracking (DECSET 1003), including hover, and filled in cell pixel offsets for SGR pixel mouse.
+- Reported terminal focus in/out (DECSET 1004) so vim/nvim-style TUIs know when the pane is active.
+- Let Ctrl+PageUp/PageDown and Ctrl+1–9 reach full-screen TUIs instead of switching tabs.
+- Enabled Kitty graphics decoding by default so agent/TUI image output is not dropped.
+- Copied OSC 52 clipboard writes from TUI apps (capped at 1 MiB) to the native clipboard.
+- Passed the pane's pixel size when creating a session so image protocols do not start at 0×0.
+- Parked the IME caret on the cursor cell and drew pinyin preedit there so Chinese composition no longer sits at the top-left, and committed composed text once without a leftover Enter or Space.
+- Held TUI redraws wrapped in DECSET 2026 until the frame ended (or 150ms elapsed) so spinners and live dashboards no longer tear mid-update, and advertised the mode to apps that query it.
+- Played kitty/GIF animation frames on the overlay instead of freezing on the first frame.
+- Blinked SGR 5/6 text instead of dropping the blink attribute.
+
 ## [0.6.3] - 2026-09-06
 
 ### Performance

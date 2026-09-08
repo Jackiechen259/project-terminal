@@ -12,7 +12,11 @@ import {
   parseCssColor,
 } from "@/lib/terminalColorMath";
 
-import { CanvasRenderer } from "./CanvasRenderer";
+import {
+  CanvasRenderer,
+  cellBlinkHidden,
+  rowsHaveBlink,
+} from "./CanvasRenderer";
 import { GlyphAtlas, type GlyphRecord } from "./GlyphAtlas";
 import type {
   TerminalCursorInactiveStyle,
@@ -210,6 +214,7 @@ export class WebGLRenderer implements TerminalRenderer {
   private frameRequest: number | null = null;
   private gpuFallback = false;
   private visible = true;
+  private cellBlinkTimer: number | null = null;
   /** Reused, geometrically-grown vertex scratch buffers - see `pushRect`/
    * `pushGlyph`. Avoids allocating a `number[]` plus a fresh `Float32Array`
    * on every cell-background/glyph draw call. */
@@ -356,6 +361,7 @@ export class WebGLRenderer implements TerminalRenderer {
       return;
     }
     this.canvasRenderer.ingestFrame(frame);
+    this.refreshCellBlinkTimer();
     this.schedulePaint();
   }
 
@@ -370,6 +376,7 @@ export class WebGLRenderer implements TerminalRenderer {
       return;
     }
     this.canvasRenderer.ingestFrame(frame);
+    this.refreshCellBlinkTimer();
     if (this.visible) this.paintCurrentFrame();
   }
 
@@ -391,6 +398,26 @@ export class WebGLRenderer implements TerminalRenderer {
       this.frameRequest = null;
       this.paintCurrentFrame();
     });
+  }
+
+  private refreshCellBlinkTimer() {
+    const needed =
+      !this.gpuFallback && rowsHaveBlink(this.frame, this.rowCache);
+    if (needed) this.startCellBlink();
+    else this.stopCellBlink();
+  }
+
+  private startCellBlink() {
+    if (!this.visible || this.cellBlinkTimer !== null) return;
+    this.cellBlinkTimer = window.setInterval(() => {
+      this.schedulePaint();
+    }, 100);
+  }
+
+  private stopCellBlink() {
+    if (this.cellBlinkTimer === null) return;
+    window.clearInterval(this.cellBlinkTimer);
+    this.cellBlinkTimer = null;
   }
 
   setTheme(theme: TerminalRendererTheme) {
@@ -443,6 +470,8 @@ export class WebGLRenderer implements TerminalRenderer {
       window.cancelAnimationFrame(this.frameRequest);
       this.frameRequest = null;
     }
+    if (visible) this.refreshCellBlinkTimer();
+    else this.stopCellBlink();
   }
 
   setSelection(selection: TerminalSelection | null) {
@@ -461,6 +490,16 @@ export class WebGLRenderer implements TerminalRenderer {
     return this.canvasRenderer.rowAtPoint(clientX, clientY);
   }
 
+  cursorRect() {
+    if (!this.frame) return null;
+    return {
+      x: this.frame.cursor.column * this.cellWidth,
+      y: this.frame.cursor.row * this.cellHeight,
+      width: this.cellWidth,
+      height: this.cellHeight,
+    };
+  }
+
   linkAtPoint(clientX: number, clientY: number) {
     return this.canvasRenderer.linkAtPoint(clientX, clientY);
   }
@@ -475,6 +514,7 @@ export class WebGLRenderer implements TerminalRenderer {
       this.frameRequest = null;
     }
     this.atlas?.dispose();
+    this.stopCellBlink();
     this.canvasRenderer.dispose();
     this.overlay?.remove();
     const gl = this.gl;
@@ -524,6 +564,7 @@ export class WebGLRenderer implements TerminalRenderer {
     this.drawCellBackgrounds(frame);
     if (!this.drawGlyphs(frame)) {
       this.gpuFallback = true;
+      this.stopCellBlink();
       this.canvasRenderer.setBackgroundVisible(true);
       this.canvasRenderer.setCellBackgroundVisible(true);
       this.canvasRenderer.setTextVisible(true);
@@ -715,6 +756,7 @@ export class WebGLRenderer implements TerminalRenderer {
         if (!row) continue;
         for (const cell of row.cells) {
           if (cell.invisible || !cell.text) continue;
+          if (cellBlinkHidden(cell.blink)) continue;
           const font = this.fontForCell(cell);
           const draw = (column: number, text: string, width: number) => {
             if (!text || isSpaceOnly(text)) return true;

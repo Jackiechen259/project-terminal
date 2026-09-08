@@ -83,7 +83,22 @@ export interface TerminalRenderer {
   rowAtPoint(
     clientX: number,
     clientY: number,
-  ): { column: number; row: number } | null;
+  ): {
+    column: number;
+    row: number;
+    xPixelOffset: number;
+    yPixelOffset: number;
+  } | null;
+  /**
+   * CSS-pixel rect of the cursor cell relative to the canvas. Used to park
+   * the IME caret; null when no frame has been accepted yet.
+   */
+  cursorRect(): {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null;
   linkAtPoint(clientX: number, clientY: number): string | null;
   rowText(row: TerminalRenderRow): string;
   dispose(): void;

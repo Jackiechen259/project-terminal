@@ -93,6 +93,7 @@
       this.canvas = null;
       this.context = null;
       this.input = null;
+      this.preedit = null;
       this.rows = 24;
       this.cols = 80;
       this.cellWidth = 8;
@@ -107,6 +108,7 @@
       this.resizeObserver = null;
       this.inputEnabled = false;
       this.composing = false;
+      this.committedAt = 0;
       this.lastGrid = "";
       this.bellTimer = null;
       this.imageCache = new Map();
@@ -140,6 +142,12 @@
       this.input.autocorrect = "off";
       this.input.spellcheck = false;
       container.append(this.input);
+
+      this.preedit = document.createElement("div");
+      this.preedit.className = "remote-terminal-preedit";
+      this.preedit.setAttribute("aria-hidden", "true");
+      this.preedit.hidden = true;
+      container.append(this.preedit);
 
       this.context = this.canvas.getContext("2d", {
         alpha: false,
@@ -274,6 +282,7 @@
       this.canvas = null;
       this.context = null;
       this.input = null;
+      this.preedit = null;
     }
 
     applyFrame(frame) {
@@ -319,6 +328,7 @@
       }
       this.paintImages();
       this.paintCursor();
+      this.syncImeCaret();
     }
 
     paintRow(row, rowIndex, cols, palette) {
@@ -387,6 +397,49 @@
         this.context.lineTo(x + width, strikeY);
         this.context.stroke();
       }
+    }
+
+    cursorRect() {
+      const cursor = this.frame?.cursor;
+      if (!cursor) return null;
+      return {
+        x: 4 + Number(cursor.column) * this.cellWidth,
+        y: 3 + Number(cursor.row) * this.cellHeight,
+        width: this.cellWidth,
+        height: this.cellHeight,
+      };
+    }
+
+    syncImeCaret() {
+      if (!this.input) return;
+      const caret = this.cursorRect();
+      if (!caret) return;
+      const contentWidth = this.preedit && !this.preedit.hidden
+        ? this.preedit.scrollWidth
+        : 0;
+      const width = Math.max(caret.width, contentWidth);
+      this.input.style.left = caret.x + "px";
+      this.input.style.top = caret.y + "px";
+      this.input.style.width = width + "px";
+      this.input.style.height = caret.height + "px";
+      if (!this.preedit) return;
+      this.preedit.style.left = caret.x + "px";
+      this.preedit.style.top = caret.y + "px";
+      this.preedit.style.height = caret.height + "px";
+      this.preedit.style.lineHeight = caret.height + "px";
+      this.preedit.style.fontSize = this.fontSize + "px";
+    }
+
+    setPreedit(text) {
+      if (!this.preedit) return;
+      const value = text || "";
+      this.preedit.textContent = value;
+      this.preedit.hidden = !value;
+      this.syncImeCaret();
+    }
+
+    withinCommitWindow() {
+      return this.committedAt && performance.now() - this.committedAt <= 50;
     }
 
     paintCursor() {
@@ -490,8 +543,25 @@
       });
 
       this.input.addEventListener("keydown", (event) => {
-        if (!this.inputEnabled || this.composing) return;
-        if (event.key === "Dead" || event.key === "Process") return;
+        if (!this.inputEnabled) return;
+        if (
+          this.composing ||
+          event.isComposing ||
+          event.key === "Dead" ||
+          event.key === "Process" ||
+          event.key === "Unidentified"
+        ) {
+          return;
+        }
+        if (
+          this.withinCommitWindow() &&
+          (event.key === "Enter" ||
+            event.key === " " ||
+            event.key === "Spacebar")
+        ) {
+          event.preventDefault();
+          return;
+        }
         if (
           event.key.length === 1 &&
           !event.ctrlKey &&
@@ -504,24 +574,44 @@
       });
       this.input.addEventListener("beforeinput", (event) => {
         if (!this.inputEnabled || this.composing) return;
+        const inputType = event.inputType || "";
+        if (
+          inputType.startsWith("insertComposition") ||
+          inputType === "insertFromComposition"
+        ) {
+          return;
+        }
         if (event.inputType === "insertText" && event.data) {
           event.preventDefault();
           this.handlers.text?.(event.data);
         }
       });
       this.input.addEventListener("input", () => {
-        if (!this.inputEnabled || this.composing || !this.input.value) return;
+        if (!this.inputEnabled || this.composing) return;
+        if (this.withinCommitWindow()) {
+          this.input.value = "";
+          return;
+        }
+        if (!this.input.value) return;
         const text = this.input.value;
         this.input.value = "";
         this.handlers.text?.(text);
       });
       this.input.addEventListener("compositionstart", () => {
         this.composing = true;
+        this.setPreedit("");
+      });
+      this.input.addEventListener("compositionupdate", (event) => {
+        this.composing = true;
+        this.setPreedit(event.data || "");
       });
       this.input.addEventListener("compositionend", (event) => {
         this.composing = false;
-        if (this.inputEnabled && event.data) this.handlers.text?.(event.data);
+        this.committedAt = performance.now();
+        const text = event.data || this.input.value;
+        this.setPreedit("");
         this.input.value = "";
+        if (this.inputEnabled && text) this.handlers.text?.(text);
       });
       this.input.addEventListener("paste", (event) => {
         if (!this.inputEnabled) return;
@@ -539,9 +629,12 @@
         );
       });
       this.canvas.addEventListener("pointermove", (event) => {
-        if (!this.frame?.mouseReporting || !(event.buttons || event.pressure))
-          return;
+        if (!this.frame?.mouseReporting) return;
         event.preventDefault();
+        this.handlers.mouse?.(this.mouseEvent(event, "move", "none"));
+      });
+      this.canvas.addEventListener("pointerleave", (event) => {
+        if (!this.frame?.mouseReporting) return;
         this.handlers.mouse?.(this.mouseEvent(event, "move", "none"));
       });
       this.canvas.addEventListener("pointerup", (event) => {

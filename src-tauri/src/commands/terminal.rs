@@ -55,6 +55,11 @@ pub struct CreateTerminalRequest {
     /// the compatibility memory budget when supplied.
     #[serde(default)]
     pub scrollback_lines: Option<u32>,
+    /// Grid size in CSS pixels. Optional; `None`/`0` means unknown.
+    #[serde(default)]
+    pub pixel_width: Option<u16>,
+    #[serde(default)]
+    pub pixel_height: Option<u16>,
 }
 
 /// Which workspace/window owns a terminal session.
@@ -103,6 +108,8 @@ struct SessionMeta {
     scrollback_megabytes: Option<u8>,
     /// Visible history rows used by the Rust terminal model.
     scrollback_lines: Option<u32>,
+    pixel_width: u16,
+    pixel_height: u16,
 }
 
 pub struct TerminalState {
@@ -151,16 +158,27 @@ impl TerminalState {
                 cols: request.cols.max(1),
                 scrollback_megabytes: request.scrollback_megabytes,
                 scrollback_lines: request.scrollback_lines,
+                pixel_width: request.pixel_width.unwrap_or(0),
+                pixel_height: request.pixel_height.unwrap_or(0),
             },
         );
     }
 
     /// Record the grid a live session was resized to, so a later restart can
     /// spawn straight into it.
-    fn remember_size(&self, session_id: &str, rows: u16, cols: u16) {
+    fn remember_size(
+        &self,
+        session_id: &str,
+        rows: u16,
+        cols: u16,
+        pixel_width: u16,
+        pixel_height: u16,
+    ) {
         if let Some(meta) = self.meta.lock().get_mut(session_id) {
             meta.rows = rows.max(1);
             meta.cols = cols.max(1);
+            meta.pixel_width = pixel_width;
+            meta.pixel_height = pixel_height;
         }
     }
 
@@ -226,6 +244,8 @@ impl TerminalState {
                 cols: m.cols,
                 scrollback_megabytes: m.scrollback_megabytes,
                 scrollback_lines: m.scrollback_lines,
+                pixel_width: Some(m.pixel_width).filter(|&width| width > 0),
+                pixel_height: Some(m.pixel_height).filter(|&height| height > 0),
             })
     }
 }
@@ -383,6 +403,8 @@ pub(crate) fn build_session_spawn(
                 .then(|| format!("__PROJECT_TERMINAL_READY_{session_id}__")),
             rows: request.rows.max(1),
             cols: request.cols.max(1),
+            pixel_width: request.pixel_width.unwrap_or(0),
+            pixel_height: request.pixel_height.unwrap_or(0),
             scrollback_bytes: usize::from(request.scrollback_megabytes.unwrap_or(4).clamp(1, 32))
                 * 1024
                 * 1024,
@@ -1010,8 +1032,17 @@ pub fn resize_terminal(
     terminal
         .manager
         .resize(&session_id, rows, cols, pixel_width, pixel_height)?;
-    terminal.remember_size(&session_id, rows, cols);
+    terminal.remember_size(&session_id, rows, cols, pixel_width, pixel_height);
     Ok(())
+}
+
+#[tauri::command(async)]
+pub fn terminal_focus_changed(
+    terminal: State<'_, TerminalState>,
+    session_id: String,
+    focused: bool,
+) -> AppResult<()> {
+    terminal.manager.focus_changed(&session_id, focused)
 }
 
 #[tauri::command]
@@ -1469,6 +1500,8 @@ mod tests {
                 readiness_marker: None,
                 rows: 24,
                 cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
                 scrollback_bytes: 1024,
                 scrollback_lines: None,
             }
@@ -1516,6 +1549,8 @@ mod tests {
                 readiness_marker: None,
                 rows: 24,
                 cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
                 scrollback_bytes: 1024,
                 scrollback_lines: None,
             }
@@ -1569,6 +1604,8 @@ mod tests {
             cols: 80,
             scrollback_megabytes: None,
             scrollback_lines: None,
+            pixel_width: None,
+            pixel_height: None,
         }
     }
 
@@ -1629,10 +1666,12 @@ mod tests {
         let terminal = TerminalState::new();
         terminal.remember("session-1", &create_request("p1", "profile-1"));
 
-        terminal.remember_size("session-1", 50, 160);
+        terminal.remember_size("session-1", 50, 160, 800, 600);
 
         let request = terminal.meta_for("session-1").expect("meta");
         assert_eq!((request.rows, request.cols), (50, 160));
+        assert_eq!(request.pixel_width, Some(800));
+        assert_eq!(request.pixel_height, Some(600));
         assert_eq!(request.project_id, "p1");
         assert_eq!(request.profile_id, "profile-1");
     }
@@ -1731,6 +1770,8 @@ mod tests {
             cols: 80,
             scrollback_megabytes: None,
             scrollback_lines: None,
+            pixel_width: None,
+            pixel_height: None,
         };
         let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
         assert_eq!(spawn.cwd.as_deref(), Some(dir.to_str().unwrap()));
@@ -1758,6 +1799,8 @@ mod tests {
             cols: 80,
             scrollback_megabytes: None,
             scrollback_lines: None,
+            pixel_width: None,
+            pixel_height: None,
         };
 
         // A PowerShell profile advertises inline-image support by default.
@@ -1804,6 +1847,8 @@ mod tests {
             cols: 80,
             scrollback_megabytes: Some(255),
             scrollback_lines: None,
+            pixel_width: None,
+            pixel_height: None,
         };
 
         let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
@@ -1845,6 +1890,8 @@ mod tests {
             cols: 80,
             scrollback_megabytes: None,
             scrollback_lines: None,
+            pixel_width: None,
+            pixel_height: None,
         };
         let (spawn, project_type, _) = build_session_spawn(&app, &request, "session-1").unwrap();
 
@@ -1892,6 +1939,8 @@ mod tests {
             cols: 80,
             scrollback_megabytes: None,
             scrollback_lines: None,
+            pixel_width: None,
+            pixel_height: None,
         };
         build_session_spawn(&app, &request, "session-1").unwrap().0
     }
@@ -1932,6 +1981,8 @@ mod tests {
             cols: 80,
             scrollback_megabytes: None,
             scrollback_lines: None,
+            pixel_width: None,
+            pixel_height: None,
         };
         let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
 
@@ -2021,6 +2072,8 @@ mod tests {
             cols: 80,
             scrollback_megabytes: None,
             scrollback_lines: None,
+            pixel_width: None,
+            pixel_height: None,
         };
         let (spawn, _, _) = build_session_spawn(&app, &request, "session-1").unwrap();
 
@@ -2060,6 +2113,8 @@ mod tests {
             cols: 80,
             scrollback_megabytes: None,
             scrollback_lines: None,
+            pixel_width: None,
+            pixel_height: None,
         };
         let err = build_session_spawn(&app, &request, "session-1").unwrap_err();
         assert!(matches!(err, AppError::Configuration(_)));
@@ -2094,6 +2149,8 @@ mod tests {
             cols: 80,
             scrollback_megabytes: None,
             scrollback_lines: None,
+            pixel_width: None,
+            pixel_height: None,
         };
         let err = build_session_spawn(&app, &request, "session-1").unwrap_err();
         assert!(matches!(err, AppError::ProjectPathNotFound(_)));
@@ -2237,6 +2294,8 @@ mod tests {
             cols: 80,
             scrollback_megabytes: None,
             scrollback_lines: None,
+            pixel_width: None,
+            pixel_height: None,
         };
 
         let terminal = TerminalState::new();
@@ -2293,6 +2352,8 @@ mod tests {
             cols: 80,
             scrollback_megabytes: None,
             scrollback_lines: None,
+            pixel_width: None,
+            pixel_height: None,
         };
 
         let terminal = TerminalState::new();
@@ -2370,6 +2431,8 @@ mod handshake_probe {
                 readiness_marker: Some(marker.clone()),
                 rows: 24,
                 cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
                 scrollback_bytes: 1024 * 1024,
                 scrollback_lines: None,
             })

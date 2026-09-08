@@ -37,6 +37,14 @@ import {
   useSettingsStore,
 } from "@/stores/settingsStore";
 import { resolveTerminalTabTitle } from "../terminalTitle";
+import { setTerminalAlternateScreen } from "@/lib/terminalScreenMode";
+import {
+  committedCompositionText,
+  imeInputStyle,
+  isImeKeyEvent,
+  isWithinPostCompositionWindow,
+  shouldSuppressPostCompositionKey,
+} from "@/lib/terminalIme";
 import { createTerminalRenderer } from "./renderer/WebGLRenderer";
 import type {
   TerminalRenderer,
@@ -83,6 +91,26 @@ function selectionFor(
   return {
     stableRow: frame.viewportTop + point.row,
     column: Math.max(0, Math.min(frame.cols, point.column)),
+  };
+}
+
+function mouseReportFor(
+  frame: TerminalRenderFrame,
+  renderer: TerminalRenderer,
+  event: { clientX: number; clientY: number },
+): {
+  x: number;
+  y: number;
+  xPixelOffset: number;
+  yPixelOffset: number;
+} | null {
+  const point = renderer.rowAtPoint(event.clientX, event.clientY);
+  if (!point) return null;
+  return {
+    x: Math.max(0, Math.min(frame.cols - 1, point.column)),
+    y: Math.max(0, Math.min(frame.rows - 1, point.row)),
+    xPixelOffset: point.xPixelOffset ?? 0,
+    yPixelOffset: point.yPixelOffset ?? 0,
   };
 }
 
@@ -151,7 +179,18 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
   const snapshotRequestedRef = useRef(false);
   const selectionRef = useRef<TerminalSelection | null>(null);
   const draggingRef = useRef(false);
+  const lastMouseReportRef = useRef<{
+    x: number;
+    y: number;
+    xPixelOffset: number;
+    yPixelOffset: number;
+  } | null>(null);
+  const pendingMouseMoveRef = useRef<TerminalMouseEvent | null>(null);
+  const mouseMoveFrameRef = useRef<number | null>(null);
   const compositionRef = useRef(false);
+  const committedAtRef = useRef<number | null>(null);
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  const applyImeCaretRef = useRef<() => void>(() => {});
   const searchOpenRef = useRef(false);
   const reportedExitRef = useRef(false);
   const bellTimerRef = useRef<number | null>(null);
@@ -178,6 +217,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searchIndex, setSearchIndex] = useState(0);
   const [bellVisible, setBellVisible] = useState(false);
+  const [preedit, setPreedit] = useState("");
   const searchRequestRef = useRef(0);
   const { t } = useTranslation();
 
@@ -273,6 +313,24 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     inputRef.current?.focus({ preventScroll: true });
     onFocus?.();
   }, [onFocus]);
+
+  const applyImeCaret = useCallback(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    const caret = rendererRef.current?.cursorRect() ?? null;
+    const style = imeInputStyle(caret, overlayRef.current?.scrollWidth ?? 0);
+    if (!style) return;
+    input.style.left = `${style.left}px`;
+    input.style.top = `${style.top}px`;
+    input.style.width = `${style.width}px`;
+    input.style.height = `${style.height}px`;
+    const overlay = overlayRef.current;
+    if (!overlay) return;
+    overlay.style.left = `${style.left}px`;
+    overlay.style.top = `${style.top}px`;
+    overlay.style.height = `${style.height}px`;
+  }, []);
+  applyImeCaretRef.current = applyImeCaret;
 
   const sendText = useCallback(
     (text: string) => {
@@ -411,6 +469,30 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     [sessionId],
   );
 
+  const flushMouseMove = useCallback(() => {
+    if (mouseMoveFrameRef.current !== null) {
+      window.cancelAnimationFrame(mouseMoveFrameRef.current);
+      mouseMoveFrameRef.current = null;
+    }
+    const pending = pendingMouseMoveRef.current;
+    pendingMouseMoveRef.current = null;
+    if (pending) sendMouse(pending);
+  }, [sendMouse]);
+
+  const queueMouseMove = useCallback(
+    (event: TerminalMouseEvent) => {
+      pendingMouseMoveRef.current = event;
+      if (mouseMoveFrameRef.current !== null) return;
+      mouseMoveFrameRef.current = window.requestAnimationFrame(() => {
+        mouseMoveFrameRef.current = null;
+        const pending = pendingMouseMoveRef.current;
+        pendingMouseMoveRef.current = null;
+        if (pending) sendMouse(pending);
+      });
+    },
+    [sendMouse],
+  );
+
   const handleMouseDown = useCallback(
     (event: MouseEvent<HTMLCanvasElement>) => {
       focusInput();
@@ -429,11 +511,17 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       const point = selectionFor(frame, renderer, event);
       if (!point) return;
       if (frame.mouseReporting) {
+        flushMouseMove();
+        const report = mouseReportFor(frame, renderer, event);
+        if (!report) return;
+        lastMouseReportRef.current = report;
         sendMouse({
           kind: "press",
           button: buttonFor(event),
-          x: point.column,
-          y: point.stableRow - frame.viewportTop,
+          x: report.x,
+          y: report.y,
+          xPixelOffset: report.xPixelOffset,
+          yPixelOffset: report.yPixelOffset,
           shift: event.shiftKey,
           alt: event.altKey,
           ctrl: event.ctrlKey,
@@ -444,7 +532,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       draggingRef.current = true;
       updateSelection({ anchor: point, focus: point });
     },
-    [focusInput, sendMouse, updateSelection],
+    [flushMouseMove, focusInput, sendMouse, updateSelection],
   );
 
   const handleMouseMove = useCallback(
@@ -455,17 +543,20 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       const point = selectionFor(frame, renderer, event);
       if (!point) return;
       if (frame.mouseReporting) {
-        if (event.buttons) {
-          sendMouse({
-            kind: "move",
-            button: "none",
-            x: point.column,
-            y: point.stableRow - frame.viewportTop,
-            shift: event.shiftKey,
-            alt: event.altKey,
-            ctrl: event.ctrlKey,
-          });
-        }
+        const report = mouseReportFor(frame, renderer, event);
+        if (!report) return;
+        lastMouseReportRef.current = report;
+        queueMouseMove({
+          kind: "move",
+          button: "none",
+          x: report.x,
+          y: report.y,
+          xPixelOffset: report.xPixelOffset,
+          yPixelOffset: report.yPixelOffset,
+          shift: event.shiftKey,
+          alt: event.altKey,
+          ctrl: event.ctrlKey,
+        });
         return;
       }
       if (draggingRef.current) {
@@ -475,7 +566,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
         });
       }
     },
-    [sendMouse, updateSelection],
+    [queueMouseMove, updateSelection],
   );
 
   const handleMouseUp = useCallback(
@@ -483,13 +574,18 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       const frame = frameRef.current;
       const renderer = rendererRef.current;
       if (frame && renderer && frame.mouseReporting) {
-        const point = selectionFor(frame, renderer, event);
-        if (point) {
+        flushMouseMove();
+        const report =
+          mouseReportFor(frame, renderer, event) ?? lastMouseReportRef.current;
+        if (report) {
+          lastMouseReportRef.current = report;
           sendMouse({
             kind: "release",
             button: buttonFor(event),
-            x: point.column,
-            y: point.stableRow - frame.viewportTop,
+            x: report.x,
+            y: report.y,
+            xPixelOffset: report.xPixelOffset,
+            yPixelOffset: report.yPixelOffset,
             shift: event.shiftKey,
             alt: event.altKey,
             ctrl: event.ctrlKey,
@@ -498,7 +594,32 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       }
       draggingRef.current = false;
     },
-    [sendMouse],
+    [flushMouseMove, sendMouse],
+  );
+
+  const handleMouseLeave = useCallback(
+    (event: MouseEvent<HTMLCanvasElement>) => {
+      const frame = frameRef.current;
+      if (frame?.mouseReporting) {
+        flushMouseMove();
+        const report = lastMouseReportRef.current;
+        if (report) {
+          sendMouse({
+            kind: "move",
+            button: "none",
+            x: report.x,
+            y: report.y,
+            xPixelOffset: report.xPixelOffset,
+            yPixelOffset: report.yPixelOffset,
+            shift: event.shiftKey,
+            alt: event.altKey,
+            ctrl: event.ctrlKey,
+          });
+        }
+      }
+      handleMouseUp(event);
+    },
+    [flushMouseMove, handleMouseUp, sendMouse],
   );
 
   const handleWheel = useCallback(
@@ -517,14 +638,17 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       const frame = frameRef.current;
       const renderer = rendererRef.current;
       if (!frame || !renderer) return;
-      const point = renderer.rowAtPoint(event.clientX, event.clientY);
-      if (frame.mouseReporting && point) {
+      const report = mouseReportFor(frame, renderer, event);
+      if (frame.mouseReporting && report) {
         event.preventDefault();
+        flushMouseMove();
         sendMouse({
           kind: "press",
           button: event.deltaY < 0 ? "wheel-up" : "wheel-down",
-          x: point.column,
-          y: point.row,
+          x: report.x,
+          y: report.y,
+          xPixelOffset: report.xPixelOffset,
+          yPixelOffset: report.yPixelOffset,
           shift: event.shiftKey,
           alt: event.altKey,
           ctrl: event.ctrlKey,
@@ -537,16 +661,30 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
         moveViewport(event.deltaY < 0 ? -rows : rows);
       }
     },
-    [moveViewport, sendMouse],
+    [flushMouseMove, moveViewport, sendMouse],
   );
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
-      if (event.nativeEvent.isComposing || compositionRef.current) return;
-      // Dead keys start a browser composition and do not represent a
-      // terminal key of their own. Let beforeinput/compositionend deliver
-      // the composed grapheme instead of preventing the IME sequence here.
-      if (event.key === "Dead" || event.key === "Compose") return;
+      if (
+        event.nativeEvent.isComposing ||
+        compositionRef.current ||
+        isImeKeyEvent(event) ||
+        event.key === "Dead" ||
+        event.key === "Compose"
+      ) {
+        return;
+      }
+      if (
+        shouldSuppressPostCompositionKey(
+          event,
+          committedAtRef.current,
+          performance.now(),
+        )
+      ) {
+        event.preventDefault();
+        return;
+      }
       const { terminalPasteShortcut } = useSettingsStore.getState();
       const pasteChord =
         terminalPasteShortcut === "ctrl-shift-v"
@@ -581,15 +719,9 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
         !event.altKey &&
         !event.metaKey &&
         !numpad;
-      if (
-        printable ||
-        altGr ||
-        isModifierKey(event.key) ||
-        event.key === "Process"
-      ) {
+      if (printable || altGr || isModifierKey(event.key)) {
         return;
       }
-      if (event.key === "Unidentified") return;
 
       event.preventDefault();
       const input: TerminalKeyEvent = {
@@ -610,15 +742,15 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
   const handleBeforeInput = useCallback(
     (event: FormEvent<HTMLTextAreaElement>) => {
       const native = event.nativeEvent as InputEvent;
+      const inputType = native.inputType ?? "";
       if (
         compositionRef.current ||
-        native.inputType.startsWith("insertComposition") ||
-        native.inputType === "insertFromComposition"
+        inputType.startsWith("insertComposition") ||
+        inputType === "insertFromComposition"
       ) {
-        event.preventDefault();
         return;
       }
-      if (native.inputType !== "insertText" || !native.data) return;
+      if (inputType !== "insertText" || !native.data) return;
       event.preventDefault();
       sendText(native.data);
     },
@@ -627,19 +759,40 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
 
   const handleInput = useCallback(() => {
     if (compositionRef.current) return;
+    if (
+      isWithinPostCompositionWindow(committedAtRef.current, performance.now())
+    ) {
+      if (inputRef.current) inputRef.current.value = "";
+      return;
+    }
     const value = inputRef.current?.value ?? "";
     if (value) sendText(value);
   }, [sendText]);
 
   const handleCompositionStart = useCallback(() => {
     compositionRef.current = true;
+    setPreedit("");
   }, []);
+
+  const handleCompositionUpdate = useCallback(
+    (event: CompositionEvent<HTMLTextAreaElement>) => {
+      compositionRef.current = true;
+      setPreedit(event.data ?? "");
+    },
+    [],
+  );
 
   const handleCompositionEnd = useCallback(
     (event: CompositionEvent<HTMLTextAreaElement>) => {
       compositionRef.current = false;
-      if (event.data) sendText(event.data);
-      if (inputRef.current) inputRef.current.value = "";
+      committedAtRef.current = performance.now();
+      const text = committedCompositionText(
+        event.data,
+        inputRef.current?.value ?? "",
+      );
+      setPreedit("");
+      if (text) sendText(text);
+      else if (inputRef.current) inputRef.current.value = "";
     },
     [sendText],
   );
@@ -750,6 +903,35 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     if (becameVisible) requestRenderSnapshot();
   }, [active, focused, requestRenderSnapshot, sessionId]);
 
+  useEffect(() => {
+    const sendFocus = (value: boolean) => {
+      void terminalService.focusChanged(sessionId, value).catch(() => {});
+    };
+    const windowFocused =
+      typeof document === "undefined" ? true : document.hasFocus();
+    sendFocus(focused && windowFocused);
+    const onWindowBlur = () => sendFocus(false);
+    const onWindowFocus = () => {
+      if (focused) sendFocus(true);
+    };
+    window.addEventListener("blur", onWindowBlur);
+    window.addEventListener("focus", onWindowFocus);
+    return () => {
+      window.removeEventListener("blur", onWindowBlur);
+      window.removeEventListener("focus", onWindowFocus);
+    };
+  }, [focused, sessionId]);
+
+  useEffect(() => {
+    return () => {
+      setTerminalAlternateScreen(sessionId, false);
+      if (mouseMoveFrameRef.current !== null) {
+        window.cancelAnimationFrame(mouseMoveFrameRef.current);
+        mouseMoveFrameRef.current = null;
+      }
+    };
+  }, [sessionId]);
+
   const resizeSurface = useCallback(() => {
     const surface = surfaceRef.current;
     const renderer = rendererRef.current;
@@ -785,6 +967,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
       width,
       height,
     };
+    applyImeCaret();
     const resizeRequest = ++resizeRequestRef.current;
     void terminalService
       .resize(sessionId, grid.rows, grid.cols, width, height)
@@ -808,7 +991,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
         snapshotRequestedRef.current = false;
         requestRenderSnapshot();
       });
-  }, [requestRenderSnapshot, sessionId]);
+  }, [applyImeCaret, requestRenderSnapshot, sessionId]);
 
   useEffect(() => {
     const surface = surfaceRef.current;
@@ -886,11 +1069,13 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
           snapshotRequestedRef.current = false;
         }
         frameRef.current = frame;
+        setTerminalAlternateScreen(sessionId, frame.alternateScreen);
         if (frame.fullSnapshot) {
           rendererRef.current?.renderImmediate(frame);
         } else {
           rendererRef.current?.render(frame);
         }
+        applyImeCaretRef.current();
         return;
       }
       if (message.type === "control") {
@@ -993,10 +1178,19 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
     if (!searchQuery) rendererRef.current?.setSearchMatch(null);
   }, [refreshSearch, searchQuery]);
 
+  useLayoutEffect(() => {
+    applyImeCaret();
+  }, [applyImeCaret, preedit]);
+
   useEffect(() => {
     const handleShortcut = (event: globalThis.KeyboardEvent) => {
-      if (!focused) return;
-      if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "f") {
+      if (!focused || isImeKeyEvent(event)) return;
+      if (
+        event.ctrlKey &&
+        event.shiftKey &&
+        event.key.toLowerCase() === "f" &&
+        !frameRef.current?.alternateScreen
+      ) {
         event.preventDefault();
         event.stopPropagation();
         setSearchOpen(true);
@@ -1078,7 +1272,7 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
+          onMouseLeave={handleMouseLeave}
           onWheel={handleWheel}
           onDoubleClick={() => {
             if (selectionHasRange(selectionRef.current)) void copySelection();
@@ -1092,14 +1286,40 @@ export const WeztermTerminalView = memo(function WeztermTerminalView({
           autoCorrect="off"
           autoCapitalize="off"
           spellCheck={false}
-          className="pointer-events-none absolute left-0 top-0 h-px w-px resize-none border-0 bg-transparent p-0 opacity-0 outline-none"
+          className="pointer-events-none absolute z-0 resize-none overflow-hidden border-0 p-0 outline-none"
+          style={{
+            color: "transparent",
+            caretColor: "transparent",
+            background: "transparent",
+            fontFamily: font.family,
+            fontSize: font.size,
+            lineHeight: `${font.size * typography.lineHeight}px`,
+          }}
           onKeyDown={handleKeyDown}
           onBeforeInput={handleBeforeInput}
           onInput={handleInput}
           onPaste={handlePaste}
           onCompositionStart={handleCompositionStart}
+          onCompositionUpdate={handleCompositionUpdate}
           onCompositionEnd={handleCompositionEnd}
         />
+        {preedit ? (
+          <div
+            ref={overlayRef}
+            data-testid="terminal-ime-preedit"
+            aria-hidden
+            className="pointer-events-none absolute z-[1] whitespace-nowrap underline"
+            style={{
+              fontFamily: font.family,
+              fontSize: font.size,
+              lineHeight: `${font.size * typography.lineHeight}px`,
+              color: rendererTheme.foreground,
+              background: rendererTheme.background,
+            }}
+          >
+            {preedit}
+          </div>
+        ) : null}
       </div>
       {searchOpen && active ? (
         <form

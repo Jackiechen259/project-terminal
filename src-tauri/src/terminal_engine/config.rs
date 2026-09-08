@@ -45,7 +45,7 @@ impl Default for WeztermTerminalConfig {
             palette: ColorPalette::default(),
             scrollback_lines: DEFAULT_SCROLLBACK_LINES,
             canonicalize_pasted_newlines: NewlineCanon::default(),
-            enable_kitty_graphics: false,
+            enable_kitty_graphics: true,
             enable_kitty_keyboard: false,
             unicode_version: UnicodeVersion {
                 version: 9,
@@ -106,5 +106,11 @@ mod tests {
         assert_eq!(normalize_scrollback_lines(1), MIN_SCROLLBACK_LINES);
         assert_eq!(normalize_scrollback_lines(25_000), 25_000);
         assert_eq!(normalize_scrollback_lines(usize::MAX), MAX_SCROLLBACK_LINES);
+    }
+
+    #[test]
+    fn advertises_kitty_graphics_by_default() {
+        assert!(WeztermTerminalConfig::default().enable_kitty_graphics);
+        assert!(!WeztermTerminalConfig::default().enable_kitty_keyboard);
     }
 }

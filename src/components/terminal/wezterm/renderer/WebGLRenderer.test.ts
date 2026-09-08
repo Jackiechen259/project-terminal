@@ -246,7 +246,9 @@ describe("WebGLRenderer surface initialization", () => {
     renderer.render({ ...frame(1, 0, [compactedRow], true), cols: 8 });
     flushPrimaryFrame();
 
-    expect(atlas.get.mock.calls.map((call) => [call[0], call[1]])).toEqual([
+    expect(
+      atlas.get.mock.calls.map((call) => [call[0], call[1]] as const),
+    ).toEqual([
       ["h", 1],
       ["e", 1],
       ["l", 1],
@@ -441,7 +443,7 @@ function configureAtlas(renderer: WebGLRenderer) {
     wasResetDuringPass: vi.fn(() => false),
     getTexture: vi.fn(() => ({})),
     dispose: vi.fn(),
-    get: vi.fn(() => record),
+    get: vi.fn((_text: string, _cols: number): typeof record | null => record),
   };
   (renderer as unknown as { atlas: typeof atlas }).atlas = atlas;
   return atlas;

@@ -3611,6 +3611,7 @@ dependencies = [
 name = "project-terminal"
 version = "0.6.3"
 dependencies = [
+ "anyhow",
  "axum",
  "base64 0.22.1",
  "chrono",

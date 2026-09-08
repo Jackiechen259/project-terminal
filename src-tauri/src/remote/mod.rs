@@ -321,6 +321,10 @@ enum WsClientMessage {
         lease_id: String,
         event: TerminalMouseEvent,
     },
+    Focus {
+        lease_id: String,
+        focused: bool,
+    },
     Resize {
         lease_id: String,
         rows: u16,
@@ -473,6 +477,8 @@ async fn create_session(
         cols: 80,
         scrollback_megabytes: Some(4),
         scrollback_lines: None,
+        pixel_width: None,
+        pixel_height: None,
     };
 
     // Remote clients own no window: sessions created through the gateway are
@@ -1044,6 +1050,13 @@ fn handle_ws_message(
             }
             let ok = state.manager.mouse_event(session_id, &event).is_ok();
             serde_json::json!({ "type": "ack", "action": "mouse", "ok": ok })
+        }
+        WsClientMessage::Focus { lease_id, focused } => {
+            if validate_lease(state, session_id, client_id, &lease_id, true).is_err() {
+                return serde_json::json!({ "type": "error", "message": "A control lease is required" });
+            }
+            let ok = state.manager.focus_changed(session_id, focused).is_ok();
+            serde_json::json!({ "type": "ack", "action": "focus", "ok": ok })
         }
         WsClientMessage::Resize {
             lease_id,
@@ -1672,6 +1685,8 @@ mod tests {
                 readiness_marker: None,
                 rows: 24,
                 cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
                 scrollback_bytes: 64 * 1024,
                 scrollback_lines: None,
             })

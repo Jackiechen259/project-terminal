@@ -111,6 +111,11 @@ impl TerminalManager {
         self.get(session_id)?.mouse_event(event)
     }
 
+    pub fn focus_changed(&self, session_id: &str, focused: bool) -> AppResult<()> {
+        self.get(session_id)?.focus_changed(focused);
+        Ok(())
+    }
+
     pub fn send_paste(&self, session_id: &str, text: &str) -> AppResult<()> {
         self.get(session_id)?.send_paste(text)
     }
@@ -265,6 +270,8 @@ mod tests {
             readiness_marker: None,
             rows: 24,
             cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
             scrollback_bytes: 4 * 1024 * 1024,
             scrollback_lines: None,
         }

@@ -7,7 +7,7 @@ import type {
   TerminalRenderRow,
 } from "@/lib/terminalFrames";
 
-import { CanvasRenderer } from "./CanvasRenderer";
+import { CanvasRenderer, cellBlinkHidden } from "./CanvasRenderer";
 
 function defaultColor(): RenderColor {
   return { kind: "default" };
@@ -86,6 +86,17 @@ function frame(
   };
 }
 
+describe("cellBlinkHidden", () => {
+  it("toggles slow and rapid blink from the clock", () => {
+    expect(cellBlinkHidden("slow", 0)).toBe(false);
+    expect(cellBlinkHidden("slow", 500)).toBe(true);
+    expect(cellBlinkHidden("rapid", 0)).toBe(false);
+    expect(cellBlinkHidden("rapid", 200)).toBe(true);
+    expect(cellBlinkHidden(undefined, 500)).toBe(false);
+    expect(cellBlinkHidden("none", 500)).toBe(false);
+  });
+});
+
 describe("CanvasRenderer", () => {
   const callbacks = new Map<number, FrameRequestCallback>();
   let nextFrameId = 0;
@@ -159,6 +170,22 @@ describe("CanvasRenderer", () => {
     expect(context.fillText.mock.calls.map(([text]) => text)).toEqual(
       expect.arrayContaining(["n", "e", "w"]),
     );
+    renderer.dispose();
+  });
+
+  it("hides SGR-blink text during the off phase", () => {
+    vi.spyOn(performance, "now").mockReturnValue(500);
+    const renderer = new CanvasRenderer();
+    const canvas = document.createElement("canvas");
+    renderer.mount(canvas);
+    renderer.resize(80, 34, 2, 4);
+
+    const blinking = { ...cell(0, "X"), blink: "slow" as const };
+    renderer.renderImmediate(
+      frame([{ stableRow: 0, cells: [blinking, cell(1, "Y")] }], true),
+    );
+
+    expect(context.fillText.mock.calls.map(([text]) => text)).toEqual(["Y"]);
     renderer.dispose();
   });
 
@@ -485,6 +512,27 @@ describe("CanvasRenderer", () => {
     callback(16);
 
     expect(renderer.linkAtPoint(24, 8)).toBe("https://example.com");
+    renderer.dispose();
+  });
+
+  it("reports the cursor cell rect in CSS pixels for IME caret placement", () => {
+    const renderer = new CanvasRenderer();
+    const canvas = document.createElement("canvas");
+    renderer.mount(canvas);
+    renderer.resize(80, 34, 2, 4);
+
+    expect(renderer.cursorRect()).toBeNull();
+
+    const next = frame([row(0, "text")], true);
+    next.cursor = { ...next.cursor, column: 3, row: 1 };
+    renderer.renderImmediate(next);
+
+    expect(renderer.cursorRect()).toEqual({
+      x: 24,
+      y: 16.8,
+      width: 8,
+      height: 16.8,
+    });
     renderer.dispose();
   });
 });

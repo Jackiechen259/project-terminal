@@ -223,6 +223,7 @@ fn run_scheduler(engine: Arc<Mutex<WeztermTerminalEngine>>, hub: Arc<TerminalFra
             (frame, controls)
         };
 
+        let extracted = frame.is_some();
         if let Some(frame) = frame {
             hub.in_flight.store(true, Ordering::Release);
             if hub.frames.send(frame).is_err() {
@@ -233,6 +234,23 @@ fn run_scheduler(engine: Arc<Mutex<WeztermTerminalEngine>>, hub: Arc<TerminalFra
             let _ = hub.controls.send(event);
         }
         last_frame_at = Some(Instant::now());
+
+        // A DECSET 2026 hold has no further PTY bytes until the TUI ends the
+        // frame (or the 150ms timeout fires). Wake the scheduler ourselves so
+        // a stuck hold still flushes instead of freezing the pane.
+        if !extracted && hub.wants_frames() {
+            if let Some(remaining) = engine.lock().synchronized_hold_remaining() {
+                let (pending_lock, wake) = &*hub.signal;
+                let mut is_pending = pending_lock.lock().unwrap();
+                if !*is_pending && !hub.shutdown.load(Ordering::Acquire) {
+                    let (next, _) = wake.wait_timeout(is_pending, remaining).unwrap();
+                    is_pending = next;
+                }
+                *is_pending = true;
+                hub.pending.store(true, Ordering::Release);
+                drop(is_pending);
+            }
+        }
     }
 }
 

@@ -309,13 +309,31 @@
         position: absolute;
         top: 0;
         left: 0;
-        width: 1px;
-        height: 1px;
+        z-index: 0;
+        width: 8px;
+        height: 17px;
         padding: 0;
         border: 0;
-        opacity: 0;
-        pointer-events: none;
+        overflow: hidden;
         resize: none;
+        outline: none;
+        pointer-events: none;
+        color: transparent;
+        caret-color: transparent;
+        background: transparent;
+        font-family: "Cascadia Mono", "SFMono-Regular", Consolas, ui-monospace,
+          monospace;
+      }
+      #terminal .remote-terminal-preedit {
+        position: absolute;
+        z-index: 1;
+        pointer-events: none;
+        white-space: nowrap;
+        text-decoration: underline;
+        color: var(--terminal-foreground, #dce6f3);
+        background: var(--terminal, #05070b);
+        font-family: "Cascadia Mono", "SFMono-Regular", Consolas, ui-monospace,
+          monospace;
       }
       #terminal.remote-terminal-bell {
         box-shadow: inset 0 0 0 2px rgba(104, 163, 255, 0.72);

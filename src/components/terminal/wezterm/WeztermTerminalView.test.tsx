@@ -31,8 +31,16 @@ const mocks = vi.hoisted(() => {
     setSelection: vi.fn(),
     setSearchMatch: vi.fn(),
     selectionText: vi.fn(() => ""),
-    rowAtPoint: vi.fn((): { column: number; row: number } | null => null),
+    rowAtPoint: vi.fn(
+      (): {
+        column: number;
+        row: number;
+        xPixelOffset: number;
+        yPixelOffset: number;
+      } | null => null,
+    ),
     linkAtPoint: vi.fn(() => null),
+    cursorRect: vi.fn(() => ({ x: 16, y: 34, width: 8, height: 17 })),
     rowText: vi.fn(() => ""),
     dispose: vi.fn(),
   };
@@ -65,6 +73,10 @@ const mocks = vi.hoisted(() => {
     readClipboardText: vi.fn(async () => ""),
     paste: vi.fn(async () => undefined),
     bracketedPasteEnabled: vi.fn(async () => true),
+    mouseEvent: vi.fn(async () => undefined),
+    focusChanged: vi.fn(async () => undefined),
+    keyDown: vi.fn(async () => undefined),
+    textInput: vi.fn(async () => undefined),
   };
 
   return {
@@ -160,8 +172,23 @@ describe("WeztermTerminalView render synchronization", () => {
     mocks.terminalService.paste.mockResolvedValue(undefined);
     mocks.terminalService.bracketedPasteEnabled.mockReset();
     mocks.terminalService.bracketedPasteEnabled.mockResolvedValue(true);
+    mocks.terminalService.mouseEvent.mockReset();
+    mocks.terminalService.mouseEvent.mockResolvedValue(undefined);
+    mocks.terminalService.focusChanged.mockReset();
+    mocks.terminalService.focusChanged.mockResolvedValue(undefined);
+    mocks.terminalService.keyDown.mockReset();
+    mocks.terminalService.keyDown.mockResolvedValue(undefined);
+    mocks.terminalService.textInput.mockReset();
+    mocks.terminalService.textInput.mockResolvedValue(undefined);
     mocks.renderer.rowAtPoint.mockReset();
     mocks.renderer.rowAtPoint.mockReturnValue(null);
+    mocks.renderer.cursorRect.mockReset();
+    mocks.renderer.cursorRect.mockReturnValue({
+      x: 16,
+      y: 34,
+      width: 8,
+      height: 17,
+    });
     mocks.resetAttachment();
     useSettingsStore.setState({
       ...DEFAULT_GENERAL_SETTINGS,
@@ -407,9 +434,24 @@ describe("WeztermTerminalView render synchronization", () => {
     });
 
     mocks.renderer.rowAtPoint
-      .mockReturnValueOnce({ column: 0, row: 0 })
-      .mockReturnValueOnce({ column: 5, row: 0 })
-      .mockReturnValueOnce({ column: 5, row: 0 });
+      .mockReturnValueOnce({
+        column: 0,
+        row: 0,
+        xPixelOffset: 0,
+        yPixelOffset: 0,
+      })
+      .mockReturnValueOnce({
+        column: 5,
+        row: 0,
+        xPixelOffset: 0,
+        yPixelOffset: 0,
+      })
+      .mockReturnValueOnce({
+        column: 5,
+        row: 0,
+        xPixelOffset: 0,
+        yPixelOffset: 0,
+      });
 
     const canvas = view.getByLabelText("Terminal");
     fireEvent.mouseDown(canvas, { clientX: 8, clientY: 8, button: 0 });
@@ -461,7 +503,12 @@ describe("WeztermTerminalView render synchronization", () => {
       });
     });
 
-    mocks.renderer.rowAtPoint.mockReturnValue({ column: 3, row: 0 });
+    mocks.renderer.rowAtPoint.mockReturnValue({
+      column: 3,
+      row: 0,
+      xPixelOffset: 0,
+      yPixelOffset: 0,
+    });
     const canvas = view.getByLabelText("Terminal");
     fireEvent.mouseDown(canvas, { clientX: 24, clientY: 8, button: 0 });
     fireEvent.mouseUp(canvas, { clientX: 24, clientY: 8, button: 0 });
@@ -479,6 +526,159 @@ describe("WeztermTerminalView render synchronization", () => {
       "paste-me",
     );
 
+    view.unmount();
+  });
+
+  it("forwards hover mouse moves while a TUI has mouse reporting enabled", async () => {
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => undefined);
+
+    const { WeztermTerminalView } = await import("./WeztermTerminalView");
+    const view = render(
+      <WeztermTerminalView
+        sessionId="session-1"
+        active
+        defaultTitle="Terminal"
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      mocks.resolveResize();
+      await Promise.resolve();
+    });
+    act(() => {
+      mocks.getAttachedOnMessage()?.({
+        type: "frame",
+        frame: { ...frame(40, 120, 1), mouseReporting: true },
+      });
+    });
+
+    mocks.renderer.rowAtPoint.mockReturnValue({
+      column: 4,
+      row: 2,
+      xPixelOffset: 3,
+      yPixelOffset: 5,
+    });
+    const canvas = view.getByLabelText("Terminal");
+    fireEvent.mouseMove(canvas, { clientX: 40, clientY: 20, buttons: 0 });
+
+    expect(mocks.terminalService.mouseEvent).toHaveBeenCalledWith(
+      "session-1",
+      expect.objectContaining({
+        kind: "move",
+        button: "none",
+        x: 4,
+        y: 2,
+        xPixelOffset: 3,
+        yPixelOffset: 5,
+      }),
+    );
+
+    view.unmount();
+  });
+
+  it("reports focus changes to the terminal model", async () => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    const { WeztermTerminalView } = await import("./WeztermTerminalView");
+    const view = render(
+      <WeztermTerminalView
+        sessionId="session-1"
+        active
+        focused
+        defaultTitle="Terminal"
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mocks.terminalService.focusChanged).toHaveBeenCalledWith(
+      "session-1",
+      true,
+    );
+
+    act(() => {
+      window.dispatchEvent(new Event("blur"));
+    });
+    expect(mocks.terminalService.focusChanged).toHaveBeenCalledWith(
+      "session-1",
+      false,
+    );
+
+    view.unmount();
+  });
+
+  async function mountReadyView() {
+    const { WeztermTerminalView } = await import("./WeztermTerminalView");
+    const view = render(
+      <WeztermTerminalView
+        sessionId="session-1"
+        active
+        defaultTitle="Terminal"
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => {
+      mocks.resolveResize();
+      await Promise.resolve();
+    });
+    act(() => {
+      mocks.getAttachedOnMessage()?.({
+        type: "frame",
+        frame: frame(40, 120, 1),
+      });
+    });
+    return view;
+  }
+
+  it("parks the IME caret on the cursor cell", async () => {
+    const view = await mountReadyView();
+    const input = view.getByLabelText("Terminal input");
+    expect(input.style.left).toBe("16px");
+    expect(input.style.top).toBe("34px");
+    expect(input.style.width).toBe("8px");
+    expect(input.style.height).toBe("17px");
+    view.unmount();
+  });
+
+  it("shows preedit at the cursor without sending composing text", async () => {
+    const view = await mountReadyView();
+    const input = view.getByLabelText("Terminal input");
+    fireEvent.compositionStart(input);
+    fireEvent.compositionUpdate(input, { data: "ni" });
+    expect(view.getByTestId("terminal-ime-preedit")).toHaveTextContent("ni");
+    expect(mocks.terminalService.textInput).not.toHaveBeenCalled();
+    expect(mocks.terminalService.keyDown).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it("commits composed text once and swallows the confirming key", async () => {
+    const view = await mountReadyView();
+    const input = view.getByLabelText("Terminal input") as HTMLTextAreaElement;
+    fireEvent.compositionStart(input);
+    fireEvent.keyDown(input, { key: "n", isComposing: true });
+    fireEvent.compositionUpdate(input, { data: "你" });
+    fireEvent.compositionEnd(input, { data: "你" });
+    input.value = "你";
+    fireEvent.input(input);
+    fireEvent.keyDown(input, { key: "Enter", isComposing: false });
+
+    expect(mocks.terminalService.textInput).toHaveBeenCalledTimes(1);
+    expect(mocks.terminalService.textInput).toHaveBeenCalledWith(
+      "session-1",
+      "你",
+    );
+    expect(mocks.terminalService.keyDown).not.toHaveBeenCalled();
+    expect(view.queryByTestId("terminal-ime-preedit")).toBeNull();
     view.unmount();
   });
 });

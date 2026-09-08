@@ -312,6 +312,9 @@ export interface CreateTerminalRequest {
   scrollbackMegabytes?: number;
   /** Visible rows retained by the Rust terminal model. */
   scrollbackLines?: number;
+  /** Grid size in CSS pixels. Omit or 0 when unknown. */
+  pixelWidth?: number;
+  pixelHeight?: number;
 }
 
 export type {
@@ -642,6 +645,8 @@ export const terminalService = {
     invokeOrThrow<void>("terminal_text_input", { sessionId, text }),
   mouseEvent: (sessionId: string, event: TerminalMouseEvent) =>
     invokeOrThrow<void>("terminal_mouse_event", { sessionId, event }),
+  focusChanged: (sessionId: string, focused: boolean) =>
+    invokeOrThrow<void>("terminal_focus_changed", { sessionId, focused }),
   paste: (sessionId: string, text: string) =>
     invokeOrThrow<void>("terminal_paste", { sessionId, text }),
   bracketedPasteEnabled: (sessionId: string) =>

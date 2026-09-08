@@ -41,6 +41,7 @@ export interface TerminalImageCellFrame {
   height: number;
   dataBase64?: string | null;
   cacheKey: string;
+  animationFrames?: { dataBase64: string; durationMs: number }[];
 }
 
 /**
@@ -74,6 +75,7 @@ export interface TerminalRenderCell {
   reverse?: boolean;
   strikethrough?: boolean;
   invisible?: boolean;
+  blink?: "none" | "slow" | "rapid";
   hyperlink?: string | null;
   images?: TerminalImageCellFrame[];
 }

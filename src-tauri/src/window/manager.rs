@@ -1066,6 +1066,8 @@ mod tests {
                 readiness_marker: None,
                 rows: 24,
                 cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
                 scrollback_bytes: 1024,
                 scrollback_lines: None,
             }
@@ -1181,6 +1183,8 @@ mod tests {
             readiness_marker: None,
             rows: 24,
             cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
             scrollback_bytes: 1024,
             scrollback_lines: None,
         };

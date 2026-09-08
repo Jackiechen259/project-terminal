@@ -5,6 +5,13 @@
 //! `navigator.clipboard.writeText` requires a transient user activation that
 //! is already gone by the time `terminal_selection_text` returns, so copy
 //! must not go through that path.
+//!
+//! TUI applications also write the clipboard through OSC 52. That path is
+//! model-owned (`wezterm-term::Clipboard`) and reuses the same native write.
+
+use std::sync::Arc;
+
+use wezterm_term::{Clipboard, ClipboardSelection};
 
 #[cfg(windows)]
 use std::slice;
@@ -62,6 +69,48 @@ pub fn read_clipboard_text() -> Result<String, String> {
     }
 }
 
+/// OSC 52 payloads larger than this are dropped rather than copied. A TUI
+/// that wants to exfiltrate a file through the clipboard should not get a
+/// multi-megabyte silent write from this process.
+pub const MAX_OSC52_BYTES: usize = 1024 * 1024;
+
+/// Accept a decoded OSC 52 payload, or `None` when it should be ignored.
+pub fn osc52_clipboard_text(data: Option<String>) -> Option<String> {
+    let text = data?;
+    if text.len() > MAX_OSC52_BYTES {
+        tracing::warn!(
+            bytes = text.len(),
+            limit = MAX_OSC52_BYTES,
+            "dropping oversized OSC 52 clipboard write"
+        );
+        return None;
+    }
+    Some(text)
+}
+
+/// Clipboard sink installed on each wezterm-term model so OSC 52 yank from
+/// vim/tmux/lazygit reaches the operating-system clipboard.
+pub struct Osc52Clipboard;
+
+impl Clipboard for Osc52Clipboard {
+    fn set_contents(
+        &self,
+        _selection: ClipboardSelection,
+        data: Option<String>,
+    ) -> anyhow::Result<()> {
+        let Some(text) = osc52_clipboard_text(data) else {
+            return Ok(());
+        };
+        write_clipboard_text(text).map_err(anyhow::Error::msg)
+    }
+}
+
+impl Osc52Clipboard {
+    pub fn shared() -> Arc<dyn Clipboard> {
+        Arc::new(Self)
+    }
+}
+
 /// Write Unicode text to the operating-system clipboard without involving
 /// WebView's clipboard permission model or user-activation token.
 #[tauri::command]
@@ -106,6 +155,22 @@ pub fn write_clipboard_text(text: String) -> Result<(), String> {
     {
         let _ = text;
         Err("Native clipboard copy is only supported on Windows".into())
+    }
+}
+
+#[cfg(test)]
+mod osc52_tests {
+    use super::*;
+
+    #[test]
+    fn osc52_accepts_a_bounded_payload_and_drops_an_oversized_one() {
+        assert_eq!(
+            osc52_clipboard_text(Some("yank".into())).as_deref(),
+            Some("yank")
+        );
+        assert_eq!(osc52_clipboard_text(None), None);
+        let oversized = "x".repeat(MAX_OSC52_BYTES + 1);
+        assert_eq!(osc52_clipboard_text(Some(oversized)), None);
     }
 }
 

@@ -36,7 +36,12 @@ import {
 } from "@/components/ui/context-menu";
 import { joinContextMenuSections } from "@/components/ui/context-menu-items";
 import { dispatchAppCommand, listenForAppCommands } from "@/lib/appCommands";
-import { getAppShortcut, isBrowserShortcut } from "@/lib/keyboardShortcuts";
+import {
+  getAppShortcut,
+  isBrowserShortcut,
+  isTuiPassthroughShortcut,
+} from "@/lib/keyboardShortcuts";
+import { isTerminalAlternateScreen } from "@/lib/terminalScreenMode";
 import {
   calculatePaneLayout,
   focusedPane,
@@ -76,6 +81,41 @@ import { TerminalPane } from "./TerminalPane";
 import { preloadTerminalView } from "./terminalViewLoader";
 import { useTerminalTabDrag } from "./useTerminalTabDrag";
 
+function spawnGrid(container: HTMLElement | null): {
+  rows: number;
+  cols: number;
+  pixelWidth: number;
+  pixelHeight: number;
+} {
+  const fallback = { rows: 24, cols: 80, pixelWidth: 0, pixelHeight: 0 };
+  if (!container) return fallback;
+  const width = container.clientWidth;
+  const height = container.clientHeight;
+  if (!width || !height) return fallback;
+  const {
+    terminalFontSize,
+    terminalLineHeight,
+    terminalLetterSpacing,
+    terminalPadding,
+  } = useSettingsStore.getState();
+  const cellHeight = Math.max(
+    1,
+    Math.round(terminalFontSize * terminalLineHeight),
+  );
+  const cellWidth = Math.max(
+    1,
+    Math.round(terminalFontSize * 0.6 + terminalLetterSpacing),
+  );
+  const innerWidth = Math.max(1, width - terminalPadding * 2);
+  const innerHeight = Math.max(1, height - terminalPadding * 2);
+  return {
+    rows: Math.max(1, Math.floor(innerHeight / cellHeight)),
+    cols: Math.max(1, Math.floor(innerWidth / cellWidth)),
+    pixelWidth: innerWidth,
+    pixelHeight: innerHeight,
+  };
+}
+
 /** Detected Conda environment available as a quick-launch target. */
 interface CondaEnvOption {
   name: string;
@@ -95,6 +135,7 @@ interface CondaEnvOption {
  * attaches to its existing session and detaches when React disposes it.
  */
 export function TerminalWorkspace() {
+  const paneSizeRef = useRef<HTMLDivElement | null>(null);
   const { t } = useTranslation();
   const activeProjectId = useTerminalStore((s) => s.activeProjectId);
   const projects = useProjectStore((s) => s.projects);
@@ -269,11 +310,14 @@ export function TerminalWorkspace() {
           createdAt: now,
           lastActivatedAt: now,
         });
+        const grid = spawnGrid(paneSizeRef.current);
         const sessionId = await terminalService.create({
           projectId,
           profileId: profile.id,
-          rows: 24,
-          cols: 80,
+          rows: grid.rows,
+          cols: grid.cols,
+          pixelWidth: grid.pixelWidth,
+          pixelHeight: grid.pixelHeight,
           scrollbackMegabytes:
             useSettingsStore.getState().terminalScrollbackMegabytes,
           scrollbackLines: useSettingsStore.getState().terminalScrollbackLines,
@@ -520,11 +564,14 @@ export function TerminalWorkspace() {
           setProfiles(nextProfiles);
           syncProfileStore(nextProfiles);
         }
+        const grid = spawnGrid(paneSizeRef.current);
         const sessionId = await terminalService.create({
           projectId: activeProjectId,
           profileId: profile.id,
-          rows: 24,
-          cols: 80,
+          rows: grid.rows,
+          cols: grid.cols,
+          pixelWidth: grid.pixelWidth,
+          pixelHeight: grid.pixelHeight,
           scrollbackMegabytes:
             useSettingsStore.getState().terminalScrollbackMegabytes,
           scrollbackLines: useSettingsStore.getState().terminalScrollbackLines,
@@ -563,8 +610,7 @@ export function TerminalWorkspace() {
         : await terminalService.create({
             projectId: oldTab.projectId,
             profileId: oldTab.profileId,
-            rows: 24,
-            cols: 80,
+            ...spawnGrid(paneSizeRef.current),
             scrollbackMegabytes:
               useSettingsStore.getState().terminalScrollbackMegabytes,
             scrollbackLines:
@@ -684,6 +730,7 @@ export function TerminalWorkspace() {
     activeProjectId,
     activeTabId,
     tabIds,
+    tabsById,
     validSplitView,
     handleCloseTab,
     handleNewTerminal,
@@ -697,6 +744,7 @@ export function TerminalWorkspace() {
     activeProjectId,
     activeTabId,
     tabIds,
+    tabsById,
     validSplitView,
     handleCloseTab,
     handleNewTerminal,
@@ -724,6 +772,7 @@ export function TerminalWorkspace() {
         event.stopPropagation();
         return;
       }
+      if (event.isComposing || event.key === "Process") return;
       if (isEditableControl(event.target)) return;
 
       const shortcut = getAppShortcut(event);
@@ -733,6 +782,7 @@ export function TerminalWorkspace() {
         activeProjectId,
         activeTabId,
         tabIds,
+        tabsById,
         validSplitView,
         handleCloseTab,
         handleNewTerminal,
@@ -742,6 +792,13 @@ export function TerminalWorkspace() {
         setActiveTab,
         selectRelativeTab,
       } = shortcutContextRef.current;
+
+      if (
+        isTuiPassthroughShortcut(event) &&
+        isTerminalAlternateScreen(tabsById[activeTabId ?? ""]?.sessionId)
+      ) {
+        return;
+      }
 
       event.preventDefault();
       event.stopPropagation();
@@ -1209,7 +1266,13 @@ export function TerminalWorkspace() {
         </Button>
       </div>
 
-      <div ref={workspaceRef} className="relative flex-1 bg-background">
+      <div
+        ref={(node) => {
+          workspaceRef.current = node;
+          paneSizeRef.current = node;
+        }}
+        className="relative flex-1 bg-background"
+      >
         {draggedTabId && dropZone ? (
           <div
             className={cn(

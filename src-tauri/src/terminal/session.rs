@@ -48,6 +48,10 @@ pub struct SessionSpawn {
     pub readiness_marker: Option<String>,
     pub rows: u16,
     pub cols: u16,
+    /// Grid size in pixels. Image protocols and CSI 14/16 t queries read
+    /// these; `0` means unknown.
+    pub pixel_width: u16,
+    pub pixel_height: u16,
     /// Legacy-compatible memory budget used only to derive a model row bound
     /// when `scrollback_lines` is absent. No raw PTY history is retained.
     pub scrollback_bytes: usize,
@@ -255,8 +259,8 @@ impl TerminalSession {
             .openpty(PtySize {
                 rows: spawn.rows,
                 cols: spawn.cols,
-                pixel_width: 0,
-                pixel_height: 0,
+                pixel_width: spawn.pixel_width,
+                pixel_height: spawn.pixel_height,
             })
             .map_err(|e| AppError::PtyCreationFailed(e.to_string()))?;
 
@@ -309,12 +313,12 @@ impl TerminalSession {
             .take_writer()
             .map_err(|e| AppError::PtyCreationFailed(format!("take_writer: {e}")))?;
         let shared_writer: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(writer));
-        let terminal_engine = Arc::new(Mutex::new(WeztermTerminalEngine::new(
+        let mut terminal_engine = WeztermTerminalEngine::new(
             wezterm_term::TerminalSize {
                 rows: spawn.rows as usize,
                 cols: spawn.cols as usize,
-                pixel_width: 0,
-                pixel_height: 0,
+                pixel_width: spawn.pixel_width as usize,
+                pixel_height: spawn.pixel_height as usize,
                 dpi: 96,
             },
             WeztermTerminalConfig {
@@ -332,7 +336,11 @@ impl TerminalSession {
             Box::new(SharedPtyWriter {
                 writer: Arc::clone(&shared_writer),
             }),
-        )));
+        );
+        terminal_engine
+            .terminal_mut()
+            .set_clipboard(&crate::commands::clipboard::Osc52Clipboard::shared());
+        let terminal_engine = Arc::new(Mutex::new(terminal_engine));
         let frame_hub = TerminalFrameHub::new(Arc::clone(&terminal_engine));
         let master: Box<dyn MasterPty + Send> = pair.master;
         // Drop the slave - we never spawn another process on this PTY.
@@ -473,6 +481,10 @@ impl TerminalSession {
             .lock()
             .mouse_event(event)
             .map_err(AppError::TerminalInputFailed)
+    }
+
+    pub fn focus_changed(&self, focused: bool) {
+        self.terminal_engine.lock().focus_changed(focused);
     }
 
     pub fn send_paste(&self, text: &str) -> AppResult<()> {
@@ -745,6 +757,8 @@ mod tests {
             readiness_marker: None,
             rows: 24,
             cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
             scrollback_bytes: TEST_SCROLLBACK_BYTES,
             scrollback_lines: None,
         })
@@ -834,6 +848,8 @@ mod tests {
             readiness_marker: None,
             rows: 8,
             cols: 40,
+            pixel_width: 0,
+            pixel_height: 0,
             scrollback_bytes: TEST_SCROLLBACK_BYTES,
             scrollback_lines: None,
         })
@@ -925,6 +941,8 @@ mod tests {
             readiness_marker: None,
             rows: 8,
             cols: 40,
+            pixel_width: 0,
+            pixel_height: 0,
             scrollback_bytes: TEST_SCROLLBACK_BYTES,
             scrollback_lines: None,
         })
@@ -971,6 +989,8 @@ mod tests {
             readiness_marker: None,
             rows: 8,
             cols: 40,
+            pixel_width: 0,
+            pixel_height: 0,
             scrollback_bytes: TEST_SCROLLBACK_BYTES,
             scrollback_lines: None,
         })
@@ -1153,6 +1173,8 @@ mod tests {
             readiness_marker: None,
             rows: 24,
             cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
             scrollback_bytes: TEST_SCROLLBACK_BYTES,
             scrollback_lines: None,
         })
@@ -1203,6 +1225,8 @@ mod tests {
             readiness_marker: None,
             rows: 24,
             cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
             scrollback_bytes: TEST_SCROLLBACK_BYTES,
             scrollback_lines: None,
         })

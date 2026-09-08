@@ -12,6 +12,7 @@ mod input;
 mod render_frame;
 mod search;
 mod selection;
+mod sync_output;
 mod wezterm_engine;
 
 pub use config::{
@@ -22,8 +23,9 @@ pub use input::{
     TerminalKeyEvent, TerminalMouseButton, TerminalMouseEvent, TerminalMouseEventKind,
 };
 pub use render_frame::{
-    CellIntensity, CellUnderline, CursorShape, CursorState, CursorVisibility, ImageCellFrame,
-    RenderCell, RenderColor, RenderFrame, RenderRow, TerminalControlEvent,
+    CellBlink, CellIntensity, CellUnderline, CursorShape, CursorState, CursorVisibility,
+    ImageAnimationFrame, ImageCellFrame, RenderCell, RenderColor, RenderFrame, RenderRow,
+    TerminalControlEvent,
 };
 pub use search::{
     TerminalSearchDirection, TerminalSearchMatch, TerminalSearchPosition, TerminalSearchQuery,
@@ -75,6 +77,10 @@ pub trait TerminalEngine: Send {
     /// Encode a mouse event after the model has interpreted its current
     /// mouse-reporting mode.
     fn mouse_event(&mut self, event: &TerminalMouseEvent) -> Result<(), String>;
+
+    /// Advise the model that the renderer gained or lost input focus so it
+    /// can emit DECSET 1004 focus sequences when a TUI has enabled them.
+    fn focus_changed(&mut self, focused: bool);
 
     /// Send clipboard text using the model's bracketed-paste and newline
     /// canonicalization state.

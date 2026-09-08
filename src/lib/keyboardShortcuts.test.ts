@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getAppShortcut } from "./keyboardShortcuts";
+import { getAppShortcut, isTuiPassthroughShortcut } from "./keyboardShortcuts";
 
 function shortcutEvent(init: KeyboardEventInit) {
   return new KeyboardEvent("keydown", {
@@ -31,5 +31,45 @@ describe("getAppShortcut", () => {
     expect(getAppShortcut(shortcutEvent({ key: "w" }))).toEqual({
       type: "close-terminal",
     });
+  });
+
+  it("ignores shortcuts while an IME composition is active", () => {
+    expect(
+      getAppShortcut(
+        new KeyboardEvent("keydown", {
+          ctrlKey: true,
+          key: "Tab",
+          isComposing: true,
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      getAppShortcut(
+        new KeyboardEvent("keydown", {
+          ctrlKey: true,
+          shiftKey: true,
+          key: "Process",
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("marks Ctrl+PageDown and Ctrl+1 as TUI passthrough chords", () => {
+    expect(
+      isTuiPassthroughShortcut(
+        new KeyboardEvent("keydown", { ctrlKey: true, key: "PageDown" }),
+      ),
+    ).toBe(true);
+    expect(
+      isTuiPassthroughShortcut(
+        new KeyboardEvent("keydown", { ctrlKey: true, key: "1" }),
+      ),
+    ).toBe(true);
+    expect(isTuiPassthroughShortcut(shortcutEvent({ key: "t" }))).toBe(false);
+    expect(
+      isTuiPassthroughShortcut(
+        new KeyboardEvent("keydown", { ctrlKey: true, key: "Tab" }),
+      ),
+    ).toBe(false);
   });
 });
