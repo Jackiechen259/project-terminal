@@ -11,6 +11,7 @@
 - Reset cursor blink phase on every real cursor move or keystroke and de-duplicated overlay repaints, so the cursor no longer vanishes mid-blink after moving and no longer darkens from repeatedly stacked overlay paints.
 - Applied DECSCUSR cursor shape (block/underline/bar, blinking or steady) from the terminal model instead of ignoring it.
 - Deferred a bare DECTCEM cursor hide so a repaint that ends by showing the cursor again never publishes the hidden state. ConPTY delivers a shell's hide and its redraw as separate reads, so every keystroke at a PowerShell prompt used to emit an extra cursor-hidden frame and the cursor visibly strobed as the user typed.
+- Stopped the IME caret from chasing a cursor that a repaint has hidden mid-paint. While output scrolled, the model reported the cursor parked in the bottom-right corner and held it there long enough to look settled, which dragged the native candidate window into that corner. A hide that follows a recently visible cursor is now read as part of a repaint and ignored, while a cursor that stays hidden (Ink-style CLIs that draw their own cursor and park the real one on the input cell) still wins.
 - Changed: the cursor no longer blinks while its terminal pane is unfocused.
 
 ## [0.6.3] - 2026-09-08

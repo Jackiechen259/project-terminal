@@ -6,6 +6,10 @@ import type {
   TerminalRenderMessage,
 } from "@/lib/terminalFrames";
 import {
+  IME_CARET_HIDDEN_TRANSIENT_MS,
+  IME_CARET_SETTLE_MS,
+} from "@/lib/terminalIme";
+import {
   DEFAULT_GENERAL_SETTINGS,
   useSettingsStore,
 } from "@/stores/settingsStore";
@@ -762,8 +766,11 @@ describe("WeztermTerminalView render synchronization", () => {
     view.unmount();
   });
 
-  it("waits for a hidden cursor to settle before moving the IME caret", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  it("ignores a hidden cursor reported while a repaint is in flight", async () => {
+    // `performance` is faked alongside the timers because the caret weighs a
+    // hide against the clock, not against timer ticks - letting the two run
+    // on different clocks would test a situation that cannot occur.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
     try {
       const view = await mountReadyView();
       const input = view.getByLabelText(
@@ -771,9 +778,64 @@ describe("WeztermTerminalView render synchronization", () => {
       ) as HTMLTextAreaElement;
       expect(input.style.left).toBe("16px");
 
-      // Full-screen TUIs often park a hidden cursor near the last edit
-      // rather than truly moving it - moving the (invisible) hidden
-      // textarea there immediately would drag the IME candidate window.
+      // Output starts scrolling. The model reports the cursor hidden at
+      // whatever cell the repaint reached, and it holds there long enough to
+      // look settled - following it would drag the IME candidate window off
+      // to that cell, far from where the user is typing.
+      mocks.renderer.cursorRect.mockReturnValue({
+        x: 632,
+        y: 34,
+        width: 8,
+        height: 17,
+        visible: false,
+      });
+      act(() => {
+        mocks.getAttachedOnMessage()?.({
+          type: "frame",
+          frame: frame(40, 120, 2, false),
+        });
+      });
+      expect(input.style.left).toBe("16px");
+
+      act(() => {
+        vi.advanceTimersByTime(IME_CARET_SETTLE_MS + 1);
+      });
+      expect(input.style.left).toBe("16px");
+
+      // Output stops and the cursor comes back where it belongs.
+      mocks.renderer.cursorRect.mockReturnValue({
+        x: 24,
+        y: 34,
+        width: 8,
+        height: 17,
+        visible: true,
+      });
+      act(() => {
+        mocks.getAttachedOnMessage()?.({
+          type: "frame",
+          frame: frame(40, 120, 3, false),
+        });
+      });
+      expect(input.style.left).toBe("24px");
+
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("parks the IME caret on a cursor that stays hidden after the repaint", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    try {
+      const view = await mountReadyView();
+      const input = view.getByLabelText(
+        "Terminal input",
+      ) as HTMLTextAreaElement;
+      expect(input.style.left).toBe("16px");
+
+      // An Ink-style CLI draws its own cursor and parks the real one on its
+      // input cell. Nothing further is painted, so the caret has to settle
+      // there on its own rather than wait for output that never comes.
       mocks.renderer.cursorRect.mockReturnValue({
         x: 48,
         y: 34,
@@ -790,7 +852,9 @@ describe("WeztermTerminalView render synchronization", () => {
       expect(input.style.left).toBe("16px");
 
       act(() => {
-        vi.advanceTimersByTime(100);
+        vi.advanceTimersByTime(
+          IME_CARET_HIDDEN_TRANSIENT_MS + IME_CARET_SETTLE_MS + 1,
+        );
       });
       expect(input.style.left).toBe("48px");
 

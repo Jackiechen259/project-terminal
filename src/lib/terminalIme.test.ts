@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  IME_CARET_HIDDEN_TRANSIENT_MS,
   IME_CARET_MAX_WAIT_MS,
   IME_CARET_SETTLE_MS,
   POST_COMPOSITION_SUPPRESS_MS,
@@ -331,6 +332,107 @@ describe("createImeCaretScheduler", () => {
       // arrived - only the already-applied (frozen) rect is re-emitted, so
       // a caller can still resize for a widening preedit string.
       expect(applied).toEqual([initial, initial]);
+    });
+  });
+
+
+  describe("a cursor hidden by a repaint in progress", () => {
+    /**
+     * The measured bug: while output scrolls, the model reports the cursor
+     * hidden at whatever cell the repaint reached - the bottom-right corner -
+     * and it holds there long enough to look settled. Following it drags the
+     * native IME candidate window into that corner, far from where the user
+     * is actually typing.
+     */
+    it("leaves the caret where the cursor really lives", () => {
+      const { scheduler, applied, advance, flushFrame } = createHarness();
+      const prompt = caret(8, true);
+      scheduler.update(prompt);
+      flushFrame();
+      expect(applied).toEqual([prompt]);
+
+      // Output starts scrolling: every frame reports the same mid-repaint
+      // cell, which the settle debounce alone would happily accept.
+      const midRepaint = caret(632, false);
+      for (let tick = 0; tick < 12; tick += 1) {
+        scheduler.update({ ...midRepaint });
+        advance(20);
+      }
+      expect(applied).toEqual([prompt]);
+
+      // Output stops and the cursor comes back where it belongs.
+      const movedPrompt = caret(16, true);
+      scheduler.update(movedPrompt);
+      flushFrame();
+      expect(applied).toEqual([prompt, movedPrompt]);
+    });
+
+    it("still follows a cursor that turns out to be parked there", () => {
+      const { scheduler, applied, advance, flushFrame } = createHarness();
+      const prompt = caret(8, true);
+      scheduler.update(prompt);
+      flushFrame();
+
+      // An app hides its cursor and leaves it on its own input cell. No
+      // further frames arrive, so the caret has to re-examine on its own
+      // rather than wait for output that never comes.
+      const parked = caret(48, false);
+      scheduler.update(parked);
+      advance(IME_CARET_HIDDEN_TRANSIENT_MS + IME_CARET_SETTLE_MS + 1);
+      expect(applied).toEqual([prompt, parked]);
+    });
+
+    it("parks immediately for an app whose cursor was never visible", () => {
+      const { scheduler, applied, advance } = createHarness();
+
+      // Attaching to a running Ink-style CLI: the cursor has been hidden
+      // since before this renderer existed, so there is no visible position
+      // to prefer and nothing to wait for.
+      const inkInput = caret(48, false);
+      scheduler.update(inkInput);
+      advance(IME_CARET_SETTLE_MS);
+      expect(applied).toEqual([inkInput]);
+    });
+
+    it("does not leak through flush", () => {
+      const { scheduler, applied, flushFrame } = createHarness();
+      const prompt = caret(8, true);
+      scheduler.update(prompt);
+      flushFrame();
+
+      scheduler.update(caret(632, false));
+      // A resize flushes synchronously; it must not pick up the mid-repaint
+      // cell just because it is the newest thing reported.
+      scheduler.flush();
+      expect(applied).toEqual([prompt]);
+    });
+
+    it("does not leak through the end of a composition", () => {
+      const { scheduler, applied, flushFrame } = createHarness();
+      const prompt = caret(8, true);
+      scheduler.update(prompt);
+      flushFrame();
+
+      scheduler.setComposing(true);
+      scheduler.update(caret(632, false));
+      scheduler.setComposing(false);
+      expect(applied).toEqual([prompt]);
+    });
+
+    it("measures the hide from the transition, not the last report", () => {
+      const { scheduler, applied, advance, flushFrame } = createHarness();
+      const prompt = caret(8, true);
+      scheduler.update(prompt);
+      flushFrame();
+
+      // An idle prompt produces no frames at all; the cursor is plainly
+      // still visible the whole time. Time passing here must not make the
+      // next repaint's hide look like a long-established one.
+      advance(IME_CARET_HIDDEN_TRANSIENT_MS * 5);
+
+      scheduler.update(caret(632, false));
+      advance(IME_CARET_SETTLE_MS + 1);
+      expect(applied).toEqual([prompt]);
     });
   });
 
